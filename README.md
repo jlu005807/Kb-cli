@@ -1,4 +1,4 @@
-# KB-CLI
+﻿# KB-CLI
 
 KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/Adapters 实现，采用「契约先行（docs/fixtures）」开发方式。
 
