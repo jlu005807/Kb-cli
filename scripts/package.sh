@@ -52,6 +52,22 @@ log() {
   printf '[package.sh] %s\n' "$1"
 }
 
+require_cmd() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    printf '[package.sh] Required command not found: %s\n' "$cmd" >&2
+    exit 1
+  fi
+}
+
+ensure_file() {
+  local file_path="$1"
+  if [[ ! -f "$file_path" ]]; then
+    printf '[package.sh] Required file not found: %s\n' "$file_path" >&2
+    exit 1
+  fi
+}
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE_TOML="$REPO_ROOT/Cargo.toml"
@@ -137,6 +153,17 @@ if [[ -n "$TARGET" ]] && command -v rustup >/dev/null 2>&1; then
     exit 1
   fi
 fi
+
+require_cmd tar
+require_cmd cp
+require_cmd chmod
+
+if [[ "$SKIP_BUILD" -eq 0 ]]; then
+  require_cmd cargo
+fi
+
+ensure_file "$REPO_ROOT/packaging/linux/install.sh"
+ensure_file "$REPO_ROOT/packaging/linux/uninstall.sh"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   build_args=(build -p kb-cli --profile "$PROFILE")

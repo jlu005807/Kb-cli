@@ -13,6 +13,20 @@ function Write-Step {
     Write-Host "[package.ps1] $Message"
 }
 
+function Test-CommandAvailable {
+    param([string]$Name)
+
+    return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Assert-FileExists {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Required file not found: $Path"
+    }
+}
+
 function Get-WorkspaceVersion {
     param([string]$WorkspaceToml)
 
@@ -78,7 +92,15 @@ if (-not (Test-WindowsTarget -TargetTriple $Target)) {
     throw "package.ps1 only packages Windows targets. Received: $Target. Use scripts/package.sh for Linux artifacts."
 }
 
+if (-not $SkipBuild.IsPresent -and -not (Test-CommandAvailable -Name "cargo")) {
+    throw "cargo command not found. Please install Rust toolchain and ensure cargo is in PATH."
+}
+
 if (-not [string]::IsNullOrWhiteSpace($Target)) {
+    if (-not (Test-CommandAvailable -Name "rustup")) {
+        throw "rustup command not found. Cannot validate target: $Target"
+    }
+
     $installedTargets = & rustup target list --installed 2>$null
     if ($LASTEXITCODE -eq 0 -and -not ($installedTargets -contains $Target)) {
         throw "Rust target not installed: $Target. Install with: rustup target add $Target"
@@ -132,10 +154,21 @@ if (Test-Path -LiteralPath $zipPath) {
 New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 
 Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $stageDir "kb.exe") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "packaging\windows\install.ps1") -Destination (Join-Path $stageDir "install.ps1") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "packaging\windows\uninstall.ps1") -Destination (Join-Path $stageDir "uninstall.ps1") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "packaging\windows\install.cmd") -Destination (Join-Path $stageDir "install.cmd") -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "packaging\windows\uninstall.cmd") -Destination (Join-Path $stageDir "uninstall.cmd") -Force
+
+$installPs1 = Join-Path $repoRoot "packaging\windows\install.ps1"
+$uninstallPs1 = Join-Path $repoRoot "packaging\windows\uninstall.ps1"
+$installCmd = Join-Path $repoRoot "packaging\windows\install.cmd"
+$uninstallCmd = Join-Path $repoRoot "packaging\windows\uninstall.cmd"
+
+Assert-FileExists -Path $installPs1
+Assert-FileExists -Path $uninstallPs1
+Assert-FileExists -Path $installCmd
+Assert-FileExists -Path $uninstallCmd
+
+Copy-Item -LiteralPath $installPs1 -Destination (Join-Path $stageDir "install.ps1") -Force
+Copy-Item -LiteralPath $uninstallPs1 -Destination (Join-Path $stageDir "uninstall.ps1") -Force
+Copy-Item -LiteralPath $installCmd -Destination (Join-Path $stageDir "install.cmd") -Force
+Copy-Item -LiteralPath $uninstallCmd -Destination (Join-Path $stageDir "uninstall.cmd") -Force
 
 $notes = @"
 # KB-CLI Windows Installer
