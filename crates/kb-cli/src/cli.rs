@@ -115,6 +115,10 @@ pub enum Commands {
         #[arg(long)]
         top: Option<u32>,
     },
+    Env {
+        #[arg(long, action = ArgAction::SetTrue)]
+        list: bool,
+    },
     Completion {
         shell: clap_complete::Shell,
     },
@@ -139,6 +143,7 @@ mod tests {
             "check",
             "update",
             "ask",
+            "env",
             "completion",
         ] {
             assert!(help.contains(cmd), "help missing command: {cmd}");

@@ -2,7 +2,7 @@
 
 本文档展示 `kb` 命令在 JSON 模式下的标准输出示例。请将这些示例视为快照测试的权威目标。当本文件与 `command-manual.md` 有冲突时，以 `command-manual.md` 为准。
 
-> 更新说明（2026-04-15）：本次仅同步文档状态说明，不修改现有 JSON 快照块，以保持 fixtures 合约稳定。
+> 更新说明（2026-04-16）：新增 `kb env --list` 示例；既有命令的 JSON 快照块保持不变，以维持 fixtures 合约稳定。
 
 > 相关文档：
 > - `docs/cli/command-manual.md`
@@ -490,3 +490,34 @@ kb ask "unrelated question" --output=json
   }
 }
 ```
+
+## 11. `kb env --list`
+
+### 成功示例
+**命令：**
+```bash
+kb env --list --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "mode": "list",
+    "items": [
+      {
+        "path": "D:/workspace/project-a"
+      },
+      {
+        "path": "D:/workspace/project-b"
+      }
+    ],
+    "count": 2,
+    "recorded_total": 3,
+    "config_path": "C:/Users/demo/.kb-cli/config.json"
+  }
+}
+```
+
+> 说明：`items` 仅包含“已登记且仍存在”的知识库目录；`recorded_total` 为全量登记数。

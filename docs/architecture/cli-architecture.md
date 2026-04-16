@@ -6,7 +6,7 @@
 
 - 架构风格：Rust Workspace + Hexagonal（Ports / Adapters）
 - 核心目标：低耦合、可测试、契约先行（docs/fixtures）
-- 命令集合：`init/add/mv/rm/path/chmod/list/check/update/ask/completion`
+- 命令集合：`init/add/mv/rm/path/chmod/list/check/update/ask/env/completion`
 
 ---
 
@@ -76,12 +76,15 @@
 | `kb check` | `IndexEngine::check` | 读（不写索引） |
 | `kb update` | `IndexEngine::update` | 写（写 `.kb/index*.json`） |
 | `kb ask` | `usecases::execute_ask`（Retriever + AnswerEngine） | 读 |
+| `kb env --list` | 全局注册表过滤读取（`env_registry`） | 读 |
 | `kb completion` | clap completion 生成 | 读 |
 
 补充说明（当前实现）：
 
 - `kb rm --force`：参数已保留，当前不改变行为（无交互确认流程）
 - `kb update --yes`：参数已保留，当前不改变行为（预留非交互扩展位）
+- `kb init`：成功后会尝试写入全局知识库注册表（失败不阻断 init）
+- `kb env --list`：读取全局注册表并仅返回仍存在且有效的知识库根目录
 - `kb list --long`：`mtime` 字段当前输出 Unix 秒字符串（而非 ISO 时间）
 - `kb check` / `kb update`：当前快照来源为 `.kb/refs.json` 投影记录，而非目录全量扫描
 

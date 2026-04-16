@@ -77,6 +77,10 @@
 # raw
 ```
 
+- 初始化成功后会尝试登记当前知识库根目录到全局注册表（`knowledge_bases`）。
+  - 配置路径优先级：`KB_GLOBAL_CONFIG` > `~/.kb-cli/config.json`
+  - 登记失败不影响本地初始化成功。
+
 ### 5.2 `kb add --category`
 
 - 指定分类必须已出现在 `kb.md` 的标题行中

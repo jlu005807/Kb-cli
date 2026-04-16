@@ -4,7 +4,7 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 
 ## 当前能力（2026-04）
 
-### 命令面（11 个）
+### 命令面（12 个）
 
 - `init`
 - `add`
@@ -16,6 +16,7 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 - `check`
 - `update`
 - `ask`
+- `env`
 - `completion`
 
 ### ask 能力现状
@@ -47,6 +48,9 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
   - `kb list` 的权限查找从“逐项线性查找”优化为“预构建映射查找”，降低大列表场景开销
   - `kb list` 渲染改为轻量记录，不再为列表场景计算文件签名/摘要，减少无效磁盘 I/O
   - `commands.rs` 中写配置失败错误映射收敛为单点函数，减少重复代码并降低维护成本
+- 新增全局知识库管理（2026-04-16）：
+  - 新增 `kb env --list` 命令，可列出全局登记且仍存在的知识库路径
+  - `kb init` 成功后自动尝试登记知识库根目录到全局配置（失败不阻断 init）
 
 ---
 
@@ -58,9 +62,10 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 │  ├─ kb-cli/
 │  │  ├─ src/
 │  │  │  ├─ main.rs            # CLI 入口：参数解析、配置接线、输出协议封装
-│  │  │  ├─ cli.rs             # clap 参数模型（全局选项 + 11 子命令）
+│  │  │  ├─ cli.rs             # clap 参数模型（全局选项 + 12 子命令）
 │  │  │  ├─ commands.rs        # 命令编排层（run_*）
 │  │  │  ├─ core_adapters.rs   # ports 适配：StateStore/IndexStore/Retriever/AnswerEngine
+│  │  │  ├─ env_registry.rs    # 全局知识库注册表读写（KB_GLOBAL_CONFIG / ~/.kb-cli/config.json）
 │  │  │  ├─ runtime_config.rs  # defaults/env/project/global/flags 合并
 │  │  │  ├─ output.rs          # text/json 输出 envelope
 │  │  │  ├─ errors.rs          # CoreErrorKind -> E-code/exit code
@@ -124,6 +129,8 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 
 `main.rs` → `commands.rs::run_*` → `kb-core::usecases/domain` → `kb-storage-fs`（索引持久化）
 
+其中 `kb env` 与 `kb init` 的全局注册能力由 `env_registry.rs` 提供。
+
 ### 后端知识库与 Agent 接口（详细接入位）
 
 当前项目已预留统一接口，支持把 ask 从“本地索引检索”切换为“后端知识库 + Agent 问答”：
@@ -178,6 +185,20 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 - `.kb/`：内部状态目录（索引与状态）
 - `./.kb/raw/`：`kb add --mode copy` 的归档目标目录
 - `./kb/.kbignore`：忽略规则文件（固定在 `kb/` 下）
+
+## 全局知识库登记（新增）
+
+为支持“全局安装后在多目录使用”，CLI 提供全局知识库登记机制：
+
+- `kb init` 成功后会尝试把当前知识库根目录登记到全局配置
+- `kb env --list` 可列出“已登记且仍存在”的知识库路径
+- 全局配置文件路径优先级：
+  1. 环境变量 `KB_GLOBAL_CONFIG`
+  2. 默认 `~/.kb-cli/config.json`（Windows 下使用 `USERPROFILE`）
+
+当前注册表字段：
+
+- `knowledge_bases`: `string[]`（知识库绝对路径数组）
 
 ---
 

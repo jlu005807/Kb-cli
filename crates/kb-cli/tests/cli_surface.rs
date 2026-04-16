@@ -20,6 +20,7 @@ fn help_displays_full_command_surface() {
                 .and(contains("check"))
                 .and(contains("update"))
                 .and(contains("ask"))
+                .and(contains("env"))
                 .and(contains("completion")),
         );
 }
@@ -82,4 +83,14 @@ fn completion_help_contains_shell_argument() {
         .assert()
         .success()
         .stdout(contains("SHELL").and(contains("bash")).and(contains("zsh")));
+}
+
+#[test]
+fn env_help_contains_list_flag() {
+    Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .args(["env", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--list"));
 }

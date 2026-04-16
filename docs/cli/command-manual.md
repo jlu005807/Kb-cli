@@ -15,6 +15,8 @@
 > - `rm --force` 与 `update --yes` 当前为保留参数位，不改变执行逻辑。
 > - `check/update` 当前快照来源为 `.kb/refs.json` 投影记录。
 > - `list --long` 的 `mtime` 当前输出 Unix 秒字符串。
+> - `init` 成功后会尝试登记当前知识库到全局注册表（登记失败不影响 init 成功）。
+> - 新增 `kb env --list`：用于列出已登记且仍存在的知识库根目录。
 
 ## 全局选项
 
@@ -27,6 +29,15 @@
 | `--no-color` | 标志 | 关闭 | 禁用输出中的 ANSI 颜色 |
 | `--help` | 标志 | - | 显示帮助信息并退出 |
 | `--version` | 标志 | - | 显示版本信息并退出 |
+
+## 环境变量（实现）
+
+| 变量 | 说明 |
+|---|---|
+| `KB_GLOBAL_CONFIG` | 指定全局配置文件路径（用于 `kb env` 与 `init` 的全局知识库登记） |
+| `KB_QUIET` | 运行时配置层（等价 quiet） |
+| `KB_VERBOSE` | 运行时配置层（等价 verbose） |
+| `KB_NO_COLOR` | 运行时配置层（等价 no-color） |
 
 ## 输出规则
 
@@ -59,7 +70,7 @@
 
 ## 前置条件
 
-除 `kb init` 外，所有命令均要求当前目录存在 `kb.md`。若未初始化，命令将中断并返回 `E3001`（退出码 3）。
+除 `kb init`、`kb env`、`kb completion` 外，其他命令均要求当前目录存在 `kb.md`。若未初始化，命令将中断并返回 `E3001`（退出码 3）。
 
 ## `.kbignore` 规则（MVP）
 
@@ -84,6 +95,9 @@
   * `--force`：覆盖已存在的初始化结构。
 * **语义：**
   * **成功：** 创建 `kb.md` 与 `.kb/`，并在 `./kb/` 下创建空 `.kbignore`。若使用 `--force`，则在 JSON 输出中返回 `overwritten: true`。
+  * **附加行为：** 成功后会尝试将当前知识库根目录写入全局注册表（`knowledge_bases`）。
+    * 路径来源优先级：`KB_GLOBAL_CONFIG` > `~/.kb-cli/config.json`
+    * 登记失败不会影响本地初始化成功结果。
   * **失败：** 未使用 `--force` 但当前目录已初始化，返回 `E3002`（退出码 3）。配置文件写入失败，返回 `E1001`（退出码 1）。
 * **输出字段表（JSON 模式）：**
 
@@ -252,6 +266,27 @@
 | `trace_id` | string\|null | 固定返回 `null` |
 | `retrieved_context` | array | 检索到的上下文数组（包含 `alias`, `snippet`, `score` 0-1 的数字） |
 
+### `kb env`
+
+* **语法：** `kb env --list`
+* **选项：**
+  * `--list`：列出全局注册表中“仍存在”的知识库根目录。
+* **语义：**
+  * 读取全局配置中的 `knowledge_bases`。
+  * 仅返回当前磁盘上仍存在，且包含 `kb.md` 与 `.kb/` 的目录。
+  * 同时返回：
+    * `recorded_total`：注册表记录总数（不过滤）
+    * `count`：实际仍存在且有效的知识库数量
+* **输出字段表（JSON 模式）：**
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `mode` | string | 当前执行模式（`list` 或 `list(default)`） |
+| `items` | array | 有效知识库数组，每项包含 `path` |
+| `count` | number | `items` 数量 |
+| `recorded_total` | number | 注册表中的总记录数 |
+| `config_path` | string | 当前使用的全局配置文件路径 |
+
 ### `kb check`
 
 > 详细状态机、判定优先级与效率策略见：`docs/cli/state-diff-contract.md`。
@@ -336,7 +371,7 @@
 | 禁止使用空格 | `my docs` | 非法 |
 | 禁止以 `-` 开头 | `-alias` | 非法 |
 | 长度必须在 1-128 之间 | `a` (合法), 空字符串 (非法) | 长度违规 |
-| 禁止使用保留字 | `init`, `help`, `version` | 非法 |
+| 禁止使用保留字 | `init`, `env`, `help` | 非法 |
 
 违反上述任意规则均返回 `E2001`（退出码 2）。
 

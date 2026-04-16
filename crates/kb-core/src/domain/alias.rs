@@ -6,8 +6,8 @@ use std::fmt;
 const ALIAS_MIN_LEN: usize = 1;
 const ALIAS_MAX_LEN: usize = 128;
 
-const RESERVED_ALIASES: [&str; 11] = [
-    "init", "add", "mv", "rm", "path", "chmod", "list", "check", "update", "ask", "help",
+const RESERVED_ALIASES: [&str; 12] = [
+    "init", "add", "mv", "rm", "path", "chmod", "list", "check", "update", "ask", "env", "help",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod core_adapters;
+mod env_registry;
 mod errors;
 mod output;
 mod paths;

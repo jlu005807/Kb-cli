@@ -17,6 +17,24 @@ fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
     (success, body)
 }
 
+fn run_json_with_global_config(
+    args: &[&str],
+    current_dir: &Path,
+    global_config: &Path,
+) -> (bool, Value) {
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(current_dir)
+        .env("KB_GLOBAL_CONFIG", global_config)
+        .arg("--output")
+        .arg("json")
+        .args(args)
+        .assert();
+    let success = assert.get_output().status.success();
+    let body: Value = serde_json::from_slice(&assert.get_output().stdout).expect("json stdout");
+    (success, body)
+}
+
 fn unique_temp_dir(tag: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -455,4 +473,50 @@ fn invalid_config_path_returns_e2008() {
     let (ok, body) = run_json(&["--config", "./no/such/config.toml", "init", "demo"], &dir);
     assert!(!ok);
     assert_eq!(body["error"]["code"], "E2008");
+}
+
+#[test]
+fn env_list_shows_only_existing_registered_kb_roots() {
+    let global_root = unique_temp_dir("env-global-root");
+    let caller = unique_temp_dir("env-caller");
+    let kb_one = unique_temp_dir("env-kb-one");
+    let global_config = global_root.join("config.json");
+
+    let (ok, _) = run_json_with_global_config(&["init", "demo"], &kb_one, &global_config);
+    assert!(ok, "init should register kb root into global config");
+
+    let kb_one_abs = fs::canonicalize(&kb_one)
+        .expect("kb root should exist")
+        .to_string_lossy()
+        .to_string();
+
+    let (ok, listed) = run_json_with_global_config(&["env", "--list"], &caller, &global_config);
+    assert!(ok);
+    assert_eq!(listed["status"], "success");
+    let items = listed["data"]["items"]
+        .as_array()
+        .expect("items must be array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["path"].as_str().unwrap_or_default(), kb_one_abs);
+    assert_eq!(listed["data"]["recorded_total"].as_u64().unwrap_or(0), 1);
+    assert_eq!(listed["data"]["count"].as_u64().unwrap_or(0), 1);
+
+    fs::remove_dir_all(&kb_one).expect("remove kb root to simulate missing");
+    let (ok, listed_after_remove) =
+        run_json_with_global_config(&["env", "--list"], &caller, &global_config);
+    assert!(ok);
+    assert_eq!(
+        listed_after_remove["data"]["recorded_total"]
+            .as_u64()
+            .unwrap_or(0),
+        1
+    );
+    assert_eq!(
+        listed_after_remove["data"]["count"].as_u64().unwrap_or(0),
+        0
+    );
+    let items = listed_after_remove["data"]["items"]
+        .as_array()
+        .expect("items must be array");
+    assert!(items.is_empty());
 }

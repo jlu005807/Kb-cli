@@ -25,6 +25,7 @@ use std::time::Instant;
 
 use crate::cli::{AddMode, Cli, Commands};
 use crate::core_adapters::{DefaultRetriever, DisabledAnswerEngine, FsIndexStore, FsStateStore};
+use crate::env_registry::{list_existing_kb_roots, register_kb_root};
 use crate::errors::{map_core_error, CliError, CoreErrorKind};
 use crate::paths::{is_ignored, load_ignore_rules, normalize_path, RAW_DIR_REL, RAW_PREFIX};
 use crate::state::{load_state, save_state, RefEntry, State};
@@ -83,6 +84,7 @@ pub fn dispatch(cli: Cli) -> Result<Value, CliError> {
             full,
         } => run_update(dry_run, prune, yes, full),
         Commands::Ask { question, top } => run_ask(question, top),
+        Commands::Env { list } => run_env(list),
         Commands::Completion { shell } => run_completion(shell),
     }
 }
@@ -122,6 +124,8 @@ fn run_init(name: Option<String>, force: bool) -> Result<Value, CliError> {
     fs::write(cwd.join("kb/.kbignore"), "").map_err(|_| write_config_error())?;
     fs::write(&kb_md, "# raw\n").map_err(|_| write_config_error())?;
     save_state(&cwd, &State::default())?;
+    // 全局登记失败不应阻断本地初始化，保证 init 核心语义稳定。
+    let _ = register_kb_root(&cwd);
 
     let mut data = json!({
         "project": plan.project,
@@ -131,6 +135,25 @@ fn run_init(name: Option<String>, force: bool) -> Result<Value, CliError> {
         data["overwritten"] = Value::Bool(plan.overwritten);
     }
     Ok(data)
+}
+
+fn run_env(list: bool) -> Result<Value, CliError> {
+    // 当前 env 命令聚焦全局知识库登记查询；未传 --list 时默认回退为 list 行为。
+    let mode = if list { "list" } else { "list(default)" };
+    let out = list_existing_kb_roots();
+    let items = out
+        .existing_paths
+        .iter()
+        .map(|path| json!({ "path": path }))
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "mode": mode,
+        "items": items,
+        "count": out.existing_paths.len(),
+        "recorded_total": out.recorded_total,
+        "config_path": out.config_path
+    }))
 }
 
 fn run_add(
