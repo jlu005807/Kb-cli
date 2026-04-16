@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E1003",
+    "message": "Failed to persist index files",
+    "suggestion": "Check write permissions for .kb directory and retry",
+    "details": {
+      "targets": [
+        ".kb/index.json",
+        ".kb/index.errors.json",
+        ".kb/index.meta.json"
+      ]
+    }
+  }
+}

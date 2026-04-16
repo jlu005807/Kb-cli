@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "engine_status": "disabled",
+    "provider": null,
+    "trace_id": null,
+    "retrieved_context": [
+      {
+        "alias": "docs/config",
+        "snippet": "Use kb config to change settings.",
+        "score": 1.0
+      }
+    ]
+  }
+}

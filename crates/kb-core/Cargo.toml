@@ -1,0 +1,20 @@
+[package]
+name = "kb-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+anyhow = "1.0.100"
+assert_cmd = { workspace = true }
+regex = "1.12.2"
+predicates = { workspace = true }
+insta = { workspace = true }
+serde_json = { workspace = true }
+similar = { workspace = true }
+
+[[test]]
+name = "doc_fixture_diff"
+path = "../../tests/doc_fixture_diff.rs"

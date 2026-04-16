@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E2004",
+    "message": "Invalid permission string",
+    "suggestion": "Use a valid combination of r, w, x, d, c, or -",
+    "details": {
+      "provided": "invalid"
+    }
+  }
+}

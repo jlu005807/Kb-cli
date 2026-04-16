@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "has_changes": true,
+    "to_add": [
+      {
+        "alias": "raw/spec-a.md",
+        "path": "./.kb/raw/spec-a.md",
+        "source": "raw"
+      }
+    ],
+    "to_update": [
+      {
+        "alias": "docs/guide",
+        "path": "./docs/guide.md",
+        "reason": "content_changed"
+      }
+    ],
+    "to_remove": [
+      {
+        "alias": "legacy/notes",
+        "path": "./docs/legacy-notes.md",
+        "reason": "missing_path"
+      }
+    ],
+    "suggested_command": "kb update",
+    "duration_ms": 96
+  }
+}

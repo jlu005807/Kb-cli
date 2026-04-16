@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E3003",
+    "message": "Invalid kb.md format",
+    "suggestion": "Fix kb.md syntax and run kb check again",
+    "details": {
+      "line": 42
+    }
+  }
+}

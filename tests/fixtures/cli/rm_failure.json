@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E5002",
+    "message": "Alias does not exist",
+    "suggestion": "Run 'kb list' to see available aliases",
+    "details": {
+      "alias": "missing-alias"
+    }
+  }
+}

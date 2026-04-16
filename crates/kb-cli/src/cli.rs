@@ -1,0 +1,175 @@
+//! `cli.rs` 定义命令行“协议面”：
+//! - 全局选项（输出格式、静默、verbose、配置路径）
+//! - 子命令与参数模型
+//!
+//! 该文件不承载业务逻辑，只负责参数结构与帮助信息契约。
+
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+
+// CLI 参数契约：全局选项 + 子命令集合。
+// 这里的结构应与 docs/cli/command-manual.md 保持同步。
+#[derive(Debug, Parser)]
+#[command(
+    name = "kb-cli",
+    version,
+    about = "KB CLI MVP command surface",
+    disable_help_subcommand = true
+)]
+pub struct Cli {
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
+    pub output: OutputFormat,
+
+    #[arg(long, global = true, action = ArgAction::SetTrue)]
+    pub quiet: bool,
+
+    #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
+    pub verbose: u8,
+
+    #[arg(long, global = true)]
+    pub config: Option<String>,
+
+    #[arg(long = "no-color", global = true, action = ArgAction::SetTrue)]
+    pub no_color: bool,
+
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum OutputFormat {
+    /// 面向用户的可读输出。
+    Text,
+    /// 面向机器消费的结构化 JSON 输出。
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum AddMode {
+    /// 直接引用原路径文件。
+    Link,
+    /// 复制文件到 `./.kb/raw/` 后再建立引用。
+    Copy,
+}
+
+// 子命令参数模型：字段命名与可选性应与 docs 契约保持一致。
+#[derive(Debug, Clone, Subcommand)]
+pub enum Commands {
+    Init {
+        name: Option<String>,
+        #[arg(long, action = ArgAction::SetTrue)]
+        force: bool,
+    },
+    Add {
+        path: String,
+        alias: Option<String>,
+        #[arg(long, value_enum, default_value_t = AddMode::Link)]
+        mode: AddMode,
+        #[arg(long)]
+        category: Option<String>,
+    },
+    Mv {
+        alias: String,
+        new_alias: String,
+    },
+    Rm {
+        alias: String,
+        #[arg(long, action = ArgAction::SetTrue)]
+        force: bool,
+    },
+    Path {
+        alias: String,
+        new_path: Option<String>,
+    },
+    Chmod {
+        alias: String,
+        perms: String,
+    },
+    List {
+        #[arg(long, action = ArgAction::SetTrue)]
+        long: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        tree: bool,
+        #[arg(long)]
+        filter: Option<String>,
+    },
+    Check {
+        #[arg(long, action = ArgAction::SetTrue)]
+        raw_only: bool,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        top: Option<u32>,
+    },
+    Update {
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        prune: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        yes: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        full: bool,
+    },
+    Ask {
+        question: String,
+        #[arg(long)]
+        top: Option<u32>,
+    },
+    Completion {
+        shell: clap_complete::Shell,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn help_contains_exact_command_set() {
+        let help = Cli::command().render_long_help().to_string();
+        for cmd in [
+            "init",
+            "add",
+            "mv",
+            "rm",
+            "path",
+            "chmod",
+            "list",
+            "check",
+            "update",
+            "ask",
+            "completion",
+        ] {
+            assert!(help.contains(cmd), "help missing command: {cmd}");
+        }
+    }
+
+    #[test]
+    fn add_parses_category_and_mode() {
+        let cli = Cli::parse_from([
+            "kb-cli",
+            "add",
+            "./docs/guide.md",
+            "guide",
+            "--category",
+            "raw",
+            "--mode",
+            "copy",
+        ]);
+
+        match cli.command {
+            Commands::Add {
+                path,
+                alias,
+                category,
+                ..
+            } => {
+                assert_eq!(path, "./docs/guide.md");
+                assert_eq!(alias.as_deref(), Some("guide"));
+                assert_eq!(category.as_deref(), Some("raw"));
+            }
+            _ => panic!("expected add command"),
+        }
+    }
+}

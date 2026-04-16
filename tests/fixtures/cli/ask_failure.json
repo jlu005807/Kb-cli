@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E5003",
+    "message": "No relevant context found",
+    "suggestion": "Try a different question or add more files to the knowledge base",
+    "details": {
+      "query": "unrelated question"
+    }
+  }
+}

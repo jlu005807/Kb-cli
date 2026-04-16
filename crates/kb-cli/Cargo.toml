@@ -1,0 +1,22 @@
+[package]
+name = "kb-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kb-core = { path = "../kb-core" }
+kb-storage-fs = { path = "../kb-storage-fs" }
+kb-index-memory = { path = "../kb-index-memory" }
+clap = { version = "4.5.38", features = ["derive"] }
+clap_complete = "4.5.46"
+ctrlc = "3.4.5"
+unicode-segmentation = "1.11.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+insta = { workspace = true }
+serde_json = { workspace = true }
+similar = { workspace = true }

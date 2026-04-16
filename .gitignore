@@ -1,0 +1,45 @@
+# =========================
+# Rust / Cargo
+# =========================
+/target/
+**/*.rs.bk
+
+# =========================
+# IDE / Editor
+# =========================
+.idea/
+.vscode/
+*.code-workspace
+
+# =========================
+# OS junk
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =========================
+# Logs / temp
+# =========================
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# =========================
+# Env / local secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Project local artifacts
+# =========================
+/.sisyphus/
+/.kb/
+/kb.md
+/dummy.exe
+/dummy.pdb

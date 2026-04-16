@@ -1,0 +1,458 @@
+use assert_cmd::Command;
+use serde_json::Value;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(current_dir)
+        .arg("--output")
+        .arg("json")
+        .args(args)
+        .assert();
+    let success = assert.get_output().status.success();
+    let body: Value = serde_json::from_slice(&assert.get_output().stdout).expect("json stdout");
+    (success, body)
+}
+
+fn unique_temp_dir(tag: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "kb_cli_it_{}_{}_{}",
+        tag,
+        std::process::id(),
+        nanos
+    ));
+    fs::create_dir_all(&dir).expect("temp dir should be created");
+    dir
+}
+
+fn mk_file(root: &Path, rel: &str, content: &str) {
+    let abs = root.join(rel.trim_start_matches("./"));
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    fs::write(abs, content).expect("write file");
+}
+
+#[test]
+fn init_creates_kbignore() {
+    let dir = unique_temp_dir("init-kbignore");
+    let (ok, body) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    assert_eq!(body["status"], "success");
+    assert!(dir.join("kb/.kbignore").exists());
+    assert!(dir.join(".kb/raw").exists());
+}
+
+#[test]
+fn add_copy_mode_writes_into_hidden_raw_dir() {
+    let dir = unique_temp_dir("add-copy-raw");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/copy.md", "COPY");
+
+    let (ok, body) = run_json(
+        &["add", "./docs/copy.md", "docs/copy", "--mode", "copy"],
+        &dir,
+    );
+    assert!(ok);
+    assert_eq!(body["data"]["path"], "./.kb/raw/copy.md");
+    assert!(dir.join(".kb/raw/copy.md").exists());
+}
+
+#[test]
+fn add_ignored_path_is_non_error_skip() {
+    let dir = unique_temp_dir("add-ignore");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./kb/.kbignore", "ignored/*\n");
+    mk_file(&dir, "./ignored/a.md", "hello");
+
+    let (ok, body) = run_json(&["add", "./ignored/a.md", "ignored/a"], &dir);
+    assert!(ok, "ignored add should not be an error");
+    assert_eq!(body["data"]["ignored"], true);
+}
+
+#[test]
+fn add_default_append_and_category() {
+    let dir = unique_temp_dir("add-category");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+
+    let (ok, body) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+    assert_eq!(body["data"]["alias"], "docs/a");
+    assert_eq!(body["data"]["path"], "./docs/a.md");
+}
+
+#[test]
+fn update_idempotency_and_prune_behavior() {
+    let dir = unique_temp_dir("update-idempotent");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, first) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(first["data"]["added"], 1);
+
+    let (ok, second) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(second["data"]["added"], 0);
+    assert_eq!(second["data"]["updated"], 0);
+    assert_eq!(second["data"]["removed"], 0);
+
+    fs::remove_file(dir.join("docs/a.md")).expect("remove file for missing path test");
+    let (ok, marked) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(marked["data"]["marked_invalid"], 1);
+
+    let (ok, pruned) = run_json(&["update", "--prune"], &dir);
+    assert!(ok);
+    assert_eq!(pruned["data"]["removed"], 1);
+}
+
+#[test]
+fn update_dry_run_does_not_persist_baseline() {
+    let dir = unique_temp_dir("update-dryrun");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, dry) = run_json(&["update", "--dry-run"], &dir);
+    assert!(ok);
+    assert_eq!(dry["data"]["added"], 1);
+    assert!(!dir.join(".kb/index.json").exists());
+
+    let (ok, persisted) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(persisted["data"]["added"], 1);
+    assert!(dir.join(".kb/index.json").exists());
+    assert!(dir.join(".kb/index.errors.json").exists());
+    assert!(dir.join(".kb/index.meta.json").exists());
+}
+
+#[test]
+fn check_and_update_apply_kbignore_before_scan() {
+    let dir = unique_temp_dir("check-ignore");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./kb/.kbignore", "./docs/skip.md\n");
+    mk_file(&dir, "./docs/skip.md", "SKIP");
+    mk_file(&dir, "./docs/keep.md", "KEEP");
+
+    let (ok, _) = run_json(
+        &["add", "./docs/keep.md", "docs/keep", "--category", "raw"],
+        &dir,
+    );
+    assert!(ok);
+    let (_ok, _ignored) = run_json(
+        &["add", "./docs/skip.md", "docs/skip", "--category", "raw"],
+        &dir,
+    );
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+    let to_add = check["data"]["to_add"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(to_add
+        .iter()
+        .all(|x| x["path"].as_str().unwrap_or_default() != "./docs/skip.md"));
+
+    let (ok, update) = run_json(&["update"], &dir);
+    assert!(ok);
+    let raw = fs::read_to_string(dir.join(".kb/index.json")).expect("read index");
+    assert!(!raw.contains("./docs/skip.md"));
+    assert!(update["data"]["added"].as_u64().unwrap_or(0) >= 1);
+}
+
+#[test]
+fn list_filter_long_tree_support() {
+    let dir = unique_temp_dir("list-filter");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(&dir, "./src/b.rs", "B");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["add", "./src/b.rs", "src/b", "--category", "raw"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let (ok, filtered) = run_json(&["list", "--filter", "docs/*", "--long", "--tree"], &dir);
+    assert!(ok);
+    let items = filtered["data"]["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["alias"], "docs/a");
+    assert!(items[0].get("size").is_some());
+    assert!(items[0].get("mtime").is_some());
+    assert!(filtered["data"].get("categories").is_some());
+}
+
+#[test]
+fn list_invalid_filter_returns_e2002() {
+    let dir = unique_temp_dir("list-invalid-filter");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["list", "--filter", "[invalid"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E2002");
+}
+
+#[test]
+fn ask_returns_disabled_engine_and_retrieval_structure() {
+    let dir = unique_temp_dir("ask-success");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/config.md",
+        "Use kb config to change settings.\nMore details",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/config.md",
+            "docs/config",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(&dir)
+        .arg("ask")
+        .arg("hello")
+        .arg("--top")
+        .arg("1")
+        .arg("--output")
+        .arg("json")
+        .assert();
+    let output = assert.get_output();
+    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
+
+    let body: Value = serde_json::from_slice(&output.stdout).expect("json stdout for ask success");
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["engine_status"], "disabled");
+    assert!(body["data"]["provider"].is_null());
+    assert!(body["data"]["trace_id"].is_null());
+
+    let retrieved = body["data"]["retrieved_context"]
+        .as_array()
+        .expect("retrieved_context must be array");
+    assert_eq!(retrieved.len(), 1);
+    assert_eq!(retrieved[0]["alias"], "docs/config");
+    assert_eq!(retrieved[0]["snippet"], "Use kb config to change settings.");
+    let score = retrieved[0]["score"].as_f64().unwrap_or_default();
+    assert!(score > 0.0 && score <= 1.0);
+}
+
+#[test]
+fn ask_top_k_order_is_deterministic_for_multiple_docs() {
+    let dir = unique_temp_dir("ask-top-k-deterministic");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/beta.md", "beta topic reference");
+    mk_file(&dir, "./docs/alpha.md", "alpha topic reference");
+
+    let (ok, _) = run_json(
+        &["add", "./docs/beta.md", "docs/beta", "--category", "raw"],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(
+        &["add", "./docs/alpha.md", "docs/alpha", "--category", "raw"],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["ask", "topic", "--top", "2"], &dir);
+    assert!(ok);
+    let retrieved = body["data"]["retrieved_context"]
+        .as_array()
+        .expect("retrieved_context must be array");
+    assert_eq!(retrieved.len(), 2);
+    assert_eq!(retrieved[0]["alias"], "docs/alpha");
+    assert_eq!(retrieved[1]["alias"], "docs/beta");
+}
+
+#[test]
+fn ask_query_density_window_snippet_golden() {
+    let dir = unique_temp_dir("ask-density-window-golden");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(
+        &dir,
+        "./docs/window.md",
+        "alpha lead noise before target section with beta and target and gamma plus tail",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/window.md",
+            "docs/window",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["ask", "beta target gamma", "--top", "1"], &dir);
+    assert!(ok);
+    let snippet = body["data"]["retrieved_context"][0]["snippet"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(snippet.contains("beta"));
+    assert!(snippet.contains("target"));
+    assert!(snippet.contains("gamma"));
+}
+
+#[test]
+fn ask_query_density_unicode_multibyte_boundary_golden() {
+    let dir = unique_temp_dir("ask-unicode-boundary-golden");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(
+        &dir,
+        "./docs/unicode.md",
+        "前置噪声🙂🙂🙂 alpha βeta 命中片段 γamma 尾部文本",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/unicode.md",
+            "docs/unicode",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["ask", "alpha βeta γamma", "--top", "1"], &dir);
+    assert!(ok);
+    let snippet = body["data"]["retrieved_context"][0]["snippet"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(snippet.contains("alpha"));
+    assert!(snippet.contains("βeta"));
+    assert!(snippet.contains("γamma"));
+}
+
+#[test]
+fn ask_query_density_grapheme_cluster_boundary_golden() {
+    let dir = unique_temp_dir("ask-grapheme-cluster-golden");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(
+        &dir,
+        "./docs/grapheme.md",
+        "前置片段 👨‍👩‍👧‍👦 family e\u{0301} 组合字符 and emoji 👍🏽 tail",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/grapheme.md",
+            "docs/grapheme",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["ask", "family e\u{0301} 👍🏽", "--top", "1"], &dir);
+    assert!(ok);
+    let snippet = body["data"]["retrieved_context"][0]["snippet"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(snippet.contains("👨‍👩‍👧‍👦"));
+    assert!(snippet.contains("e\u{0301}") || snippet.contains("é"));
+    assert!(snippet.contains("👍🏽"));
+}
+
+#[test]
+fn ask_without_context_returns_e5003() {
+    let dir = unique_temp_dir("ask-failure");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["ask", "unrelated question"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E5003");
+    assert_eq!(
+        body["error"]["details"]["query"],
+        Value::String("unrelated question".to_string())
+    );
+}
+
+#[test]
+fn completion_bash_outputs_script_in_text_mode() {
+    let dir = unique_temp_dir("completion-bash");
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(&dir)
+        .args(["completion", "bash"])
+        .assert();
+    let output = assert.get_output();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("_kb-cli()") || stdout.contains("kb-cli"));
+}
+
+#[test]
+fn completion_json_contains_script_field() {
+    let dir = unique_temp_dir("completion-json");
+    let (ok, body) = run_json(&["completion", "bash"], &dir);
+    assert!(ok);
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["shell"], "bash");
+    assert!(body["data"]["script"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("kb-cli"));
+}
+
+#[test]
+fn invalid_config_path_returns_e2008() {
+    let dir = unique_temp_dir("invalid-config");
+    let (ok, body) = run_json(&["--config", "./no/such/config.toml", "init", "demo"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E2008");
+}

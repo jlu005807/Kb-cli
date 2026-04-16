@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E2002",
+    "message": "Invalid glob pattern",
+    "suggestion": "Verify the filter string is a valid glob pattern",
+    "details": {
+      "pattern": "[invalid"
+    }
+  }
+}

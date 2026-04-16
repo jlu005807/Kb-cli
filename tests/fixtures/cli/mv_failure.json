@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E5002",
+    "message": "Source alias not found",
+    "suggestion": "Run 'kb list' to see available aliases",
+    "details": {
+      "alias": "missing-alias"
+    }
+  }
+}

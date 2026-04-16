@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "error": {
+    "code": "E5001",
+    "message": "Path does not exist",
+    "suggestion": "Verify the file or directory exists at the provided path",
+    "details": {
+      "path": "./missing-file"
+    }
+  }
+}
