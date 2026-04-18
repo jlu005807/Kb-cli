@@ -1,8 +1,8 @@
 # KB-CLI 状态差异契约（当前实现）
 
-本文档描述 `kb check` / `kb update` 的**当前实现行为**（截至 2026-04-15）。
+本文档描述 `kb check` / `kb update` 的**当前实现行为**（截至 2026-04-16）。
 
-> 适用范围：本地索引链路（`.kb/refs.json` + `./kb/.kbignore` + `.kb/index*.json`）。
+> 适用范围：本地索引链路（`.kb/refs.json` + `./.kb/.kbignore` + `.kb/index*.json`）。
 
 ---
 
@@ -17,6 +17,7 @@
    - `--category`
    - `--raw-only`（仅保留 `path` 以 `./.kb/raw/` 开头）
    - `.kbignore`
+  - 受保护路径过滤（排除 `kb.md` 与 `./.kb/` 下非 `./.kb/raw/` 文件）
 3. 对过滤后的条目，只保留本地路径真实存在的记录
 4. 计算记录签名（signature）与摘要（excerpt）
 

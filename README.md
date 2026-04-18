@@ -32,7 +32,7 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 
 > 说明：ask 算法级语义（排序/窗口/Unicode 边界）以 `docs/cli/command-manual.md` 中 `kb ask` 章节为准。
 
-### 最近完成（2026-04-15）
+### 最近完成（2026-04）
 
 - 代码结构维护：
   - 删除 `kb add` 中与 core usecase 重复的路径存在性校验（统一由 core 侧校验）
@@ -51,6 +51,19 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 - 新增全局知识库管理（2026-04-16）：
   - 新增 `kb env --list` 命令，可列出全局登记且仍存在的知识库路径
   - `kb init` 成功后自动尝试登记知识库根目录到全局配置（失败不阻断 init）
+- CLI 交互体验增强（2026-04-16）：
+  - 根命令帮助改为 `kb` 形态，`Usage` 统一为 `kb [OPTIONS] <COMMAND>`
+  - `kb -h` 增加分组命令概览（类似 git 的 command group）
+  - text 模式改为命令专属的多行可读输出（不再是单行 JSON 风格）
+  - `--output=json` 自动剔除内部 `_raw_text` 字段，保持 JSON 契约稳定
+- 文档与质量门禁同步（2026-04-17）：
+  - `docs/cli/command-manual.md` 补充 `kb completion` 与 `kb -h` 附录示例
+  - `docs/cli/command-examples.md` 补充 `env` 默认模式与 `completion` 示例
+  - 通过 `cargo clippy --workspace --all-targets -- -D warnings` 清理冗余参数传递
+- 索引安全策略增强（2026-04-16）：
+  - `.kbignore` 固定迁移到 `./.kb/.kbignore`
+  - `kb init` 会生成默认忽略规则，自动排除 `kb.md` 与 `.kb` 内部配置文件
+  - 禁止将 `kb.md` 与 `./.kb/` 下（除 `./.kb/raw/` 外）文件加入索引
 
 ---
 
@@ -184,7 +197,12 @@ KB-CLI 是一个本地知识库命令行项目，基于 Rust Workspace + Ports/A
 - `kb.md`：引用与分类主清单
 - `.kb/`：内部状态目录（索引与状态）
 - `./.kb/raw/`：`kb add --mode copy` 的归档目标目录
-- `./kb/.kbignore`：忽略规则文件（固定在 `kb/` 下）
+- `./.kb/.kbignore`：忽略规则文件（固定在 `.kb/` 下，`kb init` 自动写入默认规则）
+
+索引保护规则（实现）：
+
+- `kb.md` 不允许加入索引
+- `./.kb/` 下仅 `./.kb/raw/` 可加入索引，其余内部配置文件均被拦截
 
 ## 全局知识库登记（新增）
 
@@ -215,24 +233,63 @@ cargo clippy --workspace --all-targets -- -D warnings
 # 文档与 fixtures 一致性
 node tests/tools/validate-doc-fixture-diff.js
 
+# 根帮助全量快照（防止 help 文案回归）
+cargo test -p kb-cli root_help_matches_full_snapshot
+
 # 查看命令面
 cargo run -p kb-cli -- --help
 ```
 
 ---
 
-## 阶段完成度（摘要）
+## 打包与 Release 发布
 
-- Phase 1：命令编排逐步迁移到 `kb-core` usecases ✅
-- Phase 2：配置管线与错误映射单点收敛 ✅
-- Phase 3：ask 端口化（Retriever/AnswerEngine）✅
-- Phase 3.1~3.6：本地检索、excerpt 持久化、query-density 摘要、稳定排序、Unicode/grapheme 边界增强 ✅
+详细安装与打包文档见：`docs/cli/install-and-package.md`。
+
+### 本地打包
+
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
+```
+
+Linux：
+
+```bash
+bash ./scripts/package.sh --target x86_64-unknown-linux-gnu
+```
+
+说明：
+
+- `scripts/package.ps1` 仅用于 Windows 产物（`.zip`）。
+- `scripts/package.sh` 仅用于 Linux 产物（`.tar.gz`）。
+- 在 Git Bash/MSYS/Cygwin 环境中执行 `package.sh` 时，必须显式传入 Linux `--target`。
+
+### GitHub Actions 自动发布
+
+工作流文件：`.github/workflows/release.yml`
+
+当前触发规则：
+
+- 仅在“新建 tag”事件触发（`on: create`）
+- 且仅处理 tag 名以 `v` 开头（如 `v0.1.2`）
+- 推送分支（例如 `main`）不会触发发布任务
+
+发布行为：
+
+1. 先校验 tag 格式并创建（或复用）GitHub Release。
+2. Linux runner 构建并打包 `.tar.gz`，直接上传到该 Release。
+3. Windows runner 构建并打包 `.zip`，直接上传到该 Release。
+
+推荐发布命令：
+
+```bash
+git push -u origin main
+git tag <新的版本号>
+git push -u origin <新的版本号>
+```
+
+> 注意：已存在的旧 tag 重新 push 通常不会触发 `create` 事件，建议使用新版本 tag。
 
 ---
-
-## 架构文档同步状态
-
-- `docs/architecture/cli-architecture.md` 已同步到**已实现状态**（不再是 spec-first 占位说明）。
-- 文档内容已同步到当前实现细节（含 `refs.json` 驱动状态差异、保留参数位说明、`mtime` 输出格式）。
-
-如需继续迭代，建议优先在 `docs/cli/*` 更新契约，再推进实现与测试。

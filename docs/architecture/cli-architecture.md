@@ -31,6 +31,12 @@
 5. `kb list` 改为轻量记录渲染，不再在列表场景计算签名/摘要
 6. 增补后端知识库与 Agent 接入文档：`docs/architecture/backend-agent-integration.md`
 
+最近维护（2026-04-17）：
+
+1. 文档层补充 `kb completion` 命令契约与示例输出
+2. 文档层补充 `kb -h` 分组概览输出（git 风格）约定
+3. 命令层冗余参数传递重构（`format_update_text` 改为结构体输入），并通过 clippy gate
+
 ---
 
 ## Normative Sources
@@ -169,6 +175,8 @@
    - `cargo clippy --workspace --all-targets -- -D warnings`
 3. 文档/fixture 一致性 gate
    - `node tests/tools/validate-doc-fixture-diff.js`
+4. 帮助输出回归 gate
+   - `cargo test -p kb-cli root_help_matches_full_snapshot`
 
 ---
 

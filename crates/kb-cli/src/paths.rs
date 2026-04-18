@@ -4,7 +4,7 @@ use std::path::Path;
 // raw 目录策略统一放在这里，避免业务代码到处硬编码路径。
 pub const RAW_DIR_REL: &str = "./.kb/raw";
 pub const RAW_PREFIX: &str = "./.kb/raw/";
-pub const KBIGNORE_REL: &str = "kb/.kbignore";
+pub const KBIGNORE_REL: &str = ".kb/.kbignore";
 
 pub fn load_ignore_rules(cwd: &Path) -> Vec<String> {
     let path = cwd.join(KBIGNORE_REL);

@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,13 +58,31 @@ fn mk_file(root: &Path, rel: &str, content: &str) {
     fs::write(abs, content).expect("write file");
 }
 
+fn write_json_file(root: &Path, rel: &str, value: &Value) {
+    let abs = root.join(rel.trim_start_matches("./"));
+    if let Some(parent) = abs.parent() {
+        fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    let raw = serde_json::to_string_pretty(value).expect("serialize json");
+    fs::write(abs, raw).expect("write json file");
+}
+
+fn read_json_file(root: &Path, rel: &str) -> Value {
+    let abs = root.join(rel.trim_start_matches("./"));
+    let raw = fs::read_to_string(abs).expect("read json file");
+    serde_json::from_str(&raw).expect("parse json file")
+}
+
 #[test]
 fn init_creates_kbignore() {
     let dir = unique_temp_dir("init-kbignore");
     let (ok, body) = run_json(&["init", "demo"], &dir);
     assert!(ok);
     assert_eq!(body["status"], "success");
-    assert!(dir.join("kb/.kbignore").exists());
+    assert!(dir.join(".kb/.kbignore").exists());
+    let ignore_raw = fs::read_to_string(dir.join(".kb/.kbignore")).expect("read .kbignore");
+    assert!(ignore_raw.contains("./kb.md"));
+    assert!(ignore_raw.contains("./.kb/refs.json"));
     assert!(dir.join(".kb/raw").exists());
 }
 
@@ -90,12 +108,33 @@ fn add_ignored_path_is_non_error_skip() {
     let (ok, _) = run_json(&["init", "demo"], &dir);
     assert!(ok);
 
-    mk_file(&dir, "./kb/.kbignore", "ignored/*\n");
+    mk_file(&dir, "./.kb/.kbignore", "ignored/*\n");
     mk_file(&dir, "./ignored/a.md", "hello");
 
     let (ok, body) = run_json(&["add", "./ignored/a.md", "ignored/a"], &dir);
     assert!(ok, "ignored add should not be an error");
     assert_eq!(body["data"]["ignored"], true);
+}
+
+#[test]
+fn add_rejects_protected_internal_paths() {
+    let dir = unique_temp_dir("add-protected-path");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    let (ok, kb_md) = run_json(&["add", "./kb.md", "meta/kbmd"], &dir);
+    assert!(!ok);
+    assert_eq!(kb_md["error"]["code"], "E2009");
+
+    mk_file(&dir, "./.kb/index.local.json", "{}");
+    let (ok, kb_cfg) = run_json(&["add", "./.kb/index.local.json", "meta/index"], &dir);
+    assert!(!ok);
+    assert_eq!(kb_cfg["error"]["code"], "E2009");
+
+    mk_file(&dir, "./.kb/raw/manual.md", "RAW");
+    let (ok, raw_ok) = run_json(&["add", "./.kb/raw/manual.md", "raw/manual"], &dir);
+    assert!(ok);
+    assert_eq!(raw_ok["data"]["path"], "./.kb/raw/manual.md");
 }
 
 #[test]
@@ -109,6 +148,177 @@ fn add_default_append_and_category() {
     assert!(ok);
     assert_eq!(body["data"]["alias"], "docs/a");
     assert_eq!(body["data"]["path"], "./docs/a.md");
+}
+
+#[test]
+fn check_detects_additions_from_kb_md_and_raw_against_regs() {
+    let dir = unique_temp_dir("check-kbmd-raw-regs-add");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(&dir, "./.kb/raw/raw-a.md", "RAW A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"---
+kb: demo
+default_perm: r
+---
+
+# docs:rw
+[docs/a](docs/a.md):rw
+"#,
+    );
+    write_json_file(&dir, "./.kb/regs.json", &json!({ "regs": [] }));
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+
+    let to_add = check["data"]["to_add"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        to_add
+            .iter()
+            .any(|x| x["path"] == "./docs/a.md" && x["source"] == "kbmd"),
+        "kb.md file should be recognized as add"
+    );
+    assert!(
+        to_add
+            .iter()
+            .any(|x| x["path"] == "./.kb/raw/raw-a.md" && x["source"] == "raw"),
+        "raw file should be recognized as add"
+    );
+}
+
+#[test]
+fn check_marks_deleted_and_not_found_against_regs() {
+    let dir = unique_temp_dir("check-regs-delete-notfound");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/live.md", "LIVE");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[missing](docs/missing.md):r
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "live",
+                    "alias": "live",
+                    "path": "./docs/live.md",
+                    "perms": "r",
+                    "source": "kbmd"
+                },
+                {
+                    "id": "missing",
+                    "alias": "missing",
+                    "path": "./docs/missing.md",
+                    "perms": "r",
+                    "source": "kbmd"
+                }
+            ]
+        }),
+    );
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+    let to_remove = check["data"]["to_remove"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    assert!(
+        to_remove
+            .iter()
+            .any(|x| x["path"] == "./docs/live.md" && x["reason"] == "deleted"),
+        "registry entry missing from kb.md/raw should be marked deleted"
+    );
+    assert!(
+        to_remove
+            .iter()
+            .any(|x| x["path"] == "./docs/missing.md" && x["reason"] == "not_found"),
+        "kb.md entry pointing to a missing file should be marked not_found"
+    );
+}
+
+#[test]
+fn update_applies_add_and_remove_to_regs_file() {
+    let dir = unique_temp_dir("update-regs-apply");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/new.md", "NEW");
+    mk_file(&dir, "./docs/stale.md", "STALE");
+    mk_file(&dir, "./.kb/raw/raw-new.md", "RAW NEW");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:rw
+[docs/new](docs/new.md):rw
+[missing](docs/missing.md):r
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "docs/stale",
+                    "alias": "docs/stale",
+                    "path": "./docs/stale.md",
+                    "perms": "rw",
+                    "source": "kbmd"
+                },
+                {
+                    "id": "missing",
+                    "alias": "missing",
+                    "path": "./docs/missing.md",
+                    "perms": "r",
+                    "source": "kbmd"
+                }
+            ]
+        }),
+    );
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let regs = read_json_file(&dir, "./.kb/regs.json");
+    let items = regs["regs"].as_array().cloned().unwrap_or_default();
+    let paths = items
+        .iter()
+        .filter_map(|x| x["path"].as_str().map(ToString::to_string))
+        .collect::<Vec<_>>();
+
+    assert!(
+        paths.iter().any(|x| x == "./docs/new.md"),
+        "new kb.md file should be added into regs"
+    );
+    assert!(
+        paths.iter().any(|x| x == "./.kb/raw/raw-new.md"),
+        "raw file should be added into regs"
+    );
+    assert!(
+        !paths.iter().any(|x| x == "./docs/stale.md"),
+        "deleted file should be removed from regs"
+    );
+    assert!(
+        !paths.iter().any(|x| x == "./docs/missing.md"),
+        "not_found file should be removed from regs"
+    );
 }
 
 #[test]
@@ -133,11 +343,12 @@ fn update_idempotency_and_prune_behavior() {
     fs::remove_file(dir.join("docs/a.md")).expect("remove file for missing path test");
     let (ok, marked) = run_json(&["update"], &dir);
     assert!(ok);
-    assert_eq!(marked["data"]["marked_invalid"], 1);
+    assert_eq!(marked["data"]["marked_invalid"], 0);
+    assert_eq!(marked["data"]["removed"], 1);
 
     let (ok, pruned) = run_json(&["update", "--prune"], &dir);
     assert!(ok);
-    assert_eq!(pruned["data"]["removed"], 1);
+    assert_eq!(pruned["data"]["removed"], 0);
 }
 
 #[test]
@@ -168,7 +379,7 @@ fn check_and_update_apply_kbignore_before_scan() {
     let (ok, _) = run_json(&["init", "demo"], &dir);
     assert!(ok);
 
-    mk_file(&dir, "./kb/.kbignore", "./docs/skip.md\n");
+    mk_file(&dir, "./.kb/.kbignore", "./docs/skip.md\n");
     mk_file(&dir, "./docs/skip.md", "SKIP");
     mk_file(&dir, "./docs/keep.md", "KEEP");
 
@@ -200,6 +411,78 @@ fn check_and_update_apply_kbignore_before_scan() {
 }
 
 #[test]
+fn update_appends_new_raw_files_into_kb_md_raw_category() {
+    let dir = unique_temp_dir("update-append-raw-into-kbmd");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./.kb/raw/new-raw.md", "RAW NEW");
+
+    let (ok, first) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(first["data"]["added"], 1);
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(
+        kb_md.contains("# raw"),
+        "kb.md should keep raw category heading"
+    );
+    assert!(
+        kb_md.contains("[](./.kb/raw/new-raw.md)"),
+        "kb update should append raw file into kb.md using markdown reference format"
+    );
+
+    let (ok, second) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(second["data"]["added"], 0);
+
+    let kb_md_again = fs::read_to_string(dir.join("kb.md")).expect("read kb.md again");
+    let count = kb_md_again.matches("[](./.kb/raw/new-raw.md)").count();
+    assert_eq!(count, 1, "raw reference should not be duplicated");
+}
+
+#[test]
+fn update_ignores_protected_paths_even_if_state_contains_them() {
+    let dir = unique_temp_dir("update-ignore-protected");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let refs_path = dir.join(".kb/refs.json");
+    let mut refs_doc: Value =
+        serde_json::from_str(&fs::read_to_string(&refs_path).expect("read refs")).expect("parse refs");
+    refs_doc["refs"].as_array_mut().expect("refs array").push(json!({
+        "alias": "meta/kbmd",
+        "path": "./kb.md",
+        "category": "raw",
+        "perms": "rwx"
+    }));
+    refs_doc["refs"].as_array_mut().expect("refs array").push(json!({
+        "alias": "meta/refs",
+        "path": "./.kb/refs.json",
+        "category": "raw",
+        "perms": "rwx"
+    }));
+    fs::write(
+        &refs_path,
+        serde_json::to_string_pretty(&refs_doc).expect("serialize refs"),
+    )
+    .expect("write refs");
+
+    let (ok, update) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert!(update["data"]["added"].as_u64().unwrap_or(0) >= 1);
+
+    let index_raw = fs::read_to_string(dir.join(".kb/index.json")).expect("read index");
+    assert!(!index_raw.contains("./kb.md"));
+    assert!(!index_raw.contains("./.kb/refs.json"));
+    assert!(index_raw.contains("./docs/a.md"));
+}
+
+#[test]
 fn list_filter_long_tree_support() {
     let dir = unique_temp_dir("list-filter");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -221,6 +504,52 @@ fn list_filter_long_tree_support() {
     assert!(items[0].get("size").is_some());
     assert!(items[0].get("mtime").is_some());
     assert!(filtered["data"].get("categories").is_some());
+}
+
+#[test]
+fn list_uses_regs_json_as_source_of_truth() {
+    let dir = unique_temp_dir("list-from-regs");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/in-kb.md", "KB");
+    mk_file(&dir, "./docs/in-regs.md", "REGS");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[only-kb](docs/in-kb.md):r
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "only-regs",
+                    "alias": "only-regs",
+                    "path": "./docs/in-regs.md",
+                    "perms": "r",
+                    "source": "kbmd"
+                }
+            ]
+        }),
+    );
+
+    let (ok, listed) = run_json(&["list"], &dir);
+    assert!(ok);
+
+    let items = listed["data"]["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        items.iter().any(|x| x["path"] == "./docs/in-regs.md"),
+        "list should include records from regs.json"
+    );
+    assert!(
+        !items.iter().any(|x| x["path"] == "./docs/in-kb.md"),
+        "list should not read directly from kb.md"
+    );
 }
 
 #[test]
@@ -451,7 +780,7 @@ fn completion_bash_outputs_script_in_text_mode() {
     let output = assert.get_output();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("_kb-cli()") || stdout.contains("kb-cli"));
+    assert!(stdout.contains("_kb()") || stdout.contains(" kb"));
 }
 
 #[test]
@@ -464,7 +793,7 @@ fn completion_json_contains_script_field() {
     assert!(body["data"]["script"]
         .as_str()
         .unwrap_or_default()
-        .contains("kb-cli"));
+    .contains("kb"));
 }
 
 #[test]
@@ -519,4 +848,36 @@ fn env_list_shows_only_existing_registered_kb_roots() {
         .as_array()
         .expect("items must be array");
     assert!(items.is_empty());
+}
+
+#[test]
+fn env_list_text_is_human_readable_multiline() {
+    let global_root = unique_temp_dir("env-text-global-root");
+    let caller = unique_temp_dir("env-text-caller");
+    let kb_one = unique_temp_dir("env-text-kb-one");
+    let global_config = global_root.join("config.json");
+
+    let (ok, _) = run_json_with_global_config(&["init", "demo"], &kb_one, &global_config);
+    assert!(ok);
+
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(&caller)
+        .env("KB_GLOBAL_CONFIG", &global_config)
+        .args(["env", "--list"])
+        .assert();
+
+    let output = assert.get_output();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config_path:"));
+    assert!(stdout.contains("items:"));
+    assert!(stdout.contains("count:"));
+    assert!(stdout.contains("recorded_total:"));
+    assert!(stdout.contains("- "));
+    assert!(
+        !stdout.trim_start().starts_with('{'),
+        "text output should not be rendered as raw JSON"
+    );
 }

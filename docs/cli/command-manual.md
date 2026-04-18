@@ -1,52 +1,52 @@
-# KB-CLI 命令手册
+﻿# KB-CLI 鍛戒护鎵嬪唽
 
-本文档为 KB-CLI 命令体系的**权威参考**，用于说明命令语法、参数、选项、语义、错误行为与边界条件。
-
-> **权威声明：** 当 `command-examples.md` 或 `error-catalog.md` 与本手册不一致时，以本手册为准。
->
-> **关联文档：**
+鏈枃妗ｄ负 KB-CLI 鍛戒护浣撶郴鐨?*鏉冨▉鍙傝€?*锛岀敤浜庤鏄庡懡浠よ娉曘€佸弬鏁般€侀€夐」銆佽涔夈€侀敊璇涓轰笌杈圭晫鏉′欢銆?
+> **鏉冨▉澹版槑锛?* 褰?`command-examples.md` 鎴?`error-catalog.md` 涓庢湰鎵嬪唽涓嶄竴鑷存椂锛屼互鏈墜鍐屼负鍑嗐€?>
+> **鍏宠仈鏂囨。锛?*
 > - `docs/cli/kb-md-spec.md`
 > - `docs/cli/state-diff-contract.md`
 > - `docs/cli/kbignore-spec.md`
 >
-> **开发说明：** CLI 解析建议使用 `clap` derive 宏实现。
+> **寮€鍙戣鏄庯細** CLI 瑙ｆ瀽寤鸿浣跨敤 `clap` derive 瀹忓疄鐜般€?
+> **瀹炵幇鐘舵€佽ˉ鍏咃紙2026-04-18锛夛細**
+> - `rm --force` 涓?`update --yes` 褰撳墠涓轰繚鐣欏弬鏁颁綅锛屼笉鏀瑰彉鎵ц閫昏緫銆?> - `check/update` 澹版槑杈撳叆鏉ユ簮涓?`kb.md + ./.kb/raw/`锛岀櫥璁版潵婧愪负 `./.kb/regs.json`銆?> - `list` 褰撳墠璇诲彇 `./.kb/regs.json`锛堣€屼笉鏄洿鎺ユ壂鎻?`kb.md`锛夈€?> - `list --long` 鐨?`mtime` 褰撳墠杈撳嚭 Unix 绉掑瓧绗︿覆銆?> - `init` 鎴愬姛鍚庝細灏濊瘯鐧昏褰撳墠鐭ヨ瘑搴撳埌鍏ㄥ眬娉ㄥ唽琛紙鐧昏澶辫触涓嶅奖鍝?init 鎴愬姛锛夈€?> - 鏂板 `kb env --list`锛氱敤浜庡垪鍑哄凡鐧昏涓斾粛瀛樺湪鐨勭煡璇嗗簱鏍圭洰褰曘€?> - 鏍瑰懡浠ゅ府鍔╁悕涓?`kb`锛孶sage 涓?`kb [OPTIONS] <COMMAND>`锛屽苟鎻愪緵鍒嗙粍姒傝娈佃惤銆?> - text 妯″紡浣跨敤鍛戒护涓撳睘澶氳杈撳嚭锛沯son 妯″紡淇濇寔绋冲畾缁撴瀯骞剁Щ闄ゅ唴閮?`_raw_text` 瀛楁銆?> - 琛ュ厖 `kb completion` 鍛戒护濂戠害涓?`kb -h` 杈撳嚭闄勫綍锛屾枃妗ｄ笌褰撳墠瀹炵幇淇濇寔涓€鑷淬€?> - `kb update` 浼氬皢鏂板 raw 鏂囦欢鎸?`kb.md` 瑙勮寖鍥炲～鍒?`# raw` 鍒嗙被锛屼笖鍘婚噸銆?
+## 鍏ㄥ眬閫夐」
 
-> **实现状态补充（2026-04-15）：**
-> - `rm --force` 与 `update --yes` 当前为保留参数位，不改变执行逻辑。
-> - `check/update` 当前快照来源为 `.kb/refs.json` 投影记录。
-> - `list --long` 的 `mtime` 当前输出 Unix 秒字符串。
-> - `init` 成功后会尝试登记当前知识库到全局注册表（登记失败不影响 init 成功）。
-> - 新增 `kb env --list`：用于列出已登记且仍存在的知识库根目录。
-
-## 全局选项
-
-| 选项 | 类型 | 默认值 | 说明 |
+| 閫夐」 | 绫诲瀷 | 榛樿鍊?| 璇存槑 |
 |---|---|---|---|
-| `--output <text\|json>` | 枚举 | `text` | 设置输出格式 |
-| `--quiet` | 标志 | 关闭 | 抑制所有非必要输出 |
-| `--verbose` | 计数 | `0` | 提高日志详细程度，可叠加 `-v` `-vv` |
-| `--config <PATH>` | 字符串 | 平台默认 | 覆盖默认配置文件路径 |
-| `--no-color` | 标志 | 关闭 | 禁用输出中的 ANSI 颜色 |
-| `--help` | 标志 | - | 显示帮助信息并退出 |
-| `--version` | 标志 | - | 显示版本信息并退出 |
+| `--output <text\|json>` | 鏋氫妇 | `text` | 璁剧疆杈撳嚭鏍煎紡 |
+| `--quiet` | 鏍囧織 | 鍏抽棴 | 鎶戝埗鎵€鏈夐潪蹇呰杈撳嚭 |
+| `--verbose` | 璁℃暟 | `0` | 鎻愰珮鏃ュ織璇︾粏绋嬪害锛屽彲鍙犲姞 `-v` `-vv` |
+| `--config <PATH>` | 瀛楃涓?| 骞冲彴榛樿 | 瑕嗙洊榛樿閰嶇疆鏂囦欢璺緞 |
+| `--no-color` | 鏍囧織 | 鍏抽棴 | 绂佺敤杈撳嚭涓殑 ANSI 棰滆壊 |
+| `--help` | 鏍囧織 | - | 鏄剧ず甯姪淇℃伅骞堕€€鍑?|
+| `--version` | 鏍囧織 | - | 鏄剧ず鐗堟湰淇℃伅骞堕€€鍑?|
 
-## 环境变量（实现）
+### 甯姪杈撳嚭绾﹀畾
 
-| 变量 | 说明 |
+- 鏍瑰懡浠ゅ悕锛歚kb`
+- 鏍瑰懡浠?Usage锛歚kb [OPTIONS] <COMMAND>`
+- `kb -h` 浼氬湪甯歌鍙傛暟璇存槑鍚庨檮鍔犲垎缁勫懡浠ゆ瑙堬紝渚夸簬蹇€熷彂鐜板父鐢ㄥ瓙鍛戒护銆?- `kb --help` 瀹屾暣杈撳嚭鍙楀揩鐓ф祴璇曚繚鎶わ細`crates/kb-cli/tests/snapshots/cli_surface__kb_root_help_full.snap`
+
+## 鐜鍙橀噺锛堝疄鐜帮級
+
+| 鍙橀噺 | 璇存槑 |
 |---|---|
-| `KB_GLOBAL_CONFIG` | 指定全局配置文件路径（用于 `kb env` 与 `init` 的全局知识库登记） |
-| `KB_QUIET` | 运行时配置层（等价 quiet） |
-| `KB_VERBOSE` | 运行时配置层（等价 verbose） |
-| `KB_NO_COLOR` | 运行时配置层（等价 no-color） |
+| `KB_GLOBAL_CONFIG` | 鎸囧畾鍏ㄥ眬閰嶇疆鏂囦欢璺緞锛堢敤浜?`kb env` 涓?`init` 鐨勫叏灞€鐭ヨ瘑搴撶櫥璁帮級 |
+| `KB_QUIET` | 杩愯鏃堕厤缃眰锛堢瓑浠?quiet锛?|
+| `KB_VERBOSE` | 杩愯鏃堕厤缃眰锛堢瓑浠?verbose锛?|
+| `KB_NO_COLOR` | 杩愯鏃堕厤缃眰锛堢瓑浠?no-color锛?|
 
-## 输出规则
+## 杈撳嚭瑙勫垯
 
-| 模式 | 标准输出 (stdout) | 标准错误 (stderr) |
+| 妯″紡 | 鏍囧噯杈撳嚭 (stdout) | 鏍囧噯閿欒 (stderr) |
 |---|---|---|
-| `text` | 供人阅读的命令执行结果、数据列表、提示信息 | 警告、错误信息、执行日志（根据 verbose 级别） |
-| `json` | 仅输出结构化的 JSON 结果对象 | 所有日志与人类可读的提示信息、警告、错误文本 |
+| `text` | 渚涗汉闃呰鐨勫懡浠ゆ墽琛岀粨鏋溿€佹暟鎹垪琛ㄣ€佹彁绀轰俊鎭?| 璀﹀憡銆侀敊璇俊鎭€佹墽琛屾棩蹇楋紙鏍规嵁 verbose 绾у埆锛?|
+| `json` | 浠呰緭鍑虹粨鏋勫寲鐨?JSON 缁撴灉瀵硅薄 | 鎵€鏈夋棩蹇椾笌浜虹被鍙鐨勬彁绀轰俊鎭€佽鍛娿€侀敊璇枃鏈?|
 
-### JSON 成功响应示例
+琛ュ厖绾﹀畾锛?
+- text 妯″紡锛?  - 浣跨敤鍛戒护涓撳睘澶氳鏍煎紡锛堜緥濡?`init`/`add` 鐨勫叧閿瓧娈垫憳瑕併€乣list` 鐨勮〃鏍煎寲鏉＄洰銆乣check`/`update` 鐨勭粺璁℃憳瑕侊級銆?  - 涓嶄繚璇佸瓧娈甸『搴忓彲鏈哄櫒瑙ｆ瀽锛岄潰鍚戜汉宸ラ槄璇汇€?- json 妯″紡锛?  - 杈撳嚭绋冲畾 envelope锛歚schema_version + status + data`锛堟垨 `error`锛夈€?  - 鍐呴儴 text 娓叉煋瀛楁 `_raw_text` 涓嶄細鍑虹幇鍦ㄦ渶缁?JSON 杈撳嚭涓€?
+### JSON 鎴愬姛鍝嶅簲绀轰緥
 ```json
 {
   "schema_version": "1.0",
@@ -55,332 +55,267 @@
 }
 ```
 
-### JSON 错误响应示例
+### JSON 閿欒鍝嶅簲绀轰緥
 ```json
 {
   "schema_version": "1.0",
   "error": {
     "code": "E1001",
-    "message": "配置文件写入失败",
-    "suggestion": "检查文件权限和磁盘空间",
+    "message": "閰嶇疆鏂囦欢鍐欏叆澶辫触",
+    "suggestion": "妫€鏌ユ枃浠舵潈闄愬拰纾佺洏绌洪棿",
     "details": {}
   }
 }
 ```
 
-## 前置条件
+## 鍓嶇疆鏉′欢
 
-除 `kb init`、`kb env`、`kb completion` 外，其他命令均要求当前目录存在 `kb.md`。若未初始化，命令将中断并返回 `E3001`（退出码 3）。
-
-## `.kbignore` 规则（MVP）
-
-> 详细语法与交互边界见：`docs/cli/kbignore-spec.md`。
-
-- 文件位置：`./kb/.kbignore`
-- 语法子集：
-  - 空行与 `#` 注释
-  - 简单通配符：`*`、`?`
-  - 目录限定：尾随 `/`
-- 命中 `.kbignore` 的路径不会进入知识库索引。
-- 当前版本不包含复杂规则（如复杂反选链）。
-
-## 命令集
-
+闄?`kb init`銆乣kb env`銆乣kb completion` 澶栵紝鍏朵粬鍛戒护鍧囪姹傚綋鍓嶇洰褰曞瓨鍦?`kb.md`銆傝嫢鏈垵濮嬪寲锛屽懡浠ゅ皢涓柇骞惰繑鍥?`E3001`锛堥€€鍑虹爜 3锛夈€?
+## `.kbignore` 瑙勫垯锛圡VP锛?
+> 璇︾粏璇硶涓庝氦浜掕竟鐣岃锛歚docs/cli/kbignore-spec.md`銆?
+- 鏂囦欢浣嶇疆锛歚./.kb/.kbignore`
+- 璇硶瀛愰泦锛?  - 绌鸿涓?`#` 娉ㄩ噴
+  - 绠€鍗曢€氶厤绗︼細`*`銆乣?`
+  - 鐩綍闄愬畾锛氬熬闅?`/`
+- 鍛戒腑 `.kbignore` 鐨勮矾寰勪笉浼氳繘鍏ョ煡璇嗗簱绱㈠紩銆?- 褰撳墠鐗堟湰涓嶅寘鍚鏉傝鍒欙紙濡傚鏉傚弽閫夐摼锛夈€?
+## 鍛戒护闆?
 ### `kb init`
 
-* **语法：** `kb init [NAME] [--force]`
-* **参数：**
-  * `NAME`（可选）：知识库名称。默认值为当前目录名。
-* **选项：**
-  * `--force`：覆盖已存在的初始化结构。
-* **语义：**
-  * **成功：** 创建 `kb.md` 与 `.kb/`，并在 `./kb/` 下创建空 `.kbignore`。若使用 `--force`，则在 JSON 输出中返回 `overwritten: true`。
-  * **附加行为：** 成功后会尝试将当前知识库根目录写入全局注册表（`knowledge_bases`）。
-    * 路径来源优先级：`KB_GLOBAL_CONFIG` > `~/.kb-cli/config.json`
-    * 登记失败不会影响本地初始化成功结果。
-  * **失败：** 未使用 `--force` 但当前目录已初始化，返回 `E3002`（退出码 3）。配置文件写入失败，返回 `E1001`（退出码 1）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb init [NAME] [--force]`
+* **鍙傛暟锛?*
+  * `NAME`锛堝彲閫夛級锛氱煡璇嗗簱鍚嶇О銆傞粯璁ゅ€间负褰撳墠鐩綍鍚嶃€?* **閫夐」锛?*
+  * `--force`锛氳鐩栧凡瀛樺湪鐨勫垵濮嬪寲缁撴瀯銆?* **璇箟锛?*
+  * **鎴愬姛锛?* 鍒涘缓 `kb.md` 涓?`.kb/`锛屽苟鍦?`./.kb/` 涓嬪垱寤?`.kbignore`锛堥粯璁ゅ寘鍚?`kb.md`銆乣.kb/refs.json`銆乣.kb/regs.json`銆乣.kb/index*.json`銆乣.kb/schema.version` 绛夊唴閮ㄩ厤缃枃浠跺拷鐣ヨ鍒欙級銆傝嫢浣跨敤 `--force`锛屽垯鍦?JSON 杈撳嚭涓繑鍥?`overwritten: true`銆?  * **闄勫姞琛屼负锛?* 鎴愬姛鍚庝細灏濊瘯灏嗗綋鍓嶇煡璇嗗簱鏍圭洰褰曞啓鍏ュ叏灞€娉ㄥ唽琛紙`knowledge_bases`锛夈€?    * 璺緞鏉ユ簮浼樺厛绾э細`KB_GLOBAL_CONFIG` > `~/.kb-cli/config.json`
+    * 鐧昏澶辫触涓嶄細褰卞搷鏈湴鍒濆鍖栨垚鍔熺粨鏋溿€?  * **澶辫触锛?* 鏈娇鐢?`--force` 浣嗗綋鍓嶇洰褰曞凡鍒濆鍖栵紝杩斿洖 `E3002`锛堥€€鍑虹爜 3锛夈€傞厤缃枃浠跺啓鍏ュけ璐ワ紝杩斿洖 `E1001`锛堥€€鍑虹爜 1锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `project` | string | 项目名称 |
-| `path` | string | 初始化路径 |
-| `overwritten` | bool | 是否覆盖（仅在提供 `--force` 时存在） |
+| `project` | string | 椤圭洰鍚嶇О |
+| `path` | string | 鍒濆鍖栬矾寰?|
+| `overwritten` | bool | 鏄惁瑕嗙洊锛堜粎鍦ㄦ彁渚?`--force` 鏃跺瓨鍦級 |
 
 ### `kb add`
 
-* **语法：** `kb add <PATH> [ALIAS] [--mode <link|copy>] [--category <CATEGORY>]`
-* **参数：**
-  * `PATH`（必填）：目标文件或目录路径，必须存在。
-  * `ALIAS`（可选）：自定义别名。
-* **选项：**
-  * `--mode <link|copy>`：添加模式。默认 `link`。
-    * `link`：仅建立路径符号索引，不改变原文件结构。
-    * `copy`：复制文件到 `./.kb/raw/`，后续由 `kb update` 自动归档到 `kb.md`。
-  * `--category <CATEGORY>`：将条目添加到指定分类。若分类不存在，返回 `E2007` 并提示可选分类。
-* **别名解析规则（3 步）：**
-  1. 若提供了 `ALIAS` 且不为空，则使用该别名。
-  2. 若省略 `ALIAS` 或为空，则使用规范化后的 `PATH` 作为别名。
-  3. 规范化规则：绝对路径保持绝对；相对路径保持相对；消除 `./` 并压缩 `//` 为 `/`。
-* **语义：**
-  * **成功：** 使用解析后的别名注册路径引用。
-  * **命中忽略：** 若 `PATH` 命中 `./kb/.kbignore` 规则，则输出提示并忽略本次添加（不写入索引，不作为错误）。
-  * **失败：** 路径不存在返回 `E5001`（退出码 5）；别名冲突返回 `E2003`（退出码 2，提示用户重新指定或取消）；路径已使用其他别名注册返回 `E2006`（退出码 2）；别名包含非法字符返回 `E2001`（退出码 2）；指定分类不存在返回 `E2007`（退出码 2）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb add <PATH> [ALIAS] [--mode <link|copy>] [--category <CATEGORY>]`
+* **鍙傛暟锛?*
+  * `PATH`锛堝繀濉級锛氱洰鏍囨枃浠舵垨鐩綍璺緞锛屽繀椤诲瓨鍦ㄣ€?  * `ALIAS`锛堝彲閫夛級锛氳嚜瀹氫箟鍒悕銆?* **閫夐」锛?*
+  * `--mode <link|copy>`锛氭坊鍔犳ā寮忋€傞粯璁?`link`銆?    * `link`锛氫粎寤虹珛璺緞绗﹀彿绱㈠紩锛屼笉鏀瑰彉鍘熸枃浠剁粨鏋勩€?    * `copy`锛氬鍒舵枃浠跺埌 `./.kb/raw/`锛屽悗缁敱 `kb update` 鑷姩褰掓。鍒?`kb.md`銆?  * `--category <CATEGORY>`锛氬皢鏉＄洰娣诲姞鍒版寚瀹氬垎绫汇€傝嫢鍒嗙被涓嶅瓨鍦紝杩斿洖 `E2007` 骞舵彁绀哄彲閫夊垎绫汇€?* **鍒悕瑙ｆ瀽瑙勫垯锛? 姝ワ級锛?*
+  1. 鑻ユ彁渚涗簡 `ALIAS` 涓斾笉涓虹┖锛屽垯浣跨敤璇ュ埆鍚嶃€?  2. 鑻ョ渷鐣?`ALIAS` 鎴栦负绌猴紝鍒欎娇鐢ㄨ鑼冨寲鍚庣殑 `PATH` 浣滀负鍒悕銆?  3. 瑙勮寖鍖栬鍒欙細缁濆璺緞淇濇寔缁濆锛涚浉瀵硅矾寰勪繚鎸佺浉瀵癸紱娑堥櫎 `./` 骞跺帇缂?`//` 涓?`/`銆?* **璇箟锛?*
+  * **鎴愬姛锛?* 浣跨敤瑙ｆ瀽鍚庣殑鍒悕娉ㄥ唽璺緞寮曠敤銆?  * **鍛戒腑蹇界暐锛?* 鑻?`PATH` 鍛戒腑 `./.kb/.kbignore` 瑙勫垯锛屽垯杈撳嚭鎻愮ず骞跺拷鐣ユ湰娆℃坊鍔狅紙涓嶅啓鍏ョ储寮曪紝涓嶄綔涓洪敊璇級銆?  * **鍙椾繚鎶よ矾寰勶細** `kb.md` 涓?`./.kb/` 涓嬮櫎 `./.kb/raw/` 澶栫殑鍐呴儴鏂囦欢绂佹鍔犲叆绱㈠紩锛岃繑鍥?`E2009`銆?  * **澶辫触锛?* 璺緞涓嶅瓨鍦ㄨ繑鍥?`E5001`锛堥€€鍑虹爜 5锛夛紱鍒悕鍐茬獊杩斿洖 `E2003`锛堥€€鍑虹爜 2锛屾彁绀虹敤鎴烽噸鏂版寚瀹氭垨鍙栨秷锛夛紱璺緞宸蹭娇鐢ㄥ叾浠栧埆鍚嶆敞鍐岃繑鍥?`E2006`锛堥€€鍑虹爜 2锛夛紱鍒悕鍖呭惈闈炴硶瀛楃杩斿洖 `E2001`锛堥€€鍑虹爜 2锛夛紱鎸囧畾鍒嗙被涓嶅瓨鍦ㄨ繑鍥?`E2007`锛堥€€鍑虹爜 2锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `alias` | string | 解析后的别名 |
-| `path` | string | 目标路径 |
+| `alias` | string | 瑙ｆ瀽鍚庣殑鍒悕 |
+| `path` | string | 鐩爣璺緞 |
 
 ### `kb mv`
 
-* **语法：** `kb mv <ALIAS> <NEW_ALIAS>`
-* **参数：**
-  * `ALIAS`（必填）：当前别名，必须存在。
-  * `NEW_ALIAS`（必填）：目标别名，必须不存在。
-* **语义：**
-  * **成功：** 重命名别名，物理路径和权限保持不变。
-  * **失败：** 源别名不存在返回 `E5002`（退出码 5）；目标别名已存在返回 `E2003`（退出码 2）；目标别名不合法返回 `E2001`（退出码 2）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb mv <ALIAS> <NEW_ALIAS>`
+* **鍙傛暟锛?*
+  * `ALIAS`锛堝繀濉級锛氬綋鍓嶅埆鍚嶏紝蹇呴』瀛樺湪銆?  * `NEW_ALIAS`锛堝繀濉級锛氱洰鏍囧埆鍚嶏紝蹇呴』涓嶅瓨鍦ㄣ€?* **璇箟锛?*
+  * **鎴愬姛锛?* 閲嶅懡鍚嶅埆鍚嶏紝鐗╃悊璺緞鍜屾潈闄愪繚鎸佷笉鍙樸€?  * **澶辫触锛?* 婧愬埆鍚嶄笉瀛樺湪杩斿洖 `E5002`锛堥€€鍑虹爜 5锛夛紱鐩爣鍒悕宸插瓨鍦ㄨ繑鍥?`E2003`锛堥€€鍑虹爜 2锛夛紱鐩爣鍒悕涓嶅悎娉曡繑鍥?`E2001`锛堥€€鍑虹爜 2锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `old_alias` | string | 原别名 |
-| `new_alias` | string | 新别名 |
+| `old_alias` | string | 鍘熷埆鍚?|
+| `new_alias` | string | 鏂板埆鍚?|
 
 ### `kb rm`
 
-* **语法：** `kb rm <ALIAS> [--force]`
-* **参数：**
-  * `ALIAS`（必填）：待移除的别名，必须存在。
-* **选项：**
-  * `--force`：保留参数（当前实现不区分是否传入该参数）。
-* **交互行为：** 当前版本无交互确认流程，命令会直接执行“移除引用”。
-* **语义：**
-  * **成功：** 移除别名引用，**不会**删除实际物理文件。
-  * **失败：** 别名不存在返回 `E5002`（退出码 5）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb rm <ALIAS> [--force]`
+* **鍙傛暟锛?*
+  * `ALIAS`锛堝繀濉級锛氬緟绉婚櫎鐨勫埆鍚嶏紝蹇呴』瀛樺湪銆?* **閫夐」锛?*
+  * `--force`锛氫繚鐣欏弬鏁帮紙褰撳墠瀹炵幇涓嶅尯鍒嗘槸鍚︿紶鍏ヨ鍙傛暟锛夈€?* **浜や簰琛屼负锛?* 褰撳墠鐗堟湰鏃犱氦浜掔‘璁ゆ祦绋嬶紝鍛戒护浼氱洿鎺ユ墽琛屸€滅Щ闄ゅ紩鐢ㄢ€濄€?* **璇箟锛?*
+  * **鎴愬姛锛?* 绉婚櫎鍒悕寮曠敤锛?*涓嶄細**鍒犻櫎瀹為檯鐗╃悊鏂囦欢銆?  * **澶辫触锛?* 鍒悕涓嶅瓨鍦ㄨ繑鍥?`E5002`锛堥€€鍑虹爜 5锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `removed_alias` | string | 被移除的别名 |
-| `path` | string | 原关联的物理路径 |
+| `removed_alias` | string | 琚Щ闄ょ殑鍒悕 |
+| `path` | string | 鍘熷叧鑱旂殑鐗╃悊璺緞 |
 
 ### `kb path`
 
-* **语法：** `kb path <ALIAS> [NEW_PATH]`
-* **参数：**
-  * `ALIAS`（必填）：目标别名，必须存在。
-  * `NEW_PATH`（可选）：新物理路径。
-* **语义：**
-  * **成功（查询）：** 未提供 `NEW_PATH` 时，返回当前的物理路径。
-  * **成功（更新）：** 提供 `NEW_PATH` 时，验证新路径存在后更新引用，输出包含旧路径。
-  * **失败：** 别名不存在返回 `E5002`（退出码 5）；新路径不存在返回 `E5001`（退出码 5，仅在更新模式下）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb path <ALIAS> [NEW_PATH]`
+* **鍙傛暟锛?*
+  * `ALIAS`锛堝繀濉級锛氱洰鏍囧埆鍚嶏紝蹇呴』瀛樺湪銆?  * `NEW_PATH`锛堝彲閫夛級锛氭柊鐗╃悊璺緞銆?* **璇箟锛?*
+  * **鎴愬姛锛堟煡璇級锛?* 鏈彁渚?`NEW_PATH` 鏃讹紝杩斿洖褰撳墠鐨勭墿鐞嗚矾寰勩€?  * **鎴愬姛锛堟洿鏂帮級锛?* 鎻愪緵 `NEW_PATH` 鏃讹紝楠岃瘉鏂拌矾寰勫瓨鍦ㄥ悗鏇存柊寮曠敤锛岃緭鍑哄寘鍚棫璺緞銆?  * **澶辫触锛?* 鍒悕涓嶅瓨鍦ㄨ繑鍥?`E5002`锛堥€€鍑虹爜 5锛夛紱鏂拌矾寰勪笉瀛樺湪杩斿洖 `E5001`锛堥€€鍑虹爜 5锛屼粎鍦ㄦ洿鏂版ā寮忎笅锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段（查询） | 类型 | 说明 |
+| 瀛楁锛堟煡璇級 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `alias` | string | 别名 |
-| `path` | string | 当前路径 |
+| `alias` | string | 鍒悕 |
+| `path` | string | 褰撳墠璺緞 |
 
-| 字段（更新） | 类型 | 说明 |
+| 瀛楁锛堟洿鏂帮級 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `alias` | string | 别名 |
-| `old_path` | string | 旧路径 |
-| `new_path` | string | 新路径 |
+| `alias` | string | 鍒悕 |
+| `old_path` | string | 鏃ц矾寰?|
+| `new_path` | string | 鏂拌矾寰?|
 
 ### `kb chmod`
 
-* **语法：** `kb chmod <ALIAS> <PERMS>`
-* **参数：**
-  * `ALIAS`（必填）：目标别名。
-  * `PERMS`（必填）：权限字符串。
-* **权限字符集表：**
-  * `r`：读取
-  * `w`：写入
-  * `x`：执行
-  * `d`：删除
-  * `c`：配置
-  * `-`：无权限（必须单独使用）
-* **校验规则：** 仅允许包含 `[r,w,x,d,c,-]`；如果使用 `-` 则不能包含其他字符；字符不能重复；空字符串无效。
-* **语义：**
-  * **成功：** 更新权限，并返回新的权限字符串。
-  * **失败：** 别名不存在返回 `E5002`（退出码 5）；无效权限字符串返回 `E2004`（退出码 2）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb chmod <ALIAS> <PERMS>`
+* **鍙傛暟锛?*
+  * `ALIAS`锛堝繀濉級锛氱洰鏍囧埆鍚嶃€?  * `PERMS`锛堝繀濉級锛氭潈闄愬瓧绗︿覆銆?* **鏉冮檺瀛楃闆嗚〃锛?*
+  * `r`锛氳鍙?  * `w`锛氬啓鍏?  * `x`锛氭墽琛?  * `d`锛氬垹闄?  * `c`锛氶厤缃?  * `-`锛氭棤鏉冮檺锛堝繀椤诲崟鐙娇鐢級
+* **鏍￠獙瑙勫垯锛?* 浠呭厑璁稿寘鍚?`[r,w,x,d,c,-]`锛涘鏋滀娇鐢?`-` 鍒欎笉鑳藉寘鍚叾浠栧瓧绗︼紱瀛楃涓嶈兘閲嶅锛涚┖瀛楃涓叉棤鏁堛€?* **璇箟锛?*
+  * **鎴愬姛锛?* 鏇存柊鏉冮檺锛屽苟杩斿洖鏂扮殑鏉冮檺瀛楃涓层€?  * **澶辫触锛?* 鍒悕涓嶅瓨鍦ㄨ繑鍥?`E5002`锛堥€€鍑虹爜 5锛夛紱鏃犳晥鏉冮檺瀛楃涓茶繑鍥?`E2004`锛堥€€鍑虹爜 2锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `alias` | string | 别名 |
-| `permissions` | string | 更新后的权限字符串 |
+| `alias` | string | 鍒悕 |
+| `permissions` | string | 鏇存柊鍚庣殑鏉冮檺瀛楃涓?|
 
 ### `kb list`
 
-* **语法：** `kb list [--long] [--tree] [--filter <PATTERN>]`
-* **选项：**
-  * `--long`：显示详细信息（修改时间 mtime，大小 size）。
-* `--tree`：以树状格式输出；在 JSON 模式下返回 `data.categories` 作为分类发现的权威来源。
-  * `--filter <PATTERN>`：使用 glob 模式过滤结果。
-* **语义：**
-  * **成功：** 返回匹配的条目。列表为空**不**算作错误。
-  * **失败：** 无效的 glob 模式返回 `E2002`（退出码 2）。
-* **输出字段表（JSON 模式）：**
+> Implementation note (2026-04-18): list rows are sourced from `./.kb/regs.json` records that still exist on disk.
 
-| 字段（短格式） | 类型 | 说明 |
-|---|---|---|
-| `items` | array | 条目数组（包含 `alias`, `path`, `perms` 字段） |
 
-| 字段（--long 附加字段） | 类型 | 说明 |
-|---|---|---|
-| `mtime` | string | Unix 时间戳秒字符串 |
-| `size` | number | 文件大小（字节） |
 
-| 字段（--tree 附加字段） | 类型 | 说明 |
+* **璇硶锛?* `kb list [--long] [--tree] [--filter <PATTERN>]`
+* **閫夐」锛?*
+  * `--long`锛氭樉绀鸿缁嗕俊鎭紙淇敼鏃堕棿 mtime锛屽ぇ灏?size锛夈€?* `--tree`锛氫互鏍戠姸鏍煎紡杈撳嚭锛涘湪 JSON 妯″紡涓嬭繑鍥?`data.categories` 浣滀负鍒嗙被鍙戠幇鐨勬潈濞佹潵婧愩€?  * `--filter <PATTERN>`锛氫娇鐢?glob 妯″紡杩囨护缁撴灉銆?* **璇箟锛?*
+  * **鎴愬姛锛?* 杩斿洖鍖归厤鐨勬潯鐩€傚垪琛ㄤ负绌?*涓?*绠椾綔閿欒銆?  * **澶辫触锛?* 鏃犳晥鐨?glob 妯″紡杩斿洖 `E2002`锛堥€€鍑虹爜 2锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
+
+| 瀛楁锛堢煭鏍煎紡锛?| 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `categories` | array | 可用分类名称列表（`--category` 的候选值，如 `raw`, `docs`, `src`） |
+| `items` | array | 鏉＄洰鏁扮粍锛堝寘鍚?`alias`, `path`, `perms` 瀛楁锛?|
+
+| 瀛楁锛?-long 闄勫姞瀛楁锛?| 绫诲瀷 | 璇存槑 |
+|---|---|---|
+| `mtime` | string | Unix 鏃堕棿鎴崇瀛楃涓?|
+| `size` | number | 鏂囦欢澶у皬锛堝瓧鑺傦級 |
+
+| 瀛楁锛?-tree 闄勫姞瀛楁锛?| 绫诲瀷 | 璇存槑 |
+|---|---|---|
+| `categories` | array | 鍙敤鍒嗙被鍚嶇О鍒楄〃锛坄--category` 鐨勫€欓€夊€硷紝濡?`raw`, `docs`, `src`锛?|
 
 ### `kb ask`
 
-* **语法：** `kb ask <QUESTION> [--top <N>]`
-* **参数：**
-  * `QUESTION`（必填）：自然语言查询内容。
-* **选项：**
-  * `--top <N>`：返回最相关的 N 个上下文，默认值为 1。
-* **语义：**
-  * **成功：** 返回检索到的上下文与占位结构，`engine_status` 固定为 `"disabled"`；**不会**触发实际的 AI 生成。
-  * **失败：** 无可用上下文（知识库为空或无匹配项）返回 `E5003`（退出码 5）。
-* **检索与摘要算法（实现约束）：**
-  * 检索基于本地 `IndexSnapshot.records`，仅使用 `present=true` 的记录参与打分。
-  * 召回排序使用确定性规则：先按 `score` 降序，再按 `alias` 升序，再按 `path` 升序。
-  * 摘要优先使用持久化 `excerpt` 字段。
-  * 摘要窗口采用 **query-token 命中密度窗口**：在固定窗口长度内选择 query 命中密度最高的片段。
-  * 窗口同分时采用显式 tie-break：先最小 `start`，再最小 `end`。
-  * 摘要切片按 **grapheme cluster** 边界处理（`unicode-segmentation`，extended clusters），避免组合字符与 ZWJ emoji 被不自然截断。
-  * 若无命中窗口，则回退到稳定截断（仍保持 grapheme 边界安全）。
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb ask <QUESTION> [--top <N>]`
+* **鍙傛暟锛?*
+  * `QUESTION`锛堝繀濉級锛氳嚜鐒惰瑷€鏌ヨ鍐呭銆?* **閫夐」锛?*
+  * `--top <N>`锛氳繑鍥炴渶鐩稿叧鐨?N 涓笂涓嬫枃锛岄粯璁ゅ€间负 1銆?* **璇箟锛?*
+  * **鎴愬姛锛?* 杩斿洖妫€绱㈠埌鐨勪笂涓嬫枃涓庡崰浣嶇粨鏋勶紝`engine_status` 鍥哄畾涓?`"disabled"`锛?*涓嶄細**瑙﹀彂瀹為檯鐨?AI 鐢熸垚銆?  * **澶辫触锛?* 鏃犲彲鐢ㄤ笂涓嬫枃锛堢煡璇嗗簱涓虹┖鎴栨棤鍖归厤椤癸級杩斿洖 `E5003`锛堥€€鍑虹爜 5锛夈€?* **妫€绱笌鎽樿绠楁硶锛堝疄鐜扮害鏉燂級锛?*
+  * 妫€绱㈠熀浜庢湰鍦?`IndexSnapshot.records`锛屼粎浣跨敤 `present=true` 鐨勮褰曞弬涓庢墦鍒嗐€?  * 鍙洖鎺掑簭浣跨敤纭畾鎬ц鍒欙細鍏堟寜 `score` 闄嶅簭锛屽啀鎸?`alias` 鍗囧簭锛屽啀鎸?`path` 鍗囧簭銆?  * 鎽樿浼樺厛浣跨敤鎸佷箙鍖?`excerpt` 瀛楁銆?  * 鎽樿绐楀彛閲囩敤 **query-token 鍛戒腑瀵嗗害绐楀彛**锛氬湪鍥哄畾绐楀彛闀垮害鍐呴€夋嫨 query 鍛戒腑瀵嗗害鏈€楂樼殑鐗囨銆?  * 绐楀彛鍚屽垎鏃堕噰鐢ㄦ樉寮?tie-break锛氬厛鏈€灏?`start`锛屽啀鏈€灏?`end`銆?  * 鎽樿鍒囩墖鎸?**grapheme cluster** 杈圭晫澶勭悊锛坄unicode-segmentation`锛宔xtended clusters锛夛紝閬垮厤缁勫悎瀛楃涓?ZWJ emoji 琚笉鑷劧鎴柇銆?  * 鑻ユ棤鍛戒腑绐楀彛锛屽垯鍥為€€鍒扮ǔ瀹氭埅鏂紙浠嶄繚鎸?grapheme 杈圭晫瀹夊叏锛夈€?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `engine_status` | string | 固定返回 `"disabled"` |
-| `provider` | string\|null | 固定返回 `null` |
-| `trace_id` | string\|null | 固定返回 `null` |
-| `retrieved_context` | array | 检索到的上下文数组（包含 `alias`, `snippet`, `score` 0-1 的数字） |
+| `engine_status` | string | 鍥哄畾杩斿洖 `"disabled"` |
+| `provider` | string\|null | 鍥哄畾杩斿洖 `null` |
+| `trace_id` | string\|null | 鍥哄畾杩斿洖 `null` |
+| `retrieved_context` | array | 妫€绱㈠埌鐨勪笂涓嬫枃鏁扮粍锛堝寘鍚?`alias`, `snippet`, `score` 0-1 鐨勬暟瀛楋級 |
 
 ### `kb env`
 
-* **语法：** `kb env --list`
-* **选项：**
-  * `--list`：列出全局注册表中“仍存在”的知识库根目录。
-* **语义：**
-  * 读取全局配置中的 `knowledge_bases`。
-  * 仅返回当前磁盘上仍存在，且包含 `kb.md` 与 `.kb/` 的目录。
-  * 同时返回：
-    * `recorded_total`：注册表记录总数（不过滤）
-    * `count`：实际仍存在且有效的知识库数量
-* **输出字段表（JSON 模式）：**
+* **璇硶锛?* `kb env [--list]`
+* **閫夐」锛?*
+  * `--list`锛氬垪鍑哄叏灞€娉ㄥ唽琛ㄤ腑鈥滀粛瀛樺湪鈥濈殑鐭ヨ瘑搴撴牴鐩綍銆?* **璇箟锛?*
+  * 鏈紶 `--list` 鏃讹紝榛樿鍥為€€涓?`list(default)` 琛屼负銆?  * 璇诲彇鍏ㄥ眬閰嶇疆涓殑 `knowledge_bases`銆?  * 浠呰繑鍥炲綋鍓嶇鐩樹笂浠嶅瓨鍦紝涓斿寘鍚?`kb.md` 涓?`.kb/` 鐨勭洰褰曘€?  * 鍚屾椂杩斿洖锛?    * `recorded_total`锛氭敞鍐岃〃璁板綍鎬绘暟锛堜笉杩囨护锛?    * `count`锛氬疄闄呬粛瀛樺湪涓旀湁鏁堢殑鐭ヨ瘑搴撴暟閲?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `mode` | string | 当前执行模式（`list` 或 `list(default)`） |
-| `items` | array | 有效知识库数组，每项包含 `path` |
-| `count` | number | `items` 数量 |
-| `recorded_total` | number | 注册表中的总记录数 |
-| `config_path` | string | 当前使用的全局配置文件路径 |
+| `mode` | string | 褰撳墠鎵ц妯″紡锛坄list` 鎴?`list(default)`锛?|
+| `items` | array | 鏈夋晥鐭ヨ瘑搴撴暟缁勶紝姣忛」鍖呭惈 `path` |
+| `count` | number | `items` 鏁伴噺 |
+| `recorded_total` | number | 娉ㄥ唽琛ㄤ腑鐨勬€昏褰曟暟 |
+| `config_path` | string | 褰撳墠浣跨敤鐨勫叏灞€閰嶇疆鏂囦欢璺緞 |
 
 ### `kb check`
 
-> 详细状态机、判定优先级与效率策略见：`docs/cli/state-diff-contract.md`。
->
-> `kb.md` 格式与解析约束见：`docs/cli/kb-md-spec.md`。
+> Implementation note (2026-04-18): `kb check` compares declarations from `kb.md + ./.kb/raw/` against registrations in `./.kb/regs.json` (not `refs.json`).
+> Reason mapping includes `content_changed`, `metadata_changed`, `deleted`, `not_found`.
+> `to_add` means in declarations but not in `regs.json`; `to_remove` means in `regs.json` but no longer in `kb.md`/`raw`.
 
-* **语法：** `kb check [--raw-only] [--category <CATEGORY>] [--top <N>]`
-* **选项：**
-  * `--raw-only`：仅检查 `path` 以 `./.kb/raw/` 开头的已注册条目。
-  * `--category <CATEGORY>`：仅输出指定分类下的差异。若分类不存在，返回 `E2007`（退出码 2）。
-  * `--top <N>`：限制每种差异类型返回的条目数，默认 `50`。
-* **语义：**
-  * 只做检查，不修改 `kb.md`、不写入 `.kb/index*.json`。
-  * 当前快照来源为 `.kb/refs.json` 投影记录（而非目录全量扫描）。
-  * 计算差异前应用 `./kb/.kbignore`；命中规则的路径不进入差异集合。
-  * 输出“待新增 / 待更新 / 待删除（或待标记无效）”列表，供用户确认后执行 `kb update`。
-  * 状态判定基线：以“最近一次成功且非 `--dry-run` 的 `kb update` 结果快照”为比较基线；若不存在基线，则按空基线处理。
-  * 状态判定键：默认使用规范化路径作为 `doc_id`（路径身份）。在该策略下，重命名/迁移按“旧路径缺失 + 新路径新增”处理，而不是 `path_changed` 更新。
-  * 判定优先级（高→低）：`invalid`（不可读/冲突）→ `to_add` 与 `to_remove`（missing_path 观测）→ `to_update` 与 `unchanged`。
-  * `to_remove` 语义：表示“缺失路径候选项”；是否真正删除由 `kb update --prune` 决定。
-  * 失败：
-    * 分类读取失败（`kb.md` 无法读取）-> `E3003`（退出码 3）
-    * 指定分类不存在 -> `E2007`（退出码 2）
-* **输出字段表（JSON 模式）：**
 
-| 字段 | 类型 | 说明 |
+> 璇︾粏鐘舵€佹満銆佸垽瀹氫紭鍏堢骇涓庢晥鐜囩瓥鐣ヨ锛歚docs/cli/state-diff-contract.md`銆?>
+> `kb.md` 鏍煎紡涓庤В鏋愮害鏉熻锛歚docs/cli/kb-md-spec.md`銆?
+* **璇硶锛?* `kb check [--raw-only] [--category <CATEGORY>] [--top <N>]`
+* **閫夐」锛?*
+  * `--raw-only`锛氫粎妫€鏌?`path` 浠?`./.kb/raw/` 寮€澶寸殑宸叉敞鍐屾潯鐩€?  * `--category <CATEGORY>`锛氫粎杈撳嚭鎸囧畾鍒嗙被涓嬬殑宸紓銆傝嫢鍒嗙被涓嶅瓨鍦紝杩斿洖 `E2007`锛堥€€鍑虹爜 2锛夈€?  * `--top <N>`锛氶檺鍒舵瘡绉嶅樊寮傜被鍨嬭繑鍥炵殑鏉＄洰鏁帮紝榛樿 `50`銆?* **璇箟锛?*
+  * 鍙仛妫€鏌ワ紝涓嶄慨鏀?`kb.md`銆佷笉鍐欏叆 `.kb/index*.json`銆?  * 褰撳墠蹇収鏉ユ簮涓?`.kb/refs.json` 鎶曞奖璁板綍锛堣€岄潪鐩綍鍏ㄩ噺鎵弿锛夈€?  * 璁＄畻宸紓鍓嶅簲鐢?`./.kb/.kbignore`锛涘懡涓鍒欑殑璺緞涓嶈繘鍏ュ樊寮傞泦鍚堛€?  * 鍙椾繚鎶よ矾寰勮繃婊わ細`kb.md` 涓?`./.kb/` 涓嬮櫎 `./.kb/raw/` 澶栫殑鍐呴儴鏂囦欢涓嶅弬涓庣储寮曞樊寮傘€?  * 杈撳嚭鈥滃緟鏂板 / 寰呮洿鏂?/ 寰呭垹闄わ紙鎴栧緟鏍囪鏃犳晥锛夆€濆垪琛紝渚涚敤鎴风‘璁ゅ悗鎵ц `kb update`銆?  * 鐘舵€佸垽瀹氬熀绾匡細浠モ€滄渶杩戜竴娆℃垚鍔熶笖闈?`--dry-run` 鐨?`kb update` 缁撴灉蹇収鈥濅负姣旇緝鍩虹嚎锛涜嫢涓嶅瓨鍦ㄥ熀绾匡紝鍒欐寜绌哄熀绾垮鐞嗐€?  * 鐘舵€佸垽瀹氶敭锛氶粯璁や娇鐢ㄨ鑼冨寲璺緞浣滀负 `doc_id`锛堣矾寰勮韩浠斤級銆傚湪璇ョ瓥鐣ヤ笅锛岄噸鍛藉悕/杩佺Щ鎸夆€滄棫璺緞缂哄け + 鏂拌矾寰勬柊澧炩€濆鐞嗭紝鑰屼笉鏄?`path_changed` 鏇存柊銆?  * 鍒ゅ畾浼樺厛绾э紙楂樷啋浣庯級锛歚invalid`锛堜笉鍙/鍐茬獊锛夆啋 `to_add` 涓?`to_remove`锛坢issing_path 瑙傛祴锛夆啋 `to_update` 涓?`unchanged`銆?  * `to_remove` 璇箟锛氳〃绀衡€滅己澶辫矾寰勫€欓€夐」鈥濓紱鏄惁鐪熸鍒犻櫎鐢?`kb update --prune` 鍐冲畾銆?  * 澶辫触锛?    * 鍒嗙被璇诲彇澶辫触锛坄kb.md` 鏃犳硶璇诲彇锛?> `E3003`锛堥€€鍑虹爜 3锛?    * 鎸囧畾鍒嗙被涓嶅瓨鍦?-> `E2007`锛堥€€鍑虹爜 2锛?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
+
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `has_changes` | bool | 是否存在任何差异 |
-| `to_add` | array | 待新增条目（`alias`, `path`, `source`） |
-| `to_update` | array | 待更新条目（`alias`, `path`, `reason`） |
-| `to_remove` | array | 待删除或待标记无效条目（`alias`, `path`, `reason`） |
-| `reason` | enum | 枚举值：`content_changed`（适用 to_update）、`missing_path`（适用 to_remove）、`invalid`（适用 to_remove）。<br>**注意：当前身份策略（doc_id=path）下已移除 `path_changed` 支持。** |
-| `suggested_command` | string | 建议执行命令（如 `kb update` 或 `kb update --prune`） |
-| `duration_ms` | number | 耗时（毫秒） |
+| `has_changes` | bool | 鏄惁瀛樺湪浠讳綍宸紓 |
+| `to_add` | array | 寰呮柊澧炴潯鐩紙`alias`, `path`, `source`锛?|
+| `to_update` | array | 寰呮洿鏂版潯鐩紙`alias`, `path`, `reason`锛?|
+| `to_remove` | array | 寰呭垹闄ゆ垨寰呮爣璁版棤鏁堟潯鐩紙`alias`, `path`, `reason`锛?|
+| `reason` | enum | 鏋氫妇鍊硷細`content_changed`锛堥€傜敤 to_update锛夈€乣missing_path`锛堥€傜敤 to_remove锛夈€乣invalid`锛堥€傜敤 to_remove锛夈€?br>**娉ㄦ剰锛氬綋鍓嶈韩浠界瓥鐣ワ紙doc_id=path锛変笅宸茬Щ闄?`path_changed` 鏀寔銆?* |
+| `suggested_command` | string | 寤鸿鎵ц鍛戒护锛堝 `kb update` 鎴?`kb update --prune`锛?|
+| `duration_ms` | number | 鑰楁椂锛堟绉掞級 |
 
 ### `kb update`
 
-> 详细状态机、判定优先级与效率策略见：`docs/cli/state-diff-contract.md`。
->
-> `kb.md` 格式与解析约束见：`docs/cli/kb-md-spec.md`。
+> Implementation note (2026-04-18): `kb update` applies check diff into `./.kb/regs.json`, adds new registrations, removes stale/deleted/not-found registrations, and refreshes backend index artifacts.
+> It also backfills new files from `./.kb/raw/` into `kb.md` under `# raw` as `[](./.kb/raw/<file>)` with deduplication.
+> Compatibility: output keeps `marked_invalid` field; current implementation reports `0` in normal flow.
 
-* **语法：** `kb update [--dry-run] [--prune] [--yes] [--full]`
-* **选项：**
-  * `--dry-run`：仅显示将发生的变更，不写入文件。
-  * `--prune`：删除无效/不存在路径；默认仅标记并提示。
-  * `--yes`：保留参数（当前实现不区分是否传入该参数）。
-  * `--full`：执行全量重建。
-* **语义：**
-  * 当前快照来源：`.kb/refs.json` 投影记录（仅保留实际存在的路径）。
-  * 差异过滤：应用 `./kb/.kbignore`；命中规则的路径不参与索引生成与变更统计。
-  * 输出写入（原子化）：
+
+> 璇︾粏鐘舵€佹満銆佸垽瀹氫紭鍏堢骇涓庢晥鐜囩瓥鐣ヨ锛歚docs/cli/state-diff-contract.md`銆?>
+> `kb.md` 鏍煎紡涓庤В鏋愮害鏉熻锛歚docs/cli/kb-md-spec.md`銆?
+* **璇硶锛?* `kb update [--dry-run] [--prune] [--yes] [--full]`
+* **閫夐」锛?*
+  * `--dry-run`锛氫粎鏄剧ず灏嗗彂鐢熺殑鍙樻洿锛屼笉鍐欏叆鏂囦欢銆?  * `--prune`锛氬垹闄ゆ棤鏁?涓嶅瓨鍦ㄨ矾寰勶紱榛樿浠呮爣璁板苟鎻愮ず銆?  * `--yes`锛氫繚鐣欏弬鏁帮紙褰撳墠瀹炵幇涓嶅尯鍒嗘槸鍚︿紶鍏ヨ鍙傛暟锛夈€?  * `--full`锛氭墽琛屽叏閲忛噸寤恒€?* **璇箟锛?*
+  * 褰撳墠蹇収鏉ユ簮锛歚.kb/refs.json` 鎶曞奖璁板綍锛堜粎淇濈暀瀹為檯瀛樺湪鐨勮矾寰勶級銆?  * 宸紓杩囨护锛氬簲鐢?`./.kb/.kbignore`锛涘懡涓鍒欑殑璺緞涓嶅弬涓庣储寮曠敓鎴愪笌鍙樻洿缁熻銆?  * 鍙椾繚鎶よ矾寰勮繃婊わ細`kb.md` 涓?`./.kb/` 涓嬮櫎 `./.kb/raw/` 澶栫殑鍐呴儴鏂囦欢涓嶅弬涓庣储寮曠敓鎴愪笌鍙樻洿缁熻銆?  * 杈撳嚭鍐欏叆锛堝師瀛愬寲锛夛細
     * `.kb/index.json`
     * `.kb/index.errors.json`
     * `.kb/index.meta.json`
-  * 失败：
-    * 基线索引快照读取/解析失败 -> `E3003`（退出码 3）
-    * 索引持久化失败 -> `E1003`（退出码 1）
-  * 更新/删除判定：
-    * `added`：当前快照存在、基线不存在。
-    * `updated`：当前快照与基线同一 `doc_id`（路径）下内容签名变化。
-    * `marked_invalid`：基线存在但当前缺失（`missing_path`），且未启用 `--prune`。
-    * `removed`：基线存在但当前缺失（`missing_path`），且启用 `--prune`。
-  * `--dry-run`：仅输出计划，不写 `.kb/index*.json`，也不更新基线快照。
-  * 幂等性：在输入文件集与配置不变时，连续执行两次 `kb update`，第二次应返回 `added=0, updated=0, removed=0`。
-* **输出字段表（JSON 模式）：**
+  * 澶辫触锛?    * 鍩虹嚎绱㈠紩蹇収璇诲彇/瑙ｆ瀽澶辫触 -> `E3003`锛堥€€鍑虹爜 3锛?    * 绱㈠紩鎸佷箙鍖栧け璐?-> `E1003`锛堥€€鍑虹爜 1锛?  * 鏇存柊/鍒犻櫎鍒ゅ畾锛?    * `added`锛氬綋鍓嶅揩鐓у瓨鍦ㄣ€佸熀绾夸笉瀛樺湪銆?    * `updated`锛氬綋鍓嶅揩鐓т笌鍩虹嚎鍚屼竴 `doc_id`锛堣矾寰勶級涓嬪唴瀹圭鍚嶅彉鍖栥€?    * `marked_invalid`锛氬熀绾垮瓨鍦ㄤ絾褰撳墠缂哄け锛坄missing_path`锛夛紝涓旀湭鍚敤 `--prune`銆?    * `removed`锛氬熀绾垮瓨鍦ㄤ絾褰撳墠缂哄け锛坄missing_path`锛夛紝涓斿惎鐢?`--prune`銆?  * `--dry-run`锛氫粎杈撳嚭璁″垝锛屼笉鍐?`.kb/index*.json`锛屼篃涓嶆洿鏂板熀绾垮揩鐓с€?  * 骞傜瓑鎬э細鍦ㄨ緭鍏ユ枃浠堕泦涓庨厤缃笉鍙樻椂锛岃繛缁墽琛屼袱娆?`kb update`锛岀浜屾搴旇繑鍥?`added=0, updated=0, removed=0`銆?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
 
-| 字段 | 类型 | 说明 |
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| `added` | number | 新增条目数 |
-| `updated` | number | 更新条目数 |
-| `removed` | number | 移除条目数（仅 `--prune`） |
-| `marked_invalid` | number | 标记为无效的条目数 |
-| `duration_ms` | number | 耗时（毫秒） |
-| `full` | bool | 是否为全量重建 |
-| `raw_category_created` | bool | 本次是否创建了 `# raw` 分类 |
+| `added` | number | 鏂板鏉＄洰鏁?|
+| `updated` | number | 鏇存柊鏉＄洰鏁?|
+| `removed` | number | 绉婚櫎鏉＄洰鏁帮紙浠?`--prune`锛?|
+| `marked_invalid` | number | 鏍囪涓烘棤鏁堢殑鏉＄洰鏁?|
+| `duration_ms` | number | 鑰楁椂锛堟绉掞級 |
+| `full` | bool | 鏄惁涓哄叏閲忛噸寤?|
+| `raw_category_created` | bool | 鏈鏄惁鍒涘缓浜?`# raw` 鍒嗙被 |
 
-## 别名命名规则
+### `kb completion`
 
-| 规则 | 示例 | 结果 |
+* **璇硶锛?* `kb completion <SHELL>`
+* **鍙傛暟锛?*
+  * `SHELL`锛堝繀濉級锛氱洰鏍?shell锛屽綋鍓嶆敮鎸?`bash`銆乣zsh`銆乣fish`銆乣powershell`銆乣elvish`銆?* **璇箟锛?*
+  * **鎴愬姛锛?* 鐢熸垚瀵瑰簲 shell 鐨勮ˉ鍏ㄨ剼鏈€?  * text 妯″紡浼氱洿鎺ヨ緭鍑鸿剼鏈枃鏈紙鍙噸瀹氬悜鍒版枃浠讹級銆?  * json 妯″紡浼氳繑鍥炵粨鏋勫寲瀛楁锛歚shell` 涓?`script`銆?* **杈撳嚭瀛楁琛紙JSON 妯″紡锛夛細**
+
+| 瀛楁 | 绫诲瀷 | 璇存槑 |
 |---|---|---|
-| 允许使用字母、数字、`-`、`_`、`.`、`/` | `my-docs`, `v2/config` | 合法 |
-| 禁止使用空格 | `my docs` | 非法 |
-| 禁止以 `-` 开头 | `-alias` | 非法 |
-| 长度必须在 1-128 之间 | `a` (合法), 空字符串 (非法) | 长度违规 |
-| 禁止使用保留字 | `init`, `env`, `help` | 非法 |
+| `shell` | string | shell 鍚嶇О锛堝皬鍐欙級 |
+| `script` | string | 瀹屾暣琛ュ叏鑴氭湰鍐呭 |
 
-违反上述任意规则均返回 `E2001`（退出码 2）。
+## 闄勫綍锛歚kb -h` 杈撳嚭绀轰緥
 
-## 路径规范化规则
+褰撳墠瀹炵幇涓紝鏍瑰府鍔╀负 git 椋庢牸鍒嗙粍姒傝锛屽叧閿害瀹氬涓嬶細
 
-| 输入路径 | 规范化结果 | 说明 |
+```text
+Usage: kb [OPTIONS] <COMMAND>
+
+These are common kb commands used in various situations:
+
+start a working area
+manage references
+maintain index state
+retrieve and environment
+```
+
+## 鍒悕鍛藉悕瑙勫垯
+
+| 瑙勫垯 | 绀轰緥 | 缁撴灉 |
 |---|---|---|
-| `./docs` | `./docs` | 相对路径统一保留 `./` 前缀 |
-| `../docs` | `./../docs` | 相对路径统一加前缀，保留父目录语义 |
-| `/home/user/docs` | `/home/user/docs` | 绝对路径保持不变 |
-| `docs//src` | `./docs/src` | 压缩 `//` 并补齐 `./` 前缀 |
-| `docs/./src` | `./docs/./src` | 当前实现不会清理中间段的 `./` |
+| 鍏佽浣跨敤瀛楁瘝銆佹暟瀛椼€乣-`銆乣_`銆乣.`銆乣/` | `my-docs`, `v2/config` | 鍚堟硶 |
+| 绂佹浣跨敤绌烘牸 | `my docs` | 闈炴硶 |
+| 绂佹浠?`-` 寮€澶?| `-alias` | 闈炴硶 |
+| 闀垮害蹇呴』鍦?1-128 涔嬮棿 | `a` (鍚堟硶), 绌哄瓧绗︿覆 (闈炴硶) | 闀垮害杩濊 |
+| 绂佹浣跨敤淇濈暀瀛?| `init`, `env`, `help` | 闈炴硶 |
+
+杩濆弽涓婅堪浠绘剰瑙勫垯鍧囪繑鍥?`E2001`锛堥€€鍑虹爜 2锛夈€?
+## 璺緞瑙勮寖鍖栬鍒?
+| 杈撳叆璺緞 | 瑙勮寖鍖栫粨鏋?| 璇存槑 |
+|---|---|---|
+| `./docs` | `./docs` | 鐩稿璺緞缁熶竴淇濈暀 `./` 鍓嶇紑 |
+| `../docs` | `./../docs` | 鐩稿璺緞缁熶竴鍔犲墠缂€锛屼繚鐣欑埗鐩綍璇箟 |
+| `/home/user/docs` | `/home/user/docs` | 缁濆璺緞淇濇寔涓嶅彉 |
+| `docs//src` | `./docs/src` | 鍘嬬缉 `//` 骞惰ˉ榻?`./` 鍓嶇紑 |
+| `docs/./src` | `./docs/./src` | 褰撳墠瀹炵幇涓嶄細娓呯悊涓棿娈电殑 `./` |
+

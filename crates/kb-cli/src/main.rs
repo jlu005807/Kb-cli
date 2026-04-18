@@ -5,6 +5,8 @@ mod env_registry;
 mod errors;
 mod output;
 mod paths;
+mod kb_md;
+mod registry;
 mod runtime_config;
 mod state;
 

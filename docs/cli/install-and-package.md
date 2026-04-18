@@ -199,3 +199,26 @@ git push origin v0.1.0
 ```
 
 推送完成后，等待 Actions 执行成功，即可在 Releases 页面看到对应版本与附件。
+
+## 7. 常见问题（Windows）
+
+### 7.1 运行 `.\scripts\package.ps1` 提示“不能对 Null 值表达式调用方法”
+
+已在当前脚本实现中增加以下防护：
+
+- 架构探测支持多重回退（`RuntimeInformation` -> `PROCESSOR_ARCHITECTURE` -> 默认值）
+- 缺失依赖（`cargo` / `rustup`）会给出可读错误，而不是空引用异常
+- 缺失安装模板文件会在打包前显式报错
+
+建议排查步骤：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
+```
+
+若仍失败，请先执行：
+
+```powershell
+cargo --version
+rustup --version
+```

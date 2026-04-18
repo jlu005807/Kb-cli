@@ -1,8 +1,11 @@
 ﻿# KB-CLI 命令示例
 
-本文档展示 `kb` 命令在 JSON 模式下的标准输出示例。请将这些示例视为快照测试的权威目标。当本文件与 `command-manual.md` 有冲突时，以 `command-manual.md` 为准。
+本文档展示 `kb` 命令的标准输出示例，其中 JSON 模式示例是快照测试的权威目标；部分命令附带 text 模式可读示例，用于展示终端交互体验。当本文件与 `command-manual.md` 有冲突时，以 `command-manual.md` 为准。
 
-> 更新说明（2026-04-16）：新增 `kb env --list` 示例；既有命令的 JSON 快照块保持不变，以维持 fixtures 合约稳定。
+> 更新说明（2026-04-17）：补充 `kb completion` 与 `kb -h` 示例，并同步 `env` 默认模式（`list(default)`）输出；既有命令的 fixtures 对齐 JSON 快照块保持不变。
+> Implementation update (2026-04-18): check/update/list now run on `./.kb/regs.json` with declaration source `kb.md + ./.kb/raw/`.
+> Existing command fixture JSON blocks are intentionally kept unchanged for snapshot parity tests.
+
 
 > 相关文档：
 > - `docs/cli/command-manual.md`
@@ -280,6 +283,9 @@ kb chmod my-docs invalid --output=json
 
 ## 7. `kb check [--raw-only] [--category <CATEGORY>] [--top <N>]`
 
+> Implementation note (2026-04-18): Diff source = declarations from `kb.md + ./.kb/raw/`, compared to registrations in `./.kb/regs.json`.
+
+
 ### 成功示例
 **命令：**
 ```bash
@@ -319,6 +325,30 @@ kb check --output=json
 }
 ```
 
+**命令（text 模式）：**
+```bash
+kb check
+```
+**输出（text）：**
+```text
+Index diff
+has_changes: true
+to_add: 1
+to_update: 1
+to_remove: 1
+duration_ms: 96
+suggested_command: kb update
+
+To add:
+  - raw/spec-a.md | ./.kb/raw/spec-a.md [raw]
+
+To update:
+  - docs/guide | ./docs/guide.md (content_changed)
+
+To remove:
+  - legacy/notes | ./docs/legacy-notes.md (missing_path)
+```
+
 ### 失败示例
 **命令：**
 ```bash
@@ -343,6 +373,9 @@ kb check --output=json
 
 ## 8. `kb update [--dry-run] [--prune] [--yes] [--full]`
 
+> Implementation note (2026-04-18): `update` writes check diff into `./.kb/regs.json`, removes stale/deleted/not-found entries, and refreshes backend index files.
+
+
 ### 成功示例
 **命令：**
 ```bash
@@ -363,6 +396,23 @@ kb update --output=json
     "raw_category_created": false
   }
 }
+```
+
+**命令（text 模式）：**
+```bash
+kb update
+```
+**输出（text）：**
+```text
+Index update complete
+added: 3
+updated: 1
+removed: 0
+marked_invalid: 2
+duration_ms: 187
+dry_run: false
+prune: false
+full: false
 ```
 
 ### 失败示例
@@ -393,6 +443,9 @@ kb update --output=json
 
 ## 9. `kb list [--long] [--tree] [--filter <PATTERN>]`
 
+> Implementation note (2026-04-18): `list` displays tracked rows from `./.kb/regs.json` (not direct parse results from `kb.md`).
+
+
 ### 成功示例
 **命令：**
 ```bash
@@ -418,6 +471,18 @@ kb list --output=json
     ]
   }
 }
+```
+
+**命令（text 模式）：**
+```bash
+kb list
+```
+**输出（text）：**
+```text
+Tracked references: 2
+ALIAS  PERMS  PATH
+docs   rwx    ./docs
+src    r      ./src
 ```
 
 ### 失败示例
@@ -491,7 +556,7 @@ kb ask "unrelated question" --output=json
 }
 ```
 
-## 11. `kb env --list`
+## 11. `kb env [--list]`
 
 ### 成功示例
 **命令：**
@@ -520,4 +585,95 @@ kb env --list --output=json
 }
 ```
 
+**命令（text 模式）：**
+```bash
+kb env --list
+```
+**输出（text）：**
+```text
+Knowledge base registry
+config_path: C:/Users/demo/.kb-cli/config.json
+recorded_total: 3
+count: 2
+items:
+  - D:/workspace/project-a
+  - D:/workspace/project-b
+```
+
 > 说明：`items` 仅包含“已登记且仍存在”的知识库目录；`recorded_total` 为全量登记数。
+
+### 默认模式示例（未传 `--list`）
+**命令：**
+```bash
+kb env --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "config_path": "D:\\workspace\\kb-demo\\global-config.json",
+    "count": 0,
+    "items": [],
+    "mode": "list(default)",
+    "recorded_total": 0
+  }
+}
+```
+
+## 12. `kb completion <SHELL>`
+
+### 成功示例
+**命令：**
+```bash
+kb completion bash --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "shell": "bash",
+    "script": "_kb() {\n    local i cur prev opts cmd\n    COMPREPLY=()\n    ..."
+  }
+}
+```
+
+**命令（text 模式）：**
+```bash
+kb completion bash
+```
+**输出（text，片段）：**
+```text
+_kb() {
+    local i cur prev opts cmd
+    COMPREPLY=()
+    ...
+}
+```
+
+## 附录. `kb -h`
+
+**命令：**
+```bash
+kb -h
+```
+**输出（text，片段）：**
+```text
+Usage: kb [OPTIONS] <COMMAND>
+
+These are common kb commands used in various situations:
+
+start a working area
+  init        Create kb.md, .kb state and default ignore rules
+
+manage references
+  add         Add file contents to the knowledge base
+  mv          Move or rename an alias
+  rm          Remove an alias from the working set
+```
+
+> 维护说明：`kb --help` 的完整输出由快照测试保护，基线文件位于  
+> `crates/kb-cli/tests/snapshots/cli_surface__kb_root_help_full.snap`。

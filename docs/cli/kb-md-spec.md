@@ -1,116 +1,152 @@
-# `kb.md` 规范（当前实现）
+﻿# `kb.md` 规范（当前实现）
 
-本文档描述 **当前代码实现** 中 `kb.md` 的实际语义与约束（截至 2026-04-15）。
-
----
-
-## 1. 定位
-
-`kb.md` 在当前版本的作用是：
-
-1. 作为可读清单文件（面向人工查看）
-2. 提供分类标题来源（`add --category` / `check --category` 校验）
-3. 接收 `kb add` 的追加写入
-
-> 说明：当前状态差异与索引更新的主数据来源是 `.kb/refs.json`，不是 `kb.md` 条目解析结果。
+本文档描述 **当前代码实现** 中 `kb.md` 的实际语义与约束（截至 2026-04-18）。
 
 ---
 
-## 2. 当前可识别结构
+## 1. 角色定位
 
-### 2.1 分类标题
+`kb.md` 在当前版本中承担三类职责：
 
-当前实现会识别形如 `# <category>` 的标题行作为分类集合来源。
+1. 声明知识条目（文件/目录/通配符）。
+2. 声明分类与分类默认权限（供 `add/check` 的分类校验与继承）。
+3. 与 `kb update` 协同：`update` 会在发现 `./.kb/raw/` 新文件时，自动回填到 `# raw` 分类。
+
+当前状态源分工：
+
+- **声明源**：`kb.md` + `./.kb/raw/` 目录。
+- **登记源**：`./.kb/regs.json`（`list/check/update` 的主登记快照）。
+- **索引源**：`./.kb/index*.json`（检索索引快照）。
+
+---
+
+## 2. 文件结构
+
+`kb.md` 支持可选 Front Matter 与 Markdown 主体：
+
+```text
+---
+kb: my-project
+agent: default
+default_perm: r
+---
+
+# 分类:权限
+[alias](path):权限
+```
+
+---
+
+## 3. Front Matter
+
+支持字段：
+
+- `kb`（可选）
+- `agent`（可选）
+- `default_perm`（可选，默认 `r`）
+
+实现约束：
+
+- Front Matter 必须以 `---` 开始并以 `---` 结束。
+- `default_perm` 必须是合法权限串（`r/w/x/c/d/-` 组合规则同命令层）。
+
+---
+
+## 4. 分类标题与权限继承
+
+支持 `#` / `##` / `###` 等层级标题。
+
+- 标题可写权限后缀：`# docs:rw`
+- 若无权限后缀，则继承上级标题权限；若无上级，则继承 `default_perm`（默认 `r`）。
+- `add --category` 与 `check --category` 的合法分类来自解析后的标题集合。
 
 示例：
 
 ```markdown
-# raw
-# docs
-# src
+---
+default_perm: r
+---
+
+# docs:rw
+## api
+### internal:r
 ```
 
-### 2.2 条目写入格式
+---
 
-`kb add` 追加写入时使用以下格式：
+## 5. 引用条目语法
+
+### 5.1 当前主语法（推荐）
 
 ```markdown
-- <alias> | <path>
+[alias](path):perm  # comment
 ```
 
-示例：
+- `alias` 可为空：`[](path)`
+- 若 `alias` 为空，系统使用规范化 `path` 作为登记标识
+- `:perm` 可省略，省略时继承当前分类权限
+
+### 5.2 兼容语法（历史）
+
+仍兼容旧格式：
 
 ```markdown
-# raw
-- docs/config | ./docs/config.md
+- alias | path
 ```
 
----
-
-## 3. 当前未实现能力
-
-以下能力在当前版本**不作为解析契约**：
-
-1. Front Matter / YAML 头部解析
-2. 多行对象条目（`alias/path/perms` 分行结构）解析
-3. 通过 `kb.md` 条目直接驱动 `check/update` 的全量状态构建
+兼容格式不携带显式权限，按当前分类权限继承。
 
 ---
 
-## 4. 与 `.kb/refs.json` 的关系
+## 6. 路径类型与通配
 
-当前实现中：
+当前实现支持以下声明方式：
 
-- `kb add/mv/rm/path/chmod` 会更新 `.kb/refs.json`
-- `kb check/update/list` 主要基于 `.kb/refs.json` 投影后的记录运行
-- `kb.md` 主要用于“分类定义 + 文本展示”
+- 文件：`[a](docs/a.md)`
+- 目录递归：`[src](src/)`、`[all](src/**)`
+- 目录单层：`[api](docs/api/*)`
+- 通配：`*`、`**`、`?`、`[a-z]`、`{md,txt}`
+
+> 解析结果会被归一化为项目内相对路径（如 `./docs/a.md`）。
 
 ---
 
-## 5. 命令交互约束
+## 7. 与 `regs/index` 的关系
 
-### 5.1 `kb init`
+### 7.1 `./.kb/regs.json`
 
-- 初始化时会写入 `kb.md`，默认内容为：
+- `list`：读取 `regs.json` 列表（不是直接扫描 `kb.md`）。
+- `check`：比较“声明集（`kb.md` + raw）”与 `regs.json`。
+- `update`：应用差异到 `regs.json`（新增写入、删除/不存在移除）。
+
+兼容性：若 `regs.json` 不存在，当前实现会尝试从历史 `refs.json` 迁移读取。
+
+### 7.2 `kb update` 对 `kb.md` 的回填
+
+`kb init` 会创建 `# raw` 分类。
+
+`kb update` 发现 `./.kb/raw/` 新文件后，会按规范追加到 `kb.md` 的 `# raw` 分类，格式为：
 
 ```markdown
-# raw
+[](./.kb/raw/<file>)
 ```
 
-- 初始化成功后会尝试登记当前知识库根目录到全局注册表（`knowledge_bases`）。
-  - 配置路径优先级：`KB_GLOBAL_CONFIG` > `~/.kb-cli/config.json`
-  - 登记失败不影响本地初始化成功。
-
-### 5.2 `kb add --category`
-
-- 指定分类必须已出现在 `kb.md` 的标题行中
-- 不存在则返回 `E2007`
-
-### 5.3 `kb check --category`
-
-- 分类合法性同样基于 `kb.md` 标题行
-- `kb.md` 不可读时返回 `E3003`
-
-### 5.4 `kb update`
-
-- 当前不会解析 `kb.md` 条目来构建索引输入
-- 以 `.kb/refs.json` 投影记录作为输入快照
+并具备去重保障（不会重复追加同一条目）。
 
 ---
 
-## 6. 兼容性建议
+## 8. 命令约束
 
-为降低歧义，建议：
-
-1. 将 `kb.md` 视为“展示清单 + 分类注册表”
-2. 将 `.kb/refs.json` 视为“命令执行与索引更新的状态源”
-3. 修改分类前先确保 `kb.md` 存在对应 `# <category>` 标题
+- `kb.md` 无法读取或语法非法：`E3003`
+- 分类不存在：`E2007`
+- 受保护路径（`kb.md` 与 `./.kb/` 非 raw 内部文件）不可加入索引：`E2009`
 
 ---
 
-## 7. 关联文档
+## 9. 关联文档
 
-- 命令语义：`docs/cli/command-manual.md`
+- 命令手册：`docs/cli/command-manual.md`
+- 命令示例：`docs/cli/command-examples.md`
 - 状态差异：`docs/cli/state-diff-contract.md`
 - 忽略规则：`docs/cli/kbignore-spec.md`
 - 错误目录：`docs/cli/error-catalog.md`

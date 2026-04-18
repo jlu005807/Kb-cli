@@ -1,0 +1,69 @@
+---
+source: crates/kb-cli/tests/cli_surface.rs
+expression: normalized
+---
+KB CLI MVP command surface
+
+Usage: kb [OPTIONS] <COMMAND>
+
+Commands:
+  init        
+  add         
+  mv          
+  rm          
+  path        
+  chmod       
+  list        
+  check       
+  update      
+  ask         
+  env         
+  completion  
+
+Options:
+      --output <OUTPUT>
+          Possible values:
+          - text: 面向用户的可读输出。
+          - json: 面向机器消费的结构化 JSON 输出。
+          
+          [default: text]
+
+      --quiet
+          
+
+  -v, --verbose...
+          
+
+      --config <CONFIG>
+          
+
+      --no-color
+          
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+These are common kb commands used in various situations:
+
+start a working area
+  init        Create kb.md, .kb state and default ignore rules
+
+manage references
+  add         Add file contents to the knowledge base
+  mv          Move or rename an alias
+  rm          Remove an alias from the working set
+  path        Show or update the path of an alias
+  chmod       Update permissions of an alias
+  list        List tracked aliases
+
+maintain index state
+  check       Show index diff without writing files
+  update      Apply index diff and persist snapshot
+
+retrieve and environment
+  ask         Retrieve relevant context for a question
+  env         Show registered knowledge base roots
+  completion  Generate shell completion scripts

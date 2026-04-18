@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use insta::assert_snapshot;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
@@ -93,4 +94,17 @@ fn env_help_contains_list_flag() {
         .assert()
         .success()
         .stdout(contains("--list"));
+}
+
+#[test]
+fn root_help_matches_full_snapshot() {
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .arg("--help")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("help utf8");
+    let normalized = stdout.replace("\r\n", "\n");
+    assert_snapshot!("kb_root_help_full", normalized);
 }

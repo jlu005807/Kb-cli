@@ -1,13 +1,26 @@
 # `.kbignore` 规范（当前实现）
 
-本文档定义 `./kb/.kbignore` 在当前版本中的解析与生效边界（截至 2026-04-15）。
+本文档定义 `./.kb/.kbignore` 在当前版本中的解析与生效边界（截至 2026-04-16）。
 
 ---
 
 ## 1. 文件位置
 
-- 固定路径：`./kb/.kbignore`
-- `kb init` 会自动创建空文件
+- 固定路径：`./.kb/.kbignore`
+- `kb init` 会自动创建该文件，并写入默认规则（包含 `kb.md` 与 `.kb` 内部配置文件）
+
+默认规则示例（当前实现）：
+
+```text
+./kb.md
+./.kb/.kbignore
+./.kb/refs.json
+./.kb/index.json
+./.kb/index.errors.json
+./.kb/index.meta.json
+./.kb/schema.version
+./.kb/*.lock
+```
 
 ---
 
@@ -43,11 +56,15 @@
   - 返回成功包（`ignored=true`）
   - 不写入 refs 状态
   - 不作为错误
+- 额外保护：
+   - `kb.md` 与 `./.kb/` 下除 `./.kb/raw/` 外的内部文件属于受保护路径
+   - 即使未显式写入 `.kbignore`，也会被拦截（`E2009`）
 
 ### 4.2 `kb check` / `kb update`
 
 - 在差异计算前对 `.kb/refs.json` 投影记录进行过滤
 - 命中规则的路径不进入变更统计
+- 对受保护路径执行强制过滤（`kb.md` 与 `./.kb/` 非 raw 文件）
 
 ---
 

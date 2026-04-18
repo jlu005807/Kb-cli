@@ -6,13 +6,18 @@
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
+const HELP_OVERVIEW: &str = "These are common kb commands used in various situations:\n\nstart a working area\n  init        Create kb.md, .kb state and default ignore rules\n\nmanage references\n  add         Add file contents to the knowledge base\n  mv          Move or rename an alias\n  rm          Remove an alias from the working set\n  path        Show or update the path of an alias\n  chmod       Update permissions of an alias\n  list        List tracked aliases\n\nmaintain index state\n  check       Show index diff without writing files\n  update      Apply index diff and persist snapshot\n\nretrieve and environment\n  ask         Retrieve relevant context for a question\n  env         Show registered knowledge base roots\n  completion  Generate shell completion scripts\n";
+
 // CLI 参数契约：全局选项 + 子命令集合。
 // 这里的结构应与 docs/cli/command-manual.md 保持同步。
 #[derive(Debug, Parser)]
 #[command(
-    name = "kb-cli",
+    name = "kb",
+    bin_name = "kb",
     version,
     about = "KB CLI MVP command surface",
+    override_usage = "kb [OPTIONS] <COMMAND>",
+    after_help = HELP_OVERVIEW,
     disable_help_subcommand = true
 )]
 pub struct Cli {
@@ -153,7 +158,7 @@ mod tests {
     #[test]
     fn add_parses_category_and_mode() {
         let cli = Cli::parse_from([
-            "kb-cli",
+            "kb",
             "add",
             "./docs/guide.md",
             "guide",
@@ -176,5 +181,19 @@ mod tests {
             }
             _ => panic!("expected add command"),
         }
+    }
+
+    #[test]
+    fn help_usage_uses_kb_not_exe() {
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains("Usage: kb [OPTIONS] <COMMAND>"));
+    }
+
+    #[test]
+    fn help_contains_grouped_overview_sections() {
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains("manage references"));
+        assert!(help.contains("maintain index state"));
+        assert!(help.contains("retrieve and environment"));
     }
 }
