@@ -151,6 +151,203 @@ fn add_default_append_and_category() {
 }
 
 #[test]
+fn rm_updates_kb_md_only_and_check_detects_deletion_until_update() {
+    let dir = unique_temp_dir("rm-kbmd-only");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[test](docs/a.md):r
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "test",
+                    "alias": "test",
+                    "path": "./docs/a.md",
+                    "perms": "r",
+                    "source": "kbmd",
+                    "category": "docs"
+                }
+            ]
+        }),
+    );
+
+    let (ok, removed) = run_json(&["rm", "test"], &dir);
+    assert!(ok);
+    assert_eq!(removed["data"]["removed_alias"], "test");
+    assert_eq!(removed["data"]["path"], "./docs/a.md");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(!kb_md.contains("[test](docs/a.md):r"));
+
+    let regs_before_update = read_json_file(&dir, "./.kb/regs.json");
+    assert_eq!(regs_before_update["regs"][0]["path"], "./docs/a.md");
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+    let to_remove = check["data"]["to_remove"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(to_remove
+        .iter()
+        .any(|x| x["path"] == "./docs/a.md" && x["reason"] == "deleted"));
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let regs_after_update = read_json_file(&dir, "./.kb/regs.json");
+    let items = regs_after_update["regs"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!items.iter().any(|x| x["path"] == "./docs/a.md"));
+}
+
+#[test]
+fn rm_supports_path_identifier_for_empty_alias_reference() {
+    let dir = unique_temp_dir("rm-empty-alias-path-id");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[](docs/a.md):r
+"#,
+    );
+
+    let (ok, removed) = run_json(&["rm", "docs/a.md"], &dir);
+    assert!(ok);
+    assert_eq!(removed["data"]["removed_alias"], "./docs/a.md");
+    assert_eq!(removed["data"]["path"], "./docs/a.md");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(!kb_md.contains("[](docs/a.md):r"));
+}
+
+#[test]
+fn chmod_updates_kb_md_reference_and_check_detects_permission_change() {
+    let dir = unique_temp_dir("chmod-kbmd-reference");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[test](docs/a.md):r
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "test",
+                    "alias": "test",
+                    "path": "./docs/a.md",
+                    "perms": "r",
+                    "source": "kbmd",
+                    "category": "docs"
+                }
+            ]
+        }),
+    );
+
+    let (ok, chmod) = run_json(&["chmod", "test", "rw"], &dir);
+    assert!(ok);
+    assert_eq!(chmod["data"]["permissions"], "rw");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(kb_md.contains("[test](docs/a.md):rw"));
+
+    let regs_before = read_json_file(&dir, "./.kb/regs.json");
+    assert_eq!(regs_before["regs"][0]["perms"], "r");
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+    let to_update = check["data"]["to_update"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(to_update
+        .iter()
+        .any(|x| x["path"] == "./docs/a.md" && x["reason"] == "metadata_changed"));
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+    let regs_after = read_json_file(&dir, "./.kb/regs.json");
+    assert_eq!(regs_after["regs"][0]["perms"], "rw");
+}
+
+#[test]
+fn chmod_updates_category_permission_and_check_detects_changes() {
+    let dir = unique_temp_dir("chmod-kbmd-category");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[test](docs/a.md)
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "test",
+                    "alias": "test",
+                    "path": "./docs/a.md",
+                    "perms": "r",
+                    "source": "kbmd",
+                    "category": "docs"
+                }
+            ]
+        }),
+    );
+
+    let (ok, chmod) = run_json(&["chmod", "docs", "rw"], &dir);
+    assert!(ok);
+    assert_eq!(chmod["data"]["alias"], "docs");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(kb_md.contains("# docs:rw"));
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+    let to_update = check["data"]["to_update"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(to_update
+        .iter()
+        .any(|x| x["path"] == "./docs/a.md" && x["reason"] == "metadata_changed"));
+}
+
+#[test]
 fn check_detects_additions_from_kb_md_and_raw_against_regs() {
     let dir = unique_temp_dir("check-kbmd-raw-regs-add");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -322,6 +519,55 @@ fn update_applies_add_and_remove_to_regs_file() {
 }
 
 #[test]
+fn update_prunes_missing_kb_md_references() {
+    let dir = unique_temp_dir("update-prune-kbmd-missing");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[missing](docs/missing.md):r
+[still](docs/still.md):r
+"#,
+    );
+    mk_file(&dir, "./docs/still.md", "STILL");
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "missing",
+                    "alias": "missing",
+                    "path": "./docs/missing.md",
+                    "perms": "r",
+                    "source": "kbmd",
+                    "category": "docs"
+                },
+                {
+                    "id": "still",
+                    "alias": "still",
+                    "path": "./docs/still.md",
+                    "perms": "r",
+                    "source": "kbmd",
+                    "category": "docs"
+                }
+            ]
+        }),
+    );
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(!kb_md.contains("[missing](docs/missing.md):r"));
+    assert!(kb_md.contains("[still](docs/still.md):r"));
+}
+
+#[test]
 fn update_idempotency_and_prune_behavior() {
     let dir = unique_temp_dir("update-idempotent");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -371,6 +617,45 @@ fn update_dry_run_does_not_persist_baseline() {
     assert!(dir.join(".kb/index.json").exists());
     assert!(dir.join(".kb/index.errors.json").exists());
     assert!(dir.join(".kb/index.meta.json").exists());
+}
+
+#[test]
+fn update_prunes_index_entries_confirmed_by_check_even_if_not_in_regs() {
+    let dir = unique_temp_dir("update-prune-check-confirmed-removals");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    fs::remove_file(dir.join("docs/a.md")).expect("remove file");
+    write_json_file(&dir, "./.kb/regs.json", &json!({ "regs": [] }));
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+    let to_remove = check["data"]["to_remove"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        to_remove
+            .iter()
+            .any(|x| x["path"] == "./docs/a.md" && x["reason"] == "not_found"),
+        "check should confirm missing kb.md entry as to_remove/not_found"
+    );
+
+    let (ok, update) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(update["status"], "success");
+
+    let index_raw = fs::read_to_string(dir.join(".kb/index.json")).expect("read index");
+    assert!(
+        !index_raw.contains("./docs/a.md"),
+        "removed/not_found entry should be deleted from index snapshot"
+    );
 }
 
 #[test]
@@ -442,6 +727,48 @@ fn update_appends_new_raw_files_into_kb_md_raw_category() {
 }
 
 #[test]
+fn update_dedupes_duplicate_raw_refs_in_kb_md() {
+    let dir = unique_temp_dir("update-dedupe-raw-kbmd");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./.kb/raw/a.md", "A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# raw:r
+[](./.kb/raw/a.md)
+[](./.kb/raw/a.md)
+"#,
+    );
+    write_json_file(
+        &dir,
+        "./.kb/regs.json",
+        &json!({
+            "regs": [
+                {
+                    "id": "./.kb/raw/a.md",
+                    "alias": null,
+                    "path": "./.kb/raw/a.md",
+                    "perms": "r",
+                    "source": "raw",
+                    "category": "raw"
+                }
+            ]
+        }),
+    );
+
+    let (ok, update) = run_json(&["update"], &dir);
+    assert!(ok);
+    assert_eq!(update["status"], "success");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    let count = kb_md.matches("[](./.kb/raw/a.md)").count();
+    assert_eq!(count, 1, "duplicate raw references should be deduplicated");
+}
+
+#[test]
 fn update_ignores_protected_paths_even_if_state_contains_them() {
     let dir = unique_temp_dir("update-ignore-protected");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -453,19 +780,26 @@ fn update_ignores_protected_paths_even_if_state_contains_them() {
 
     let refs_path = dir.join(".kb/refs.json");
     let mut refs_doc: Value =
-        serde_json::from_str(&fs::read_to_string(&refs_path).expect("read refs")).expect("parse refs");
-    refs_doc["refs"].as_array_mut().expect("refs array").push(json!({
-        "alias": "meta/kbmd",
-        "path": "./kb.md",
-        "category": "raw",
-        "perms": "rwx"
-    }));
-    refs_doc["refs"].as_array_mut().expect("refs array").push(json!({
-        "alias": "meta/refs",
-        "path": "./.kb/refs.json",
-        "category": "raw",
-        "perms": "rwx"
-    }));
+        serde_json::from_str(&fs::read_to_string(&refs_path).expect("read refs"))
+            .expect("parse refs");
+    refs_doc["refs"]
+        .as_array_mut()
+        .expect("refs array")
+        .push(json!({
+            "alias": "meta/kbmd",
+            "path": "./kb.md",
+            "category": "raw",
+            "perms": "rwx"
+        }));
+    refs_doc["refs"]
+        .as_array_mut()
+        .expect("refs array")
+        .push(json!({
+            "alias": "meta/refs",
+            "path": "./.kb/refs.json",
+            "category": "raw",
+            "perms": "rwx"
+        }));
     fs::write(
         &refs_path,
         serde_json::to_string_pretty(&refs_doc).expect("serialize refs"),
@@ -541,7 +875,10 @@ fn list_uses_regs_json_as_source_of_truth() {
     let (ok, listed) = run_json(&["list"], &dir);
     assert!(ok);
 
-    let items = listed["data"]["items"].as_array().cloned().unwrap_or_default();
+    let items = listed["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         items.iter().any(|x| x["path"] == "./docs/in-regs.md"),
         "list should include records from regs.json"
@@ -793,7 +1130,7 @@ fn completion_json_contains_script_field() {
     assert!(body["data"]["script"]
         .as_str()
         .unwrap_or_default()
-    .contains("kb"));
+        .contains("kb"));
 }
 
 #[test]

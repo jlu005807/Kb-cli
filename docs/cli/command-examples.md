@@ -3,8 +3,9 @@
 本文档展示 `kb` 命令的标准输出示例，其中 JSON 模式示例是快照测试的权威目标；部分命令附带 text 模式可读示例，用于展示终端交互体验。当本文件与 `command-manual.md` 有冲突时，以 `command-manual.md` 为准。
 
 > 更新说明（2026-04-17）：补充 `kb completion` 与 `kb -h` 示例，并同步 `env` 默认模式（`list(default)`）输出；既有命令的 fixtures 对齐 JSON 快照块保持不变。
-> Implementation update (2026-04-18): check/update/list now run on `./.kb/regs.json` with declaration source `kb.md + ./.kb/raw/`.
-> Existing command fixture JSON blocks are intentionally kept unchanged for snapshot parity tests.
+> 实现更新（2026-04-18）：`check/update/list` 以 `kb.md + ./.kb/raw/` 为声明源，并基于 `./.kb/regs.json` 进行登记对比与展示。
+> 为保持快照一致性，既有命令的 fixture JSON 区块保持不变。
+> 内部重构（2026-04-19）：命令实现已拆分为按命令模块 + runtime core 子模块，命令输出保持不变。
 
 
 > 相关文档：
@@ -159,6 +160,9 @@ kb mv missing-alias new-alias --output=json
 
 ## 4. `kb rm <ALIAS> [--force]`
 
+> 实现说明（2026-04-19）：`kb rm` 会从 `kb.md` 删除声明条目（按 alias/id/path 匹配），不会直接写入 `./.kb/regs.json`。
+> 建议先执行 `kb check` 预览 `to_remove`，再执行 `kb update` 将删除同步到 `regs.json` 与后端索引产物。
+
 ### 成功示例
 **命令：**
 ```bash
@@ -242,6 +246,10 @@ kb path missing-alias --output=json
 
 ## 6. `kb chmod <ALIAS> <PERMS>`
 
+> 实现说明（2026-04-19）：`chmod` 仅修改 `kb.md` 中的权限声明（条目级或分类级），不会直接写入 `./.kb/regs.json`。
+> 建议执行 `kb check` 预览权限差异，再通过 `kb update` 持久化到 `regs.json`。
+
+
 ### 成功示例
 **命令：**
 ```bash
@@ -283,7 +291,8 @@ kb chmod my-docs invalid --output=json
 
 ## 7. `kb check [--raw-only] [--category <CATEGORY>] [--top <N>]`
 
-> Implementation note (2026-04-18): Diff source = declarations from `kb.md + ./.kb/raw/`, compared to registrations in `./.kb/regs.json`.
+> 实现说明（2026-04-18）：差异来源为 `kb.md + ./.kb/raw/` 声明集，对比对象为 `./.kb/regs.json` 登记集。
+> `reason` 取值：`content_changed` / `metadata_changed` / `deleted` / `not_found`。
 
 
 ### 成功示例
@@ -316,7 +325,7 @@ kb check --output=json
       {
         "alias": "legacy/notes",
         "path": "./docs/legacy-notes.md",
-        "reason": "missing_path"
+        "reason": "deleted"
       }
     ],
     "suggested_command": "kb update",
@@ -346,7 +355,7 @@ To update:
   - docs/guide | ./docs/guide.md (content_changed)
 
 To remove:
-  - legacy/notes | ./docs/legacy-notes.md (missing_path)
+  - legacy/notes | ./docs/legacy-notes.md (deleted)
 ```
 
 ### 失败示例
@@ -373,7 +382,11 @@ kb check --output=json
 
 ## 8. `kb update [--dry-run] [--prune] [--yes] [--full]`
 
-> Implementation note (2026-04-18): `update` writes check diff into `./.kb/regs.json`, removes stale/deleted/not-found entries, and refreshes backend index files.
+> 实现说明（2026-04-18）：`update` 会把 `check` 差异写入 `./.kb/regs.json`，移除过期/已删除/不存在条目，并刷新后端索引文件。
+> 当 `check` 确认为 `to_remove` 时，`update` 也会清理匹配的陈旧索引记录，即使这些路径已不在 `regs.json` 中。
+> 对于确认为 `not_found` 的声明，`update` 会同步删除 `kb.md` 中对应引用行。
+> `update` 是 `kb rm`、`kb chmod` 等“声明优先变更”的持久化步骤。
+> 为保证 raw 与 `kb.md` 对齐，`update` 还会按路径去重 `kb.md` 中重复的 raw 引用行。
 
 
 ### 成功示例
@@ -390,7 +403,7 @@ kb update --output=json
     "added": 3,
     "updated": 1,
     "removed": 0,
-    "marked_invalid": 2,
+    "marked_invalid": 0,
     "duration_ms": 187,
     "full": false,
     "raw_category_created": false
@@ -408,7 +421,7 @@ Index update complete
 added: 3
 updated: 1
 removed: 0
-marked_invalid: 2
+marked_invalid: 0
 duration_ms: 187
 dry_run: false
 prune: false
@@ -443,7 +456,7 @@ kb update --output=json
 
 ## 9. `kb list [--long] [--tree] [--filter <PATTERN>]`
 
-> Implementation note (2026-04-18): `list` displays tracked rows from `./.kb/regs.json` (not direct parse results from `kb.md`).
+> 实现说明（2026-04-18）：`list` 展示的是 `./.kb/regs.json` 中的登记结果（不是直接解析 `kb.md` 的结果）。
 
 
 ### 成功示例

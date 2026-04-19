@@ -21,7 +21,7 @@
       {
         "alias": "legacy/notes",
         "path": "./docs/legacy-notes.md",
-        "reason": "missing_path"
+        "reason": "deleted"
       }
     ],
     "suggested_command": "kb update",

@@ -1,6 +1,8 @@
 ﻿# `kb.md` 规范（当前实现）
 
-本文档描述 **当前代码实现** 中 `kb.md` 的实际语义与约束（截至 2026-04-18）。
+本文档描述 **当前代码实现** 中 `kb.md` 的实际语义与约束（截至 2026-04-19）。
+
+> 运行时实现说明（2026-04-19）：CLI 命令分发已解耦为 `commands.rs` + `commands/cmd_*.rs`，`kb.md` 相关落盘逻辑位于 `commands/runtime/core/kbmd_ops.rs`。
 
 ---
 
@@ -150,3 +152,16 @@ default_perm: r
 - 状态差异：`docs/cli/state-diff-contract.md`
 - 忽略规则：`docs/cli/kbignore-spec.md`
 - 错误目录：`docs/cli/error-catalog.md`
+
+---
+
+## 10. 实现说明（2026-04-19）
+
+- 真值关系：声明来自 `kb.md + ./.kb/raw/`；`./.kb/regs.json` 是同步后的登记快照。
+- `kb add`、`kb rm`、`kb chmod` 优先更新声明源（`kb.md`），不直接写 `regs.json`。
+- `kb check` 对比声明集与 `regs.json`，并可识别权限元数据变化（`metadata_changed`）。
+- 当 `kb check` 报告 `to_remove` 时，`kb update` 会清理索引快照中的对应陈旧记录。
+- 即使某些路径已不在 `./.kb/regs.json` 中，但仍残留在基线 `index.json`，上述清理仍会执行。
+- `kb chmod <target> <perms>` 仅修改 `kb.md` 内权限声明（引用或分类），不直接写 `regs.json`。
+- `kb rm <target>` 从 `kb.md` 删除匹配声明（按 alias/id/path）；真正同步到 `regs.json` 仅发生在 `kb update`。
+- `kb update` 会把声明差异同步到 `./.kb/regs.json`，更新后端索引产物，并在 `check` 确认 `not_found` 时删除 `kb.md` 中缺失引用行，同时按路径去重重复 raw 引用。

@@ -130,7 +130,9 @@ pub fn map_core_error(kind: CoreErrorKind, details: Value) -> CliError {
         CoreErrorKind::PathForbidden => CliError {
             code: "E2009",
             message: "Path is protected and cannot be indexed",
-            suggestion: Some("Use normal content paths or ./.kb/raw/*, avoid kb.md and .kb config files"),
+            suggestion: Some(
+                "Use normal content paths or ./.kb/raw/*, avoid kb.md and .kb config files",
+            ),
             details,
             exit_code: 2,
         },

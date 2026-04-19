@@ -1,6 +1,7 @@
 # KB-CLI 错误目录
 
-本文档定义了 KB-CLI 的错误处理机制、退出码规范以及所有可能抛出的错误码（E-Code）。所有跨平台的 KB-CLI 实现都必须严格遵循本目录的定义，以确保错误处理的一致性。
+本文档定义 KB-CLI 的错误模型、退出码分层与已实现的错误码（E-Code）。
+本文件仅做术语与说明统一，不改变任何错误码与契约。
 
 > 相关文档：
 > - `docs/cli/command-manual.md`
@@ -11,75 +12,87 @@
 
 ## 错误模型
 
-KB-CLI 根据用户指定的 `--output` 模式，采用不同的错误输出行为：
+KB-CLI 按 `--output` 模式输出错误：
 
-- **Text 模式 (`--output=text`)**：以人类可读的格式将错误信息打印到 `stderr`，并在遇到致命错误时以相应的非零状态码退出进程。
-- **JSON 模式 (`--output=json`)**：将结构化的 JSON 错误包打印到 `stdout`（不再向 `stdout` 输出其他内容），所有相关的日志则转入 `stderr`。
+- `text`：向 `stderr` 输出人类可读错误信息，并以非零退出码退出。
+- `json`：向 `stdout` 输出结构化错误对象；日志与诊断信息走 `stderr`。
 
-### JSON 错误包版本管理
+### JSON 错误包契约
 
-在 JSON 模式下，所有的错误包都必须包含顶级的 `schema_version` 字段，且当前版本必须为 `"1.0"`。这是为了确保调用方能够向前兼容地解析错误信息。
-
-错误包的确切形状如下：
+当前稳定版本：
 
 ```json
 {
   "schema_version": "1.0",
   "error": {
     "code": "E1001",
-    "message": "配置文件写入失败",
-    "suggestion": "检查文件权限和磁盘空间",
+    "message": "Failed to write configuration",
+    "suggestion": "Check file permissions and disk space",
     "details": {}
   }
 }
 ```
 
+约束说明：
+
+- `schema_version` 当前固定为 `"1.0"`。
+- `code/message/suggestion/details` 字段结构保持稳定。
+- 本文档中的英文 `message` 与 `suggestion` 以当前实现为准。
+
 ## 退出码
 
-系统在退出时，进程会返回以下标准的退出码（Exit Codes），代表不同的错误类别：
-
-| 退出码 | 含义 | 说明 |
+| 退出码 | 类别 | 说明 |
 |---|---|---|
-| `0` | 成功 | 命令执行成功，无任何错误 |
-| `1` | 通用错误 | 系统级错误，如文件系统 I/O 错误 |
-| `2` | 输入/参数 | 用户输入不合法、选项冲突或别名非法 |
-| `3` | 知识库状态 | 与初始化状态相关（未初始化或已初始化） |
-| `4` | 权限 | 操作受当前权限策略拒绝 |
-| `5` | 资源不存在 | 路径或别名找不到 |
-| `6` | 外部服务 | 与外部系统或插件交互失败 |
-| `130` | 用户中断 | 进程收到 SIGINT (Ctrl+C) 而中止 |
+| `0` | 成功 | 命令成功执行 |
+| `1` | 系统错误 | 写入失败、持久化失败等内部错误 |
+| `2` | 输入错误 | 参数、别名、权限、分类、路径策略等校验失败 |
+| `3` | 状态错误 | 工作区初始化状态或 `kb.md` 格式问题 |
+| `4` | 权限错误 | 预留分层（当前无 E4xxx 实现） |
+| `5` | 资源错误 | 目标路径/别名/上下文不存在 |
+| `6` | 外部服务错误 | 预留分层（当前无 E6xxx 实现） |
+| `130` | 中断 | 用户中断（SIGINT / Ctrl+C） |
 
-## 错误码分段
+## 错误码分段规则
 
-具体的业务错误码（E-Code）采用 `E` 前缀，后跟 4 位数字。错误码分段规则与退出码相互对应：
+- `E1xxx`：系统/持久化类错误（通常对应退出码 1）
+- `E2xxx`：用户输入与参数类错误（通常对应退出码 2）
+- `E3xxx`：工作区与状态类错误（通常对应退出码 3）
+- `E4xxx`：权限策略类错误（当前未落地）
+- `E5xxx`：资源定位类错误（通常对应退出码 5）
+- `E6xxx`：外部服务交互类错误（当前未落地）
+- `E9xxx`：中断类错误（当前 `E9001` 对应退出码 130）
 
-- `E1xxx`：系统与环境级错误（通常对应 Exit Code 1）
-- `E2xxx`：用户参数与输入错误（通常对应 Exit Code 2）
-- `E3xxx`：工作区与状态错误（通常对应 Exit Code 3）
-- `E4xxx`：权限控制与拦截错误（通常对应 Exit Code 4）
-- `E5xxx`：资源寻找与定位错误（通常对应 Exit Code 5）
-- `E6xxx`：外部交互与网络错误（通常对应 Exit Code 6）
+## 已实现错误码
 
-### 已定义错误
+说明：
 
-下表涵盖了目前 MVP 阶段定义的所有错误码，这些错误码必须被系统精确抛出。
+- “message（契约原文）”与“suggestion（契约原文）”来自当前实现，供 JSON 消费方稳定解析。
+- “中文释义”仅用于文档阅读，不影响机器契约。
 
-> 说明：本目录中的“建议”用于**人工阅读文档说明**，使用中文表述；命令行 `--output=json` 的机器输出（examples/fixtures）中 suggestion 可使用英文。
+| E-Code | 退出码 | message（契约原文） | 中文释义 | suggestion（契约原文） | 典型命令 |
+|---|---|---|---|---|---|
+| `E1001` | `1` | `Failed to write configuration` | 配置写入失败 | `Check file permissions and disk space` | `init` 等涉及配置写入 |
+| `E1003` | `1` | `Failed to persist index files` | 索引文件持久化失败 | `Check write permissions for .kb directory and retry` | `update` |
+| `E2001` | `2` | `Alias contains invalid characters` | 别名字符不合法 | `Use only letters, digits, -, _, ., / and length 1-128` | `add`, `mv` |
+| `E2002` | `2` | `Invalid glob pattern` | glob 过滤模式非法 | `Verify the filter string is a valid glob pattern` | `list` |
+| `E2003` | `2` | `Alias conflict` | 别名冲突 | `Choose another alias or cancel` | `add`, `mv` |
+| `E2004` | `2` | `Invalid permission string` | 权限串非法 | `Use a valid combination of r, w, x, d, c, or -` | `chmod` |
+| `E2006` | `2` | `Path already registered` | 路径已被登记 | `Use a different path or remove existing registration first` | `add` |
+| `E2007` | `2` | `Category not found` | 分类不存在 | `Run 'kb list --tree' to view available categories and try again` | `add --category`, `check --category` |
+| `E2008` | `2` | `Configuration file not found` | 指定配置文件不存在 | `Pass a valid --config path or remove the flag` | 使用 `--config` 的任意命令 |
+| `E2009` | `2` | `Path is protected and cannot be indexed` | 受保护路径不可索引 | `Use normal content paths or ./.kb/raw/*, avoid kb.md and .kb config files` | `add` |
+| `E3001` | `3` | `Knowledge base is not initialized` | 未初始化知识库 | `Run \`kb init\` in current directory` | 除 `init/env/completion` 外大多数命令 |
+| `E3002` | `3` | `Knowledge base already initialized` | 知识库已初始化 | `Use --force to overwrite or run in a different directory` | `init` |
+| `E3003` | `3` | `Invalid kb.md format` | `kb.md` 格式非法 | `Fix kb.md syntax and run kb check again` | `check`, `update` |
+| `E5001` | `5` | `Path does not exist` | 路径不存在 | `Verify the file or directory exists at the provided path` | `add`, `path` |
+| `E5002` | `5` | `Alias does not exist` | 别名不存在 | `Run 'kb list' to see available aliases` | `mv`, `rm`, `path`, `chmod` |
+| `E5003` | `5` | `No relevant context found` | 没有可用上下文 | `Try a different question or add more files to the knowledge base` | `ask` |
+| `E9001` | `130` | `Operation interrupted` | 操作被中断 | `Retry the command when ready` | 任意可中断命令 |
 
-| E-Code | 退出码 | 消息 | 建议 | 适用命令 |
-|---|---|---|---|---|
-| `E1001` | 1 | 配置文件写入失败 | 请检查文件权限和磁盘空间后重试 | init |
-| `E2001` | 2 | 别名包含非法字符 | 请使用字母、数字、-、_、.、/ 组合并重试 | add, mv |
-| `E2002` | 2 | 无效过滤模式 | 请使用合法的 glob 语法后重试 | list |
-| `E2003` | 2 | 别名冲突 | 请更换别名或先移除现有别名后重试 | add, mv |
-| `E2004` | 2 | 权限字符串无效 | 请使用合法的 r、w、x、d、c 或 - 组合后重试 | chmod |
-| `E2006` | 2 | 路径已被其他别名注册 | 请使用其他路径或先移除现有注册后重试 | add |
-| `E2009` | 2 | 路径受保护，禁止加入索引 | 请改用普通内容路径，或使用 `./.kb/raw/*` 作为可索引内部目录 | add |
-| `E3001` | 3 | 知识库未初始化 | 请先运行 `kb init` 再重试 | 全部（除 init, env, completion） |
-| `E3002` | 3 | 知识库已初始化 | 请使用 `--force` 覆盖或切换目录后重试 | init |
-| `E5001` | 5 | 路径不存在 | 请确认目标路径存在后重试 | add, path |
-| `E5002` | 5 | 别名不存在 | 请先运行 `kb list` 查看可用别名后重试 | mv, rm, path, chmod |
-| `E5003` | 5 | 无可用上下文 | 请先补充知识库条目或调整查询后重试 | ask |
-| `E2007` | 2 | 分类不存在 | 请先运行 `kb list --tree` 查看可用分类层级后重试 | add (`--category`), check (`--category`) |
-| `E3003` | 3 | 索引/分类数据格式无效 | 请检查 kb.md 可读性或历史索引文件格式后重试 | check, update |
-| `E1003` | 1 | 索引持久化失败 | 请检查 .kb 目录权限与磁盘空间后重试 | update |
+## 维护要求
+
+- 增删错误码时，必须同步更新：
+  - `crates/kb-cli/src/errors.rs`
+  - `docs/cli/command-manual.md`
+  - `docs/cli/command-examples.md`（如涉及示例）
+- 不得在未更新文档和测试的情况下调整 `message/suggestion` 契约文本。

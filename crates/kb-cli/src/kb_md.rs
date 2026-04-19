@@ -97,7 +97,9 @@ pub fn parse_kb_document(raw: &str) -> Result<KbDocument, String> {
             continue;
         };
 
-        let perms = parsed.explicit_perm.unwrap_or_else(|| inherited.to_string());
+        let perms = parsed
+            .explicit_perm
+            .unwrap_or_else(|| inherited.to_string());
         if Permission::parse(&perms).is_err() {
             return Err(format!(
                 "invalid permission at line {}: {}",
@@ -141,7 +143,11 @@ fn parse_front_matter(lines: &[&str]) -> Result<(KbFrontMatter, usize), String> 
         }
         if !current.is_empty() {
             let Some((key, value)) = current.split_once(':') else {
-                return Err(format!("invalid front matter line {}: {}", idx + 1, current));
+                return Err(format!(
+                    "invalid front matter line {}: {}",
+                    idx + 1,
+                    current
+                ));
             };
             let key = key.trim();
             let value = value.trim();
