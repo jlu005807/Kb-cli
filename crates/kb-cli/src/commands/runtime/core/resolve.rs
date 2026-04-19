@@ -64,7 +64,7 @@ fn collect_kb_entries(
             continue;
         }
 
-        let singular_plain = resolved.len() == 1 && !is_pattern_reference(&r.path);
+        let singular_plain = resolved.len() == 1 && !is_expanding_pattern_reference(&r.path);
         for (path, exists) in resolved {
             let alias = if singular_plain { r.alias.clone() } else { None };
             let id = alias.clone().unwrap_or_else(|| path.clone());
@@ -99,6 +99,17 @@ fn is_pattern_reference(path_spec: &str) -> bool {
         || path_spec.contains('}')
 }
 
+fn is_expanding_pattern_reference(path_spec: &str) -> bool {
+    path_spec.ends_with("/*")
+        || path_spec.ends_with("/**")
+        || path_spec.contains('*')
+        || path_spec.contains('?')
+        || path_spec.contains('[')
+        || path_spec.contains(']')
+        || path_spec.contains('{')
+        || path_spec.contains('}')
+}
+
 fn resolve_reference_paths(cwd: &Path, path_spec: &str) -> Vec<(String, bool)> {
     let normalized = normalize_path(path_spec);
 
@@ -122,10 +133,7 @@ fn resolve_reference_paths(cwd: &Path, path_spec: &str) -> Vec<(String, bool)> {
 
     if normalized.ends_with('/') {
         let dir = cwd.join(normalized.trim_start_matches("./").trim_end_matches('/'));
-        return collect_files_under(cwd, &dir, true)
-            .into_iter()
-            .map(|path| (path, true))
-            .collect();
+        return vec![(normalized, dir.exists())];
     }
 
     if is_pattern_reference(&normalized) {

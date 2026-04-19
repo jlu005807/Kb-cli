@@ -1,4 +1,4 @@
-# KB-CLI
+﻿# KB-CLI
 
 KB-CLI 是一个基于 Rust Workspace 构建的本地知识库命令行工具。
 
@@ -134,3 +134,56 @@ node tests/tools/validate-doc-fixture-diff.js
 
 - 当前 `kb ask` 使用本地检索流程，`engine_status = "disabled"`。
 - JSON 输出是稳定的机器契约；text 输出面向人类阅读。
+
+
+## 打包与 Release 发布
+
+详细安装与打包文档见：`docs/cli/install-and-package.md`。
+
+### 本地打包
+
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
+```
+
+Linux：
+
+```bash
+bash ./scripts/package.sh --target x86_64-unknown-linux-gnu
+```
+
+说明：
+
+- `scripts/package.ps1` 仅用于 Windows 产物（`.zip`）。
+- `scripts/package.sh` 仅用于 Linux 产物（`.tar.gz`）。
+- 在 Git Bash/MSYS/Cygwin 环境中执行 `package.sh` 时，必须显式传入 Linux `--target`。
+
+### GitHub Actions 自动发布
+
+工作流文件：`.github/workflows/release.yml`
+
+当前触发规则：
+
+- 仅在“新建 tag”事件触发（`on: create`）
+- 且仅处理 tag 名以 `v` 开头（如 `v0.1.2`）
+- 推送分支（例如 `main`）不会触发发布任务
+
+发布行为：
+
+1. 先校验 tag 格式并创建（或复用）GitHub Release。
+2. Linux runner 构建并打包 `.tar.gz`，直接上传到该 Release。
+3. Windows runner 构建并打包 `.zip`，直接上传到该 Release。
+
+推荐发布命令：
+
+```bash
+git push -u origin main
+git tag <新的版本号>
+git push -u origin <新的版本号>
+```
+
+> 注意：已存在的旧 tag 重新 push 通常不会触发 `create` 事件，建议使用新版本 tag。
+
+---

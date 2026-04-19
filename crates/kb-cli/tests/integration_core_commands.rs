@@ -391,6 +391,50 @@ default_perm: r
 }
 
 #[test]
+fn check_counts_directory_and_file_declarations_separately() {
+    let dir = unique_temp_dir("check-dir-and-file-separate-add");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/a.md", "A");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# docs:r
+[docs-dir](docs/):r
+[docs-file](docs/a.md):r
+"#,
+    );
+    write_json_file(&dir, "./.kb/regs.json", &json!({ "regs": [] }));
+
+    let (ok, check) = run_json(&["check"], &dir);
+    assert!(ok);
+
+    let to_add = check["data"]["to_add"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        to_add.len(),
+        2,
+        "directory declaration and file declaration should be counted separately"
+    );
+    assert!(
+        to_add
+            .iter()
+            .any(|x| x["path"] == "./docs/" && x["source"] == "kbmd"),
+        "directory declaration should appear in to_add"
+    );
+    assert!(
+        to_add
+            .iter()
+            .any(|x| x["path"] == "./docs/a.md" && x["source"] == "kbmd"),
+        "file declaration should appear in to_add"
+    );
+}
+
+#[test]
 fn check_marks_deleted_and_not_found_against_regs() {
     let dir = unique_temp_dir("check-regs-delete-notfound");
     let (ok, _) = run_json(&["init", "demo"], &dir);
