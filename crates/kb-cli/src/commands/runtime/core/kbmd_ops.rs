@@ -61,18 +61,7 @@ fn apply_rm_to_kb_md(
 ) -> Result<Option<(String, String)>, std::io::Error> {
     let raw = fs::read_to_string(kb_md)?;
     let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
-    let normalized_target = normalize_path(target);
-
-    let reference = kb_doc.references.iter().find(|item| {
-        let normalized_ref_path = normalize_path(&item.path);
-        let id = item
-            .alias
-            .clone()
-            .unwrap_or_else(|| normalized_ref_path.clone());
-        item.alias.as_deref() == Some(target)
-            || id == target
-            || normalized_ref_path == normalized_target
-    });
+    let reference = resolve_rm_target(kb_doc, target);
 
     let Some(reference) = reference else {
         return Ok(None);
@@ -90,12 +79,43 @@ fn apply_rm_to_kb_md(
     }
     fs::write(kb_md, out)?;
 
-    let normalized_ref_path = normalize_path(&reference.path);
-    let removed_alias = reference
-        .alias
-        .clone()
-        .unwrap_or_else(|| normalized_ref_path.clone());
-    Ok(Some((removed_alias, normalized_ref_path)))
+    Ok(Some(reference.identity()))
+}
+
+#[derive(Debug, Clone)]
+struct RmTargetRef {
+    line: usize,
+    alias: String,
+    path: String,
+}
+
+impl RmTargetRef {
+    fn identity(&self) -> (String, String) {
+        (self.alias.clone(), self.path.clone())
+    }
+}
+
+fn resolve_rm_target(kb_doc: &crate::kb_md::KbDocument, target: &str) -> Option<RmTargetRef> {
+    let normalized_target = normalize_path(target);
+    kb_doc.references.iter().find_map(|item| {
+        let normalized_ref_path = normalize_path(&item.path);
+        let id = item
+            .alias
+            .clone()
+            .unwrap_or_else(|| normalized_ref_path.clone());
+        if item.alias.as_deref() == Some(target)
+            || id == target
+            || normalized_ref_path == normalized_target
+        {
+            Some(RmTargetRef {
+                line: item.line,
+                alias: item.alias.clone().unwrap_or_else(|| normalized_ref_path.clone()),
+                path: normalized_ref_path,
+            })
+        } else {
+            None
+        }
+    })
 }
 
 fn apply_chmod_to_kb_md(

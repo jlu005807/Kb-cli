@@ -242,10 +242,60 @@ pub(crate) fn run_mv(alias: String, new_alias: String) -> Result<Value, CliError
     Ok(with_text(data, text))
 }
 
-pub(crate) fn run_rm(alias: String, _force: bool) -> Result<Value, CliError> {
+fn confirm_raw_source_delete(path: &str) -> bool {
+    use std::io::Write as _;
+
+    let mut stderr = std::io::stderr();
+    let _ = writeln!(
+        stderr,
+        "Raw source file detected: {path}\nDelete source file as well? [y/N]"
+    );
+    let _ = stderr.flush();
+
+    let mut input = String::new();
+    match std::io::stdin().read_line(&mut input) {
+        Ok(0) => false,
+        Ok(_) => matches!(input.trim().to_ascii_lowercase().as_str(), "y" | "yes"),
+        Err(_) => false,
+    }
+}
+
+pub(crate) fn run_rm(alias: String, force: bool) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
     let kb_md = cwd.join("kb.md");
     let kb_doc = parse_kb_document_file(&kb_md)?;
+    let Some(target_ref) = resolve_rm_target(&kb_doc, &alias) else {
+        return Err(alias_not_found_error(alias));
+    };
+    let (removed_alias, removed_path) = target_ref.identity();
+
+    if removed_path.starts_with(RAW_PREFIX) {
+        let confirmed = if force {
+            true
+        } else {
+            confirm_raw_source_delete(&removed_path)
+        };
+        if !confirmed {
+            let data = json!({
+                "ignored": true,
+                "reason": "raw_delete_not_confirmed",
+                "alias": removed_alias,
+                "path": removed_path,
+            });
+            let mut text = String::new();
+            text.push_str("Remove ignored\n");
+            let _ = writeln!(text, "reason: raw_delete_not_confirmed");
+            let _ = writeln!(text, "alias: {}", data["alias"].as_str().unwrap_or_default());
+            let _ = writeln!(text, "path: {}", data["path"].as_str().unwrap_or_default());
+            return Ok(with_text(data, text));
+        }
+
+        let raw_abs = cwd.join(removed_path.trim_start_matches("./"));
+        if raw_abs.is_file() {
+            fs::remove_file(&raw_abs).map_err(|_| write_config_error())?;
+        }
+    }
+
     let removed = apply_rm_to_kb_md(&kb_md, &kb_doc, &alias)
         .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
     let Some((removed_alias, removed_path)) = removed else {

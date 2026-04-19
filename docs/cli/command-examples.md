@@ -161,6 +161,8 @@ kb mv missing-alias new-alias --output=json
 ## 4. `kb rm <ALIAS> [--force]`
 
 > 实现说明（2026-04-19）：`kb rm` 会从 `kb.md` 删除声明条目（按 alias/id/path 匹配），不会直接写入 `./.kb/regs.json`。
+> 当目标是 raw 条目（`./.kb/raw/*`）时，`kb rm` 需要确认是否删除源文件；确认后才会删除声明与源文件。
+> 未确认时会忽略本次操作，并返回 `ignored=true` 与 `reason=raw_delete_not_confirmed`。
 > 建议先执行 `kb check` 预览 `to_remove`，再执行 `kb update` 将删除同步到 `regs.json` 与后端索引产物。
 
 ### 成功示例
@@ -176,6 +178,25 @@ kb rm my-docs --force --output=json
   "data": {
     "removed_alias": "my-docs",
     "path": "./docs"
+  }
+}
+```
+
+### 忽略示例（raw 未确认删除源文件）
+**命令：**
+```bash
+kb rm raw-a --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "ignored": true,
+    "reason": "raw_delete_not_confirmed",
+    "alias": "raw-a",
+    "path": "./.kb/raw/a.md"
   }
 }
 ```

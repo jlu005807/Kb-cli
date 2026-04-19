@@ -107,10 +107,13 @@
 - 从 `kb.md` 删除声明项（按 alias/id/path 匹配）。
 - 不直接写 `regs.json`。
 - 变更需通过 `kb update` 才会真正同步。
+- 当目标是 `./.kb/raw/*` 条目时，`rm` 会先确认是否删除 raw 源文件：
+  - 已确认（或传入 `--force`）才执行删除，并同时删除源文件。
+  - 未确认则忽略本次操作（不删除 `kb.md` 声明，也不删除源文件）。
 
 主要输出字段：
-- `removed_alias`
-- `path`
+- 正常删除：`removed_alias`、`path`
+- 忽略删除：`ignored=true`、`reason=raw_delete_not_confirmed`、`alias`、`path`
 
 ### 4.5 `kb path <ALIAS> [NEW_PATH]`
 

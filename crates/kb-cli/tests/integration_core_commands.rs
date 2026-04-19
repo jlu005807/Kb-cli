@@ -215,6 +215,70 @@ fn rm_updates_kb_md_only_and_check_detects_deletion_until_update() {
 }
 
 #[test]
+fn rm_raw_without_confirmation_is_ignored() {
+    let dir = unique_temp_dir("rm-raw-no-confirm");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./.kb/raw/a.md", "RAW");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# raw:r
+[raw-a](./.kb/raw/a.md):r
+"#,
+    );
+
+    let (ok, removed) = run_json(&["rm", "raw-a"], &dir);
+    assert!(ok);
+    assert_eq!(removed["data"]["ignored"], true);
+    assert_eq!(removed["data"]["reason"], "raw_delete_not_confirmed");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(
+        kb_md.contains("[raw-a](./.kb/raw/a.md):r"),
+        "rm should be ignored when raw delete is not confirmed"
+    );
+    assert!(
+        dir.join(".kb/raw/a.md").is_file(),
+        "raw source file should stay when rm is ignored"
+    );
+}
+
+#[test]
+fn rm_raw_with_force_removes_source_file_and_declaration() {
+    let dir = unique_temp_dir("rm-raw-force");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./.kb/raw/a.md", "RAW");
+    mk_file(
+        &dir,
+        "./kb.md",
+        r#"
+# raw:r
+[raw-a](./.kb/raw/a.md):r
+"#,
+    );
+
+    let (ok, removed) = run_json(&["rm", "raw-a", "--force"], &dir);
+    assert!(ok);
+    assert_eq!(removed["data"]["removed_alias"], "raw-a");
+    assert_eq!(removed["data"]["path"], "./.kb/raw/a.md");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(
+        !kb_md.contains("[raw-a](./.kb/raw/a.md):r"),
+        "kb.md declaration should be removed after force rm"
+    );
+    assert!(
+        !dir.join(".kb/raw/a.md").exists(),
+        "raw source file should be deleted after force rm"
+    );
+}
+
+#[test]
 fn rm_supports_path_identifier_for_empty_alias_reference() {
     let dir = unique_temp_dir("rm-empty-alias-path-id");
     let (ok, _) = run_json(&["init", "demo"], &dir);
