@@ -536,7 +536,7 @@ const UPDATE_LAYER_FAILURES_ENV: &str = "KB_UPDATE_SIMULATE_LAYER_FAILURES";
 #[derive(Debug, Clone)]
 struct LayerIssue {
     layer: &'static str,
-    code: &'static str,
+    code: String,
     message: String,
     retryable: bool,
 }
@@ -561,7 +561,7 @@ fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
     if injected.contains(LAYER_L2_SEMANTIC) {
         issues.push(LayerIssue {
             layer: LAYER_L2_SEMANTIC,
-            code: "W-L2-EXTRACT-FAILED",
+            code: "W-L2-EXTRACT-FAILED".to_string(),
             message: "Semantic extraction stage failed".to_string(),
             retryable: true,
         });
@@ -569,7 +569,7 @@ fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
     if injected.contains(LAYER_L3_PROJECTION) || legacy_l3_l4 {
         issues.push(LayerIssue {
             layer: LAYER_L3_PROJECTION,
-            code: "W-L3-PROJECTION-FAILED",
+            code: "W-L3-PROJECTION-FAILED".to_string(),
             message: "Search projection stage failed".to_string(),
             retryable: true,
         });
@@ -577,7 +577,7 @@ fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
     if injected.contains(LAYER_L4_GRAPH) || legacy_l3_l4 {
         issues.push(LayerIssue {
             layer: LAYER_L4_GRAPH,
-            code: "W-L4-GRAPH-FAILED",
+            code: "W-L4-GRAPH-FAILED".to_string(),
             message: "Graph build stage failed".to_string(),
             retryable: true,
         });
@@ -585,7 +585,7 @@ fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
     if injected.contains(LAYER_L5_WIKI_VIEW) {
         issues.push(LayerIssue {
             layer: LAYER_L5_WIKI_VIEW,
-            code: "W-L5-WIKI-VIEW-FAILED",
+            code: "W-L5-WIKI-VIEW-FAILED".to_string(),
             message: "Wiki markdown view stage failed".to_string(),
             retryable: true,
         });
@@ -614,6 +614,14 @@ fn issue_text(issue: &LayerIssue) -> String {
             "non-retryable"
         }
     )
+}
+
+fn generated_at_unix_string() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("unix:{}", secs)
 }
 
 pub(crate) fn run_update(
@@ -675,8 +683,54 @@ pub(crate) fn run_update(
         })?;
     }
 
-    let progressive_issues = collect_progressive_layer_issues();
-    let mut l2_status = "skipped";
+    let mut progressive_issues = collect_progressive_layer_issues();
+
+    let knowledge_store = FsKnowledgeStore::new(cwd.clone());
+    let content_reader = FsFileContentReader::new(cwd.clone());
+    let extractor = RuleBasedSemanticExtractor::new();
+
+    let baseline_knowledge = match knowledge_store.read_knowledge() {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L2_SEMANTIC,
+                code: "W-L2-READ-SNAPSHOT-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+            None
+        }
+    };
+
+    let generated_at = generated_at_unix_string();
+    let l2_outcome = compile_l2(
+        baseline_knowledge.as_ref(),
+        &outcome.snapshot,
+        &content_reader,
+        &extractor,
+        &generated_at,
+    );
+    for issue in &l2_outcome.issues {
+        progressive_issues.push(LayerIssue {
+            layer: LAYER_L2_SEMANTIC,
+            code: issue.code.clone(),
+            message: issue.message.clone(),
+            retryable: issue.retryable,
+        });
+    }
+
+    if !dry_run {
+        if let Err(err) = knowledge_store.write_knowledge(&l2_outcome.snapshot) {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L2_SEMANTIC,
+                code: "W-L2-WRITE-SNAPSHOT-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+        }
+    }
+
+    let mut l2_status = "ok";
     let mut l3_status = "skipped";
     let mut l4_status = "skipped";
     let mut l5_status = "skipped";
