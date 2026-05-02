@@ -167,12 +167,12 @@
 **Files:**
 - Modify: `crates/kb-cli/src/core_adapters.rs`
 - Modify: `crates/kb-cli/src/commands/runtime/core/handlers.rs`
-- Test: `crates/kb-cli/tests/layered_update_contract.rs`
+- Test: `crates/kb-cli/tests/integration_core_commands.rs`
 
-- [ ] Step 1: 检索顺序升级为 `L3 -> L2 -> L4 -> L1 fallback`。
-- [ ] Step 2: 命中上下文输出 `source_layer/record_id/chunk_id`。
-- [ ] Step 3: L2-L4 缺失时保持旧行为可用。
-- [ ] Step 4: 运行测试：
+- [x] Step 1: 检索顺序升级为 `L3 -> L2 -> L4 -> L1 fallback`。
+- [x] Step 2: 命中上下文输出 `source_layer/record_id/chunk_id`。
+- [x] Step 3: L2-L4 缺失时保持旧行为可用。
+- [x] Step 4: 运行测试：
   `cargo test -p kb-cli ask_layered_retrieval_`
 
 ### Task 8: 文档、快照与回归门禁
@@ -184,10 +184,10 @@
 - Modify: `docs/architecture/wiki-markdown-view-layer.md`
 - Modify: `docs/architecture/backend-agent-integration.md`
 
-- [ ] Step 1: 对齐阶段键命名（不再混用 `l3_l4_projection`）。
-- [ ] Step 2: 对齐 `--strict` 与默认模式语义描述。
-- [ ] Step 3: 对齐 LLM 配置优先级（进程 env > `.kb/.env` > 全局）。
-- [ ] Step 4: 运行验证：
+- [x] Step 1: 对齐阶段键命名（不再混用 `l3_l4_projection`）。
+- [x] Step 2: 对齐 `--strict` 与默认模式语义描述。
+- [x] Step 3: 对齐 LLM 配置优先级（进程 env > `.kb/.env` > 全局）。
+- [x] Step 4: 运行验证：
   1. `cargo test -p kb-cli root_help_matches_full_snapshot`
   2. `node tests/tools/validate-doc-fixture-diff.js`
 

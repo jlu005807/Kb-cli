@@ -780,6 +780,13 @@ pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliEr
                 ctx.alias,
                 ctx.score
             );
+            let _ = writeln!(
+                ask_text,
+                "     layer: {} record: {} chunk: {}",
+                ctx.source_layer.as_deref().unwrap_or("unknown"),
+                ctx.record_id.as_deref().unwrap_or(ctx.alias.as_str()),
+                ctx.chunk_id.as_deref().unwrap_or("-")
+            );
             let _ = writeln!(ask_text, "     {}", ctx.snippet);
         }
     }
@@ -792,6 +799,9 @@ pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliEr
                 "alias": ctx.alias,
                 "snippet": ctx.snippet,
                 "score": ctx.score,
+                "source_layer": ctx.source_layer,
+                "record_id": ctx.record_id,
+                "chunk_id": ctx.chunk_id,
             })
         })
         .collect();

@@ -9,7 +9,10 @@
       {
         "alias": "docs/config",
         "snippet": "Use kb config to change settings.",
-        "score": 1.0
+        "score": 1.0,
+        "source_layer": "l3_projection",
+        "record_id": "docs/config",
+        "chunk_id": "docs/config:0001"
       }
     ]
   }

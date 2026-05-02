@@ -1,9 +1,17 @@
 //! Usecase 编排层。
 //! 负责把领域规则组织成可执行业务流程，并保持输入/输出稳定契约。
 
-use crate::domain::Alias;
-use crate::domain::IndexSnapshot;
-use crate::ports::{AnswerEngine, AnswerMeta, RetrievedContext, Retriever, StateSnapshot};
+use crate::domain::{
+    Alias, GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot,
+    IndexSnapshot, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SearchHit,
+    SearchProjectionSnapshot, SemanticProviderInfo, WikiManifestEntry, WikiManifestSnapshot,
+    WikiPageDocument, WikiPageType, WikiViewSnapshot,
+};
+use crate::ports::{
+    AnswerEngine, AnswerMeta, FileContentReader, RetrievedContext, Retriever,
+    SemanticExtractRequest, SemanticExtractor, StateSnapshot,
+};
+use std::collections::{BTreeMap, BTreeSet};
 
 // init 规划：只做“是否允许初始化/覆盖”的业务判定。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,6 +403,1109 @@ pub fn execute_ask<R: Retriever + ?Sized, A: AnswerEngine + ?Sized>(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileL2Issue {
+    pub record_id: String,
+    pub path: String,
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileL2Outcome {
+    pub snapshot: KnowledgeSnapshot,
+    pub processed: usize,
+    pub reused: usize,
+    pub missing: usize,
+    pub failed: usize,
+    pub issues: Vec<CompileL2Issue>,
+}
+
+pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
+    baseline: Option<&KnowledgeSnapshot>,
+    index_snapshot: &IndexSnapshot,
+    reader: &R,
+    extractor: &E,
+    generated_at: &str,
+) -> CompileL2Outcome {
+    let mut baseline_map: BTreeMap<&str, &KnowledgeEntry> = BTreeMap::new();
+    if let Some(baseline_snapshot) = baseline {
+        for entry in &baseline_snapshot.entries {
+            baseline_map.insert(entry.record_id.as_str(), entry);
+        }
+    }
+
+    let mut entries = Vec::new();
+    let mut issues = Vec::new();
+    let mut processed = 0usize;
+    let mut reused = 0usize;
+    let mut missing = 0usize;
+    let mut failed = 0usize;
+
+    for record in &index_snapshot.records {
+        let record_id = record.alias.clone();
+        let path = record.path.clone();
+        let input_signature = format!("{}|{}", record.path, record.signature);
+
+        if !record.present {
+            missing += 1;
+            issues.push(CompileL2Issue {
+                record_id: record_id.clone(),
+                path: path.clone(),
+                code: "W-L2-SOURCE-MISSING".to_string(),
+                message: "Index record marked as not present".to_string(),
+                retryable: true,
+            });
+            entries.push(KnowledgeEntry {
+                record_id,
+                path,
+                input_signature,
+                status: KnowledgeStatus::Missing,
+                summary: String::new(),
+                tags: vec![],
+                key_concepts: vec![],
+                chunks: vec![],
+                provider: SemanticProviderInfo {
+                    kind: "system".to_string(),
+                    name: "missing-source".to_string(),
+                },
+            });
+            continue;
+        }
+
+        if let Some(previous) = baseline_map.get(record.alias.as_str()) {
+            if previous.path == record.path
+                && previous.input_signature == input_signature
+                && previous.status == KnowledgeStatus::Active
+            {
+                reused += 1;
+                entries.push((**previous).clone());
+                continue;
+            }
+        }
+
+        processed += 1;
+        let text = match reader.read_text(&path) {
+            Ok(text) => text,
+            Err(err) => {
+                missing += 1;
+                issues.push(CompileL2Issue {
+                    record_id: record_id.clone(),
+                    path: path.clone(),
+                    code: "W-L2-SOURCE-MISSING".to_string(),
+                    message: err,
+                    retryable: true,
+                });
+                entries.push(KnowledgeEntry {
+                    record_id,
+                    path,
+                    input_signature,
+                    status: KnowledgeStatus::Missing,
+                    summary: String::new(),
+                    tags: vec![],
+                    key_concepts: vec![],
+                    chunks: vec![],
+                    provider: SemanticProviderInfo {
+                        kind: "system".to_string(),
+                        name: "missing-source".to_string(),
+                    },
+                });
+                continue;
+            }
+        };
+
+        let request = SemanticExtractRequest {
+            record_id: record_id.clone(),
+            path: path.clone(),
+            text: text.clone(),
+            input_signature: input_signature.clone(),
+        };
+
+        match extractor.extract(&request) {
+            Ok(extracted) => {
+                entries.push(KnowledgeEntry {
+                    record_id,
+                    path,
+                    input_signature,
+                    status: KnowledgeStatus::Active,
+                    summary: extracted.summary,
+                    tags: extracted.tags,
+                    key_concepts: extracted.key_concepts,
+                    chunks: extracted.chunks,
+                    provider: extracted.provider,
+                });
+            }
+            Err(err) => {
+                failed += 1;
+                issues.push(CompileL2Issue {
+                    record_id: record_id.clone(),
+                    path: path.clone(),
+                    code: "W-L2-EXTRACT-FAILED".to_string(),
+                    message: err,
+                    retryable: true,
+                });
+                entries.push(KnowledgeEntry {
+                    record_id,
+                    path,
+                    input_signature,
+                    status: KnowledgeStatus::Failed,
+                    summary: first_non_empty_line(&text).unwrap_or_default(),
+                    tags: vec![],
+                    key_concepts: vec![],
+                    chunks: vec![],
+                    provider: SemanticProviderInfo {
+                        kind: "system".to_string(),
+                        name: "extract-failed".to_string(),
+                    },
+                });
+            }
+        }
+    }
+
+    let snapshot = KnowledgeSnapshot {
+        schema_version: 1,
+        generated_at: generated_at.to_string(),
+        base_index_signature: build_index_signature(index_snapshot),
+        entries,
+    };
+
+    CompileL2Outcome {
+        snapshot,
+        processed,
+        reused,
+        missing,
+        failed,
+        issues,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompileL3Outcome {
+    pub snapshot: SearchProjectionSnapshot,
+    pub processed: usize,
+    pub reused: usize,
+}
+
+pub fn compile_l3(
+    baseline: Option<&SearchProjectionSnapshot>,
+    knowledge_snapshot: &KnowledgeSnapshot,
+    generated_at: &str,
+) -> CompileL3Outcome {
+    let mut baseline_map: BTreeMap<&str, &SearchHit> = BTreeMap::new();
+    if let Some(baseline_snapshot) = baseline {
+        for hit in &baseline_snapshot.hits {
+            baseline_map.insert(hit.key.as_str(), hit);
+        }
+    }
+
+    let mut hits = Vec::new();
+    let mut processed = 0usize;
+    let mut reused = 0usize;
+
+    for entry in &knowledge_snapshot.entries {
+        if entry.status != KnowledgeStatus::Active {
+            continue;
+        }
+        for chunk in &entry.chunks {
+            let key = format!(
+                "{}|{}|{}",
+                entry.record_id, chunk.chunk_id, chunk.content_signature
+            );
+            if let Some(previous) = baseline_map.get(key.as_str()) {
+                reused += 1;
+                hits.push((**previous).clone());
+                continue;
+            }
+
+            processed += 1;
+            let matched_terms = derive_matched_terms(entry, chunk);
+            hits.push(SearchHit {
+                key,
+                record_id: entry.record_id.clone(),
+                chunk_id: chunk.chunk_id.clone(),
+                content_signature: chunk.content_signature.clone(),
+                score: deterministic_search_score(&matched_terms),
+                matched_terms,
+            });
+        }
+    }
+    hits.sort_by(|a, b| a.key.cmp(&b.key));
+
+    let snapshot = SearchProjectionSnapshot {
+        schema_version: 1,
+        generated_at: generated_at.to_string(),
+        base_knowledge_signature: build_knowledge_signature(knowledge_snapshot),
+        hits,
+    };
+
+    CompileL3Outcome {
+        snapshot,
+        processed,
+        reused,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileL4Issue {
+    pub edge_id: String,
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileL4Outcome {
+    pub snapshot: GraphSnapshot,
+    pub processed: usize,
+    pub reused: usize,
+    pub invalid_edges: usize,
+    pub issues: Vec<CompileL4Issue>,
+}
+
+pub fn compile_l4(
+    baseline: Option<&GraphSnapshot>,
+    knowledge_snapshot: &KnowledgeSnapshot,
+    generated_at: &str,
+) -> CompileL4Outcome {
+    let mut baseline_map: BTreeMap<&str, &GraphEdge> = BTreeMap::new();
+    if let Some(baseline_snapshot) = baseline {
+        for edge in &baseline_snapshot.edges {
+            baseline_map.insert(edge.edge_id.as_str(), edge);
+        }
+    }
+
+    let mut nodes_map: BTreeMap<String, GraphNode> = BTreeMap::new();
+    let mut candidates = Vec::new();
+    let mut file_profiles = Vec::new();
+    let mut issues = Vec::new();
+    let mut invalid_edges = 0usize;
+
+    for entry in &knowledge_snapshot.entries {
+        if entry.status != KnowledgeStatus::Active {
+            continue;
+        }
+
+        let file_node_id = format!("file:{}", entry.record_id);
+        nodes_map
+            .entry(file_node_id.clone())
+            .or_insert_with(|| GraphNode {
+                node_id: file_node_id.clone(),
+                node_type: GraphNodeType::File,
+                label: entry.record_id.clone(),
+            });
+        let default_chunk_id = entry.chunks.first().map(|chunk| chunk.chunk_id.clone());
+
+        let tags = normalize_terms(&entry.tags);
+        for tag in &tags {
+            let tag_node_id = format!("tag:{}", tag);
+            nodes_map
+                .entry(tag_node_id.clone())
+                .or_insert_with(|| GraphNode {
+                    node_id: tag_node_id.clone(),
+                    node_type: GraphNodeType::Tag,
+                    label: tag.clone(),
+                });
+            candidates.push(EdgeCandidate {
+                edge_id: format!("file_has_tag|{}|{}", file_node_id, tag_node_id),
+                edge_type: GraphEdgeType::FileHasTag,
+                from_node_id: file_node_id.clone(),
+                to_node_id: tag_node_id,
+                evidence: vec![GraphEvidence {
+                    record_id: entry.record_id.clone(),
+                    chunk_id: default_chunk_id.clone(),
+                    reason: "tag derived from semantic extraction".to_string(),
+                }],
+            });
+        }
+
+        let concepts = normalize_terms(&entry.key_concepts);
+        for concept in &concepts {
+            let concept_node_id = format!("concept:{}", concept);
+            nodes_map
+                .entry(concept_node_id.clone())
+                .or_insert_with(|| GraphNode {
+                    node_id: concept_node_id.clone(),
+                    node_type: GraphNodeType::Concept,
+                    label: concept.clone(),
+                });
+            candidates.push(EdgeCandidate {
+                edge_id: format!("file_mentions_concept|{}|{}", file_node_id, concept_node_id),
+                edge_type: GraphEdgeType::FileMentionsConcept,
+                from_node_id: file_node_id.clone(),
+                to_node_id: concept_node_id,
+                evidence: vec![GraphEvidence {
+                    record_id: entry.record_id.clone(),
+                    chunk_id: default_chunk_id.clone(),
+                    reason: "concept extracted from key_concepts".to_string(),
+                }],
+            });
+        }
+
+        for i in 0..concepts.len() {
+            for j in (i + 1)..concepts.len() {
+                let from = format!("concept:{}", concepts[i]);
+                let to = format!("concept:{}", concepts[j]);
+                candidates.push(EdgeCandidate {
+                    edge_id: format!("concept_related_to_concept|{}|{}", from, to),
+                    edge_type: GraphEdgeType::ConceptRelatedToConcept,
+                    from_node_id: from,
+                    to_node_id: to,
+                    evidence: vec![GraphEvidence {
+                        record_id: entry.record_id.clone(),
+                        chunk_id: default_chunk_id.clone(),
+                        reason: "concepts co-occur in same file".to_string(),
+                    }],
+                });
+            }
+        }
+
+        file_profiles.push(FileProfile {
+            record_id: entry.record_id.clone(),
+            file_node_id,
+            tags: tags.into_iter().collect(),
+            concepts: concepts.into_iter().collect(),
+            chunk_id: default_chunk_id,
+        });
+    }
+
+    for i in 0..file_profiles.len() {
+        for j in (i + 1)..file_profiles.len() {
+            let left = &file_profiles[i];
+            let right = &file_profiles[j];
+
+            let mut shared = left
+                .tags
+                .intersection(&right.tags)
+                .cloned()
+                .collect::<Vec<_>>();
+            shared.extend(
+                left.concepts
+                    .intersection(&right.concepts)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            shared.sort();
+            shared.dedup();
+            if shared.is_empty() {
+                continue;
+            }
+
+            let joined = shared
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            candidates.push(EdgeCandidate {
+                edge_id: format!(
+                    "file_related_to_file|{}|{}",
+                    left.file_node_id, right.file_node_id
+                ),
+                edge_type: GraphEdgeType::FileRelatedToFile,
+                from_node_id: left.file_node_id.clone(),
+                to_node_id: right.file_node_id.clone(),
+                evidence: vec![
+                    GraphEvidence {
+                        record_id: left.record_id.clone(),
+                        chunk_id: left.chunk_id.clone(),
+                        reason: format!(
+                            "shares semantic terms with {}: {}",
+                            right.record_id, joined
+                        ),
+                    },
+                    GraphEvidence {
+                        record_id: right.record_id.clone(),
+                        chunk_id: right.chunk_id.clone(),
+                        reason: format!(
+                            "shares semantic terms with {}: {}",
+                            left.record_id, joined
+                        ),
+                    },
+                ],
+            });
+        }
+    }
+
+    let mut edges = Vec::new();
+    let mut processed = 0usize;
+    let mut reused = 0usize;
+    let mut merged: BTreeMap<String, EdgeCandidate> = BTreeMap::new();
+    for candidate in candidates {
+        if let Some(existing) = merged.get_mut(&candidate.edge_id) {
+            for evidence in candidate.evidence {
+                if !existing.evidence.contains(&evidence) {
+                    existing.evidence.push(evidence);
+                }
+            }
+            continue;
+        }
+        merged.insert(candidate.edge_id.clone(), candidate);
+    }
+
+    for (_, mut candidate) in merged {
+        candidate.evidence.sort_by(|a, b| {
+            a.record_id
+                .cmp(&b.record_id)
+                .then_with(|| a.chunk_id.cmp(&b.chunk_id))
+                .then_with(|| a.reason.cmp(&b.reason))
+        });
+        if candidate.evidence.is_empty() {
+            invalid_edges += 1;
+            issues.push(CompileL4Issue {
+                edge_id: candidate.edge_id,
+                code: "W-L4-MISSING-EVIDENCE".to_string(),
+                message: "graph edge has no evidence".to_string(),
+                retryable: false,
+            });
+            continue;
+        }
+
+        if let Some(previous) = baseline_map.get(candidate.edge_id.as_str()) {
+            if previous.edge_type == candidate.edge_type
+                && previous.from_node_id == candidate.from_node_id
+                && previous.to_node_id == candidate.to_node_id
+                && previous.evidence == candidate.evidence
+            {
+                reused += 1;
+                edges.push((**previous).clone());
+                continue;
+            }
+        }
+
+        processed += 1;
+        edges.push(GraphEdge {
+            edge_id: candidate.edge_id,
+            edge_type: candidate.edge_type,
+            from_node_id: candidate.from_node_id,
+            to_node_id: candidate.to_node_id,
+            evidence: candidate.evidence,
+        });
+    }
+
+    let mut nodes = nodes_map.into_values().collect::<Vec<_>>();
+    nodes.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    edges.sort_by(|a, b| a.edge_id.cmp(&b.edge_id));
+
+    let snapshot = GraphSnapshot {
+        schema_version: 1,
+        generated_at: generated_at.to_string(),
+        base_knowledge_signature: build_knowledge_signature(knowledge_snapshot),
+        nodes,
+        edges,
+    };
+
+    CompileL4Outcome {
+        snapshot,
+        processed,
+        reused,
+        invalid_edges,
+        issues,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileL5Issue {
+    pub page_id: String,
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileL5Outcome {
+    pub snapshot: WikiViewSnapshot,
+    pub processed: usize,
+    pub reused: usize,
+    pub removed_paths: Vec<String>,
+    pub issues: Vec<CompileL5Issue>,
+}
+
+pub fn compile_l5(
+    baseline: Option<&WikiManifestSnapshot>,
+    knowledge_snapshot: &KnowledgeSnapshot,
+    graph_snapshot: &GraphSnapshot,
+    generated_at: &str,
+) -> CompileL5Outcome {
+    let mut baseline_map: BTreeMap<&str, &WikiManifestEntry> = BTreeMap::new();
+    if let Some(baseline_manifest) = baseline {
+        for page in &baseline_manifest.pages {
+            baseline_map.insert(page.page_id.as_str(), page);
+        }
+    }
+
+    let mut pages = Vec::new();
+    let mut issues = Vec::new();
+    let mut active_entries = knowledge_snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.status == KnowledgeStatus::Active)
+        .collect::<Vec<_>>();
+    active_entries.sort_by(|a, b| a.record_id.cmp(&b.record_id));
+
+    for entry in &active_entries {
+        let page_id = format!("source:{}", entry.record_id);
+        let title = entry.record_id.clone();
+        let relative_path = format!("pages/source/{}.md", slugify_for_path(&entry.record_id));
+        let source_chunks = entry
+            .chunks
+            .iter()
+            .map(|chunk| chunk.chunk_id.clone())
+            .collect::<Vec<_>>();
+        let see_also = collect_related_sources(entry.record_id.as_str(), graph_snapshot);
+        let related_edge_ids = collect_related_edge_ids(entry.record_id.as_str(), graph_snapshot);
+        let edge_sig = format!(
+            "fnv1a64:{:016x}",
+            fnv1a64(related_edge_ids.join("|").as_bytes())
+        );
+        let input_signature = format!("{}|{}", entry.input_signature, edge_sig);
+        let markdown = render_source_wiki_page(
+            generated_at,
+            &page_id,
+            &title,
+            &input_signature,
+            entry,
+            &source_chunks,
+            &see_also,
+        );
+
+        if source_chunks.is_empty() {
+            issues.push(CompileL5Issue {
+                page_id: page_id.clone(),
+                code: "W-L5-NO-CHUNK-EVIDENCE".to_string(),
+                message: "source page has no chunk evidence".to_string(),
+                retryable: false,
+            });
+        }
+
+        pages.push(WikiPageDocument {
+            page_id,
+            page_type: WikiPageType::Source,
+            title,
+            relative_path,
+            input_signature,
+            source_records: vec![entry.record_id.clone()],
+            source_chunks,
+            markdown,
+        });
+    }
+
+    let index_markdown = render_index_wiki_page(generated_at, &pages);
+    let overview_markdown = render_overview_wiki_page(generated_at, &pages, graph_snapshot);
+    let log_markdown = render_log_wiki_page(generated_at, &pages);
+
+    pages.push(WikiPageDocument {
+        page_id: "index".to_string(),
+        page_type: WikiPageType::Index,
+        title: "Knowledge Wiki".to_string(),
+        relative_path: "index.md".to_string(),
+        input_signature: format!("fnv1a64:{:016x}", fnv1a64(index_markdown.as_bytes())),
+        source_records: pages
+            .iter()
+            .filter(|page| page.page_type == WikiPageType::Source)
+            .flat_map(|page| page.source_records.clone())
+            .collect(),
+        source_chunks: vec![],
+        markdown: index_markdown,
+    });
+    pages.push(WikiPageDocument {
+        page_id: "overview".to_string(),
+        page_type: WikiPageType::Overview,
+        title: "Overview".to_string(),
+        relative_path: "overview.md".to_string(),
+        input_signature: format!("fnv1a64:{:016x}", fnv1a64(overview_markdown.as_bytes())),
+        source_records: vec![],
+        source_chunks: vec![],
+        markdown: overview_markdown,
+    });
+    pages.push(WikiPageDocument {
+        page_id: "log".to_string(),
+        page_type: WikiPageType::Log,
+        title: "Update Log".to_string(),
+        relative_path: "log.md".to_string(),
+        input_signature: format!("fnv1a64:{:016x}", fnv1a64(log_markdown.as_bytes())),
+        source_records: vec![],
+        source_chunks: vec![],
+        markdown: log_markdown,
+    });
+
+    pages.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+
+    let manifest_pages = pages
+        .iter()
+        .map(|page| WikiManifestEntry {
+            page_id: page.page_id.clone(),
+            page_type: page.page_type.clone(),
+            title: page.title.clone(),
+            relative_path: page.relative_path.clone(),
+            input_signature: page.input_signature.clone(),
+            source_records: page.source_records.clone(),
+            source_chunks: page.source_chunks.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let manifest = WikiManifestSnapshot {
+        schema_version: 1,
+        generated_at: generated_at.to_string(),
+        base_graph_signature: build_graph_signature(graph_snapshot),
+        pages: manifest_pages,
+    };
+
+    let mut processed = 0usize;
+    let mut reused = 0usize;
+    for page in &manifest.pages {
+        if let Some(previous) = baseline_map.get(page.page_id.as_str()) {
+            if previous.input_signature == page.input_signature
+                && previous.relative_path == page.relative_path
+                && previous.title == page.title
+            {
+                reused += 1;
+                continue;
+            }
+        }
+        processed += 1;
+    }
+
+    let current_page_ids = manifest
+        .pages
+        .iter()
+        .map(|page| page.page_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut removed_paths = baseline
+        .map(|snapshot| {
+            snapshot
+                .pages
+                .iter()
+                .filter(|page| !current_page_ids.contains(page.page_id.as_str()))
+                .map(|page| page.relative_path.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    removed_paths.sort();
+    removed_paths.dedup();
+
+    CompileL5Outcome {
+        snapshot: WikiViewSnapshot { manifest, pages },
+        processed,
+        reused,
+        removed_paths,
+        issues,
+    }
+}
+
+fn build_index_signature(index_snapshot: &IndexSnapshot) -> String {
+    let mut parts = index_snapshot
+        .records
+        .iter()
+        .map(|record| {
+            format!(
+                "{}|{}|{}|{}",
+                record.alias, record.path, record.signature, record.present
+            )
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    let payload = parts.join("\n");
+    format!("fnv1a64:{:016x}", fnv1a64(payload.as_bytes()))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn first_non_empty_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToString::to_string)
+}
+
+fn build_knowledge_signature(snapshot: &KnowledgeSnapshot) -> String {
+    let mut parts = snapshot
+        .entries
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}|{}|{}|{}",
+                entry.record_id,
+                entry.path,
+                entry.input_signature,
+                match entry.status {
+                    KnowledgeStatus::Active => "active",
+                    KnowledgeStatus::Missing => "missing",
+                    KnowledgeStatus::Failed => "failed",
+                    KnowledgeStatus::Stale => "stale",
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    let payload = parts.join("\n");
+    format!("fnv1a64:{:016x}", fnv1a64(payload.as_bytes()))
+}
+
+fn derive_matched_terms(
+    entry: &KnowledgeEntry,
+    chunk: &crate::domain::KnowledgeChunk,
+) -> Vec<String> {
+    let mut terms = BTreeSet::new();
+    for tag in &entry.tags {
+        if !tag.trim().is_empty() {
+            terms.insert(tag.trim().to_ascii_lowercase());
+        }
+    }
+    for concept in &entry.key_concepts {
+        for token in concept
+            .to_ascii_lowercase()
+            .split(|ch: char| !ch.is_alphanumeric())
+            .filter(|token| !token.is_empty())
+        {
+            terms.insert(token.to_string());
+        }
+    }
+    for token in chunk
+        .summary
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .take(6)
+    {
+        terms.insert(token.to_string());
+    }
+
+    terms.into_iter().take(16).collect()
+}
+
+fn deterministic_search_score(matched_terms: &[String]) -> f64 {
+    let capped = matched_terms.len().min(10) as f64;
+    (0.5 + capped / 20.0).min(1.0)
+}
+
+fn build_graph_signature(snapshot: &GraphSnapshot) -> String {
+    let mut node_parts = snapshot
+        .nodes
+        .iter()
+        .map(|node| format!("{}|{:?}|{}", node.node_id, node.node_type, node.label))
+        .collect::<Vec<_>>();
+    node_parts.sort();
+
+    let mut edge_parts = snapshot
+        .edges
+        .iter()
+        .map(|edge| {
+            let mut evidence = edge
+                .evidence
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{}|{}|{}",
+                        e.record_id,
+                        e.chunk_id.as_deref().unwrap_or("-"),
+                        e.reason
+                    )
+                })
+                .collect::<Vec<_>>();
+            evidence.sort();
+            format!(
+                "{}|{:?}|{}|{}|{}",
+                edge.edge_id,
+                edge.edge_type,
+                edge.from_node_id,
+                edge.to_node_id,
+                evidence.join("||")
+            )
+        })
+        .collect::<Vec<_>>();
+    edge_parts.sort();
+
+    let payload = format!("{}\n{}", node_parts.join("\n"), edge_parts.join("\n"));
+    format!("fnv1a64:{:016x}", fnv1a64(payload.as_bytes()))
+}
+
+fn collect_related_sources(record_id: &str, graph_snapshot: &GraphSnapshot) -> Vec<String> {
+    let file_node_id = format!("file:{}", record_id);
+    let mut sources = BTreeSet::new();
+    for edge in &graph_snapshot.edges {
+        if edge.edge_type != GraphEdgeType::FileRelatedToFile {
+            continue;
+        }
+        if edge.from_node_id == file_node_id && edge.to_node_id.starts_with("file:") {
+            sources.insert(edge.to_node_id.trim_start_matches("file:").to_string());
+        } else if edge.to_node_id == file_node_id && edge.from_node_id.starts_with("file:") {
+            sources.insert(edge.from_node_id.trim_start_matches("file:").to_string());
+        }
+    }
+    sources.into_iter().collect()
+}
+
+fn collect_related_edge_ids(record_id: &str, graph_snapshot: &GraphSnapshot) -> Vec<String> {
+    let file_node_id = format!("file:{}", record_id);
+    let mut edges = BTreeSet::new();
+    for edge in &graph_snapshot.edges {
+        let evidence_match = edge
+            .evidence
+            .iter()
+            .any(|evidence| evidence.record_id == record_id);
+        if evidence_match || edge.from_node_id == file_node_id || edge.to_node_id == file_node_id {
+            edges.insert(edge.edge_id.clone());
+        }
+    }
+    edges.into_iter().collect()
+}
+
+fn render_source_wiki_page(
+    generated_at: &str,
+    page_id: &str,
+    title: &str,
+    input_signature: &str,
+    entry: &KnowledgeEntry,
+    source_chunks: &[String],
+    see_also: &[String],
+) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&format!("id: {}\n", page_id));
+    out.push_str("type: source\n");
+    out.push_str(&format!("title: {}\n", title));
+    out.push_str(&format!("updated_at: {}\n", generated_at));
+    out.push_str("source_records:\n");
+    out.push_str(&format!("- {}\n", entry.record_id));
+    out.push_str("source_chunks:\n");
+    if source_chunks.is_empty() {
+        out.push_str("- -\n");
+    } else {
+        for chunk_id in source_chunks {
+            out.push_str(&format!("- {}\n", chunk_id));
+        }
+    }
+    out.push_str("generator: rule/wiki-view-v1\n");
+    out.push_str(&format!("input_signature: {}\n", input_signature));
+    out.push_str("---\n\n");
+
+    out.push_str(&format!("# {}\n\n", title));
+    out.push_str("## Summary\n");
+    if entry.summary.trim().is_empty() {
+        out.push_str("- (empty)\n\n");
+    } else {
+        out.push_str(&format!("{}\n\n", entry.summary.trim()));
+    }
+
+    out.push_str("## Key Points\n");
+    let tags_text = if entry.tags.is_empty() {
+        "(none)".to_string()
+    } else {
+        entry.tags.join(", ")
+    };
+    let concepts_text = if entry.key_concepts.is_empty() {
+        "(none)".to_string()
+    } else {
+        entry.key_concepts.join(", ")
+    };
+    out.push_str(&format!("- Tags: {}\n", tags_text));
+    out.push_str(&format!("- Concepts: {}\n", concepts_text));
+    out.push_str(&format!("- Chunks: {}\n\n", entry.chunks.len()));
+
+    out.push_str("## Evidence\n");
+    if entry.chunks.is_empty() {
+        out.push_str(&format!(
+            "- record `{}` (no chunk evidence)\n\n",
+            entry.record_id
+        ));
+    } else {
+        for chunk in entry.chunks.iter().take(8) {
+            out.push_str(&format!(
+                "- `{}` / `{}`: {}\n",
+                entry.record_id, chunk.chunk_id, chunk.summary
+            ));
+        }
+        out.push('\n');
+    }
+
+    out.push_str("## See Also\n");
+    if see_also.is_empty() {
+        out.push_str("- (none)\n");
+    } else {
+        for source in see_also {
+            out.push_str(&format!("- [[source:{}]]\n", source));
+        }
+    }
+    out
+}
+
+fn render_index_wiki_page(generated_at: &str, pages: &[WikiPageDocument]) -> String {
+    let mut out = String::new();
+    out.push_str("# Knowledge Wiki\n\n");
+    out.push_str("## Summary\n");
+    out.push_str(&format!("- Generated at: {}\n", generated_at));
+    out.push_str(&format!("- Source pages: {}\n\n", pages.len()));
+
+    out.push_str("## Key Points\n");
+    for page in pages {
+        let summary_line = page
+            .markdown
+            .lines()
+            .find(|line| {
+                !line.trim().is_empty() && !line.starts_with('#') && !line.starts_with('-')
+            })
+            .unwrap_or("-")
+            .trim();
+        out.push_str(&format!(
+            "- [{}]({}) — {}\n",
+            page.title, page.relative_path, summary_line
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Evidence\n");
+    out.push_str("- Generated from L2 semantic snapshots and L4 graph edges.\n\n");
+    out.push_str("## See Also\n");
+    out.push_str("- [Overview](overview.md)\n");
+    out
+}
+
+fn render_overview_wiki_page(
+    generated_at: &str,
+    pages: &[WikiPageDocument],
+    graph_snapshot: &GraphSnapshot,
+) -> String {
+    let mut out = String::new();
+    out.push_str("# Overview\n\n");
+    out.push_str("## Summary\n");
+    out.push_str(&format!("- Generated at: {}\n", generated_at));
+    out.push_str(&format!("- Source pages: {}\n", pages.len()));
+    out.push_str(&format!("- Graph nodes: {}\n", graph_snapshot.nodes.len()));
+    out.push_str(&format!(
+        "- Graph edges: {}\n\n",
+        graph_snapshot.edges.len()
+    ));
+
+    let mut tags = BTreeSet::new();
+    let mut concepts = BTreeSet::new();
+    for node in &graph_snapshot.nodes {
+        match node.node_type {
+            GraphNodeType::Tag => {
+                tags.insert(node.label.clone());
+            }
+            GraphNodeType::Concept => {
+                concepts.insert(node.label.clone());
+            }
+            _ => {}
+        }
+    }
+
+    out.push_str("## Key Points\n");
+    out.push_str(&format!(
+        "- Tags: {}\n",
+        if tags.is_empty() {
+            "(none)".to_string()
+        } else {
+            tags.iter().take(8).cloned().collect::<Vec<_>>().join(", ")
+        }
+    ));
+    out.push_str(&format!(
+        "- Concepts: {}\n\n",
+        if concepts.is_empty() {
+            "(none)".to_string()
+        } else {
+            concepts
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    ));
+
+    out.push_str("## Evidence\n");
+    out.push_str(&format!(
+        "- Graph signature: {}\n\n",
+        build_graph_signature(graph_snapshot)
+    ));
+
+    out.push_str("## See Also\n");
+    out.push_str("- [Knowledge Wiki](index.md)\n");
+    out
+}
+
+fn render_log_wiki_page(generated_at: &str, pages: &[WikiPageDocument]) -> String {
+    let mut out = String::new();
+    out.push_str("# Update Log\n\n");
+    out.push_str("## Summary\n");
+    out.push_str(&format!("- Run at: {}\n\n", generated_at));
+
+    out.push_str("## Key Points\n");
+    out.push_str(&format!(
+        "- Pages in current render: {}\n\n",
+        pages.len() + 3
+    ));
+
+    out.push_str("## Evidence\n");
+    out.push_str("- Generated by deterministic wiki-view compiler.\n\n");
+
+    out.push_str("## See Also\n");
+    out.push_str("- [Knowledge Wiki](index.md)\n");
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EdgeCandidate {
+    edge_id: String,
+    edge_type: GraphEdgeType,
+    from_node_id: String,
+    to_node_id: String,
+    evidence: Vec<GraphEvidence>,
+}
+
+#[derive(Debug, Clone)]
+struct FileProfile {
+    record_id: String,
+    file_node_id: String,
+    tags: BTreeSet<String>,
+    concepts: BTreeSet<String>,
+    chunk_id: Option<String>,
+}
+
+fn normalize_terms(raw: &[String]) -> Vec<String> {
+    let mut terms = BTreeSet::new();
+    for value in raw {
+        let normalized = value
+            .to_ascii_lowercase()
+            .split(|ch: char| !ch.is_alphanumeric())
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>()
+            .join("_");
+        if !normalized.is_empty() {
+            terms.insert(normalized);
+        }
+    }
+    terms.into_iter().collect()
+}
+
+fn slugify_for_path(raw: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in raw.to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let slug = out.trim_matches('-');
+    if slug.is_empty() {
+        "page".to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -419,6 +1530,9 @@ mod tests {
                 alias: "docs/config".to_string(),
                 snippet: "Use kb config to change settings.".to_string(),
                 score: 0.95,
+                source_layer: Some("index".to_string()),
+                record_id: None,
+                chunk_id: None,
             }]
             .into_iter()
             .take(top)

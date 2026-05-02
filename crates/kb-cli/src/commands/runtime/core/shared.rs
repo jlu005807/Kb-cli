@@ -2,22 +2,28 @@ use clap::CommandFactory;
 use clap_complete::generate;
 use kb_core::domain::{CheckResult, IndexConfig, IndexEngine, IndexRecord, IndexSnapshot, Permission};
 use kb_core::usecases::{
-    apply_mv, apply_path, normalize_top, plan_add, plan_init, plan_list_output,
+    apply_mv, apply_path, compile_l2, compile_l3, compile_l4, compile_l5, normalize_top,
+    plan_add, plan_init, plan_list_output,
     validate_category_filter, AddModePlan, AddPlanError, AddPlanInput, CategoryFilterError,
     InitPlanError, ListRow, MovePlanError, PathPlanError,
 };
-use kb_core::{AnswerEngine, IndexStore, Retriever, StateStore};
+use kb_core::{
+    AnswerEngine, GraphStore, IndexStore, KnowledgeStore, Retriever, SearchStore, StateStore,
+    WikiStore,
+};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::{AddMode, Cli};
 use crate::core_adapters::{
-    ConfiguredAnswerEngine, DefaultRetriever, DisabledAnswerEngine, FsIndexStore, FsStateStore,
+    ConfiguredAnswerEngine, DisabledAnswerEngine, FsFileContentReader, FsGraphStore, FsIndexStore,
+    FsKnowledgeStore, FsSearchStore, FsStateStore, FsWikiStore, LayeredRetriever,
+    RuleBasedSemanticExtractor,
 };
 use crate::env_registry::{list_existing_kb_roots, register_kb_root};
 use crate::errors::{map_core_error, CliError, CoreErrorKind};
@@ -232,6 +238,10 @@ struct UpdateTextSummary {
     full: bool,
     strict: bool,
     layer_status: Vec<(&'static str, &'static str)>,
+    l2_processed: usize,
+    l2_reused: usize,
+    l2_missing: usize,
+    l2_failed: usize,
     warnings: Vec<String>,
     errors: Vec<String>,
 }
@@ -252,6 +262,11 @@ fn format_update_text(summary: &UpdateTextSummary) -> String {
     for (layer, status) in &summary.layer_status {
         let _ = writeln!(out, "  {}: {}", layer, status);
     }
+    out.push_str("l2_compilation:\n");
+    let _ = writeln!(out, "  processed: {}", summary.l2_processed);
+    let _ = writeln!(out, "  reused: {}", summary.l2_reused);
+    let _ = writeln!(out, "  missing: {}", summary.l2_missing);
+    let _ = writeln!(out, "  failed: {}", summary.l2_failed);
     if !summary.warnings.is_empty() {
         out.push_str("warnings:\n");
         for line in &summary.warnings {

@@ -139,18 +139,29 @@ fn read_process_env() -> LlmConfigPartial {
     }
 }
 
-fn pick_optional(candidates: &[(&Option<String>, LlmConfigSource)]) -> (Option<String>, LlmConfigSource) {
+fn pick_optional(
+    candidates: &[(&Option<String>, LlmConfigSource)],
+) -> (Option<String>, LlmConfigSource) {
     for (value, source) in candidates {
-        if let Some(v) = value.as_deref().and_then(|x| normalize_value(Some(x.to_string()))) {
+        if let Some(v) = value
+            .as_deref()
+            .and_then(|x| normalize_value(Some(x.to_string())))
+        {
             return (Some(v), *source);
         }
     }
     (None, LlmConfigSource::Defaults)
 }
 
-fn pick_required(candidates: &[(&Option<String>, LlmConfigSource)], default_value: &str) -> (String, LlmConfigSource) {
+fn pick_required(
+    candidates: &[(&Option<String>, LlmConfigSource)],
+    default_value: &str,
+) -> (String, LlmConfigSource) {
     for (value, source) in candidates {
-        if let Some(v) = value.as_deref().and_then(|x| normalize_value(Some(x.to_string()))) {
+        if let Some(v) = value
+            .as_deref()
+            .and_then(|x| normalize_value(Some(x.to_string())))
+        {
             return (v, *source);
         }
     }
@@ -293,8 +304,8 @@ fn normalize_value(input: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        load_dotenv_config, load_json_config, parse_dotenv_value, resolve_from_layers, LlmConfigPartial,
-        LlmConfigSource, DEFAULT_BASE_URL, DEFAULT_MODEL,
+        load_dotenv_config, load_json_config, parse_dotenv_value, resolve_from_layers,
+        LlmConfigPartial, LlmConfigSource, DEFAULT_BASE_URL, DEFAULT_MODEL,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -432,10 +443,7 @@ mod tests {
         let loaded = load_json_config(&config_path);
         assert_eq!(loaded.key.as_deref(), Some("json-key"));
         assert_eq!(loaded.model.as_deref(), Some("json-model"));
-        assert_eq!(
-            loaded.base_url.as_deref(),
-            Some("https://json.example/v1")
-        );
+        assert_eq!(loaded.base_url.as_deref(), Some("https://json.example/v1"));
     }
 
     fn unique_temp_dir(tag: &str) -> PathBuf {

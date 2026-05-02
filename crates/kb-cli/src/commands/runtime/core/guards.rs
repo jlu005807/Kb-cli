@@ -1,15 +1,24 @@
 fn build_ask_stack(cwd: &Path) -> (Box<dyn Retriever>, Box<dyn AnswerEngine>) {
+    let search_store = FsSearchStore::new(cwd.to_path_buf());
+    let knowledge_store = FsKnowledgeStore::new(cwd.to_path_buf());
+    let graph_store = FsGraphStore::new(cwd.to_path_buf());
+    let retriever: Box<dyn Retriever> = Box::new(LayeredRetriever::new(
+        search_store.read_search().ok().flatten(),
+        knowledge_store.read_knowledge().ok().flatten(),
+        graph_store.read_graph().ok().flatten(),
+    ));
+
     let llm = resolve_llm_config(cwd);
     let has_llm_credentials = llm.key.is_some();
     if has_llm_credentials {
         let provider = format!("openai-compatible:{}@{}", llm.model, llm.base_url);
         return (
-            Box::new(DefaultRetriever),
+            retriever,
             Box::new(ConfiguredAnswerEngine::new(provider)),
         );
     }
 
-    (Box::new(DefaultRetriever), Box::new(DisabledAnswerEngine))
+    (retriever, Box::new(DisabledAnswerEngine))
 }
 
 fn ensure_initialized() -> Result<PathBuf, CliError> {

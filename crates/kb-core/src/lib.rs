@@ -13,12 +13,17 @@ pub mod usecases;
 
 pub use config::{ConfigLayers, ConfigMergeTrace, ConfigSource, MergeResult};
 pub use domain::{
-    Alias, AliasError, AliasErrorKind, Permission, PermissionAction, PermissionExplainTrace,
-    PermissionInterpreter, PermissionParseError, PermissionParseErrorKind, Ref, RefError,
+    Alias, AliasError, AliasErrorKind, GraphEdge, GraphEdgeType, GraphEvidence, GraphNode,
+    GraphNodeType, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot,
+    KnowledgeStatus, Permission, PermissionAction, PermissionExplainTrace, PermissionInterpreter,
+    PermissionParseError, PermissionParseErrorKind, Ref, RefError, SearchHit,
+    SearchProjectionSnapshot, SemanticProviderInfo, WikiManifestEntry, WikiManifestSnapshot,
+    WikiPageDocument, WikiPageType, WikiViewSnapshot,
 };
 pub use ports::{
     AgentAnswerRequest, AgentAnswerResponse, AgentBackend, AnswerEngine, AnswerMeta,
     BackendAnswerEngineBridge, BackendRetrieveRequest, BackendRetrievedItem,
-    BackendRetrieverBridge, IndexStore, KnowledgeBackend, RetrievedContext, Retriever, StateRef,
-    StateSnapshot, StateStore,
+    BackendRetrieverBridge, FileContentReader, GraphStore, IndexStore, KnowledgeBackend,
+    KnowledgeStore, RetrievedContext, Retriever, SearchStore, SemanticExtractRequest,
+    SemanticExtractResponse, SemanticExtractor, StateRef, StateSnapshot, StateStore, WikiStore,
 };

@@ -586,6 +586,8 @@ kb list --filter "[invalid" --output=json
 
 ## 10. `kb ask <QUESTION> [--top <N>]`
 
+> 实现说明（2026-05-02）：`kb ask` 先查 `L3`，再查 `L2`、`L4`，最后回退 `L1`；每条命中会返回 `source_layer/record_id/chunk_id` 便于追溯。  
+
 ### 成功示例
 **命令：**
 ```bash
@@ -604,7 +606,10 @@ kb ask "how to configure?" --top 1 --output=json
       {
         "alias": "docs/config",
         "snippet": "Use kb config to change settings.",
-        "score": 1.0
+        "score": 1.0,
+        "source_layer": "l3_projection",
+        "record_id": "docs/config",
+        "chunk_id": "docs/config:0001"
       }
     ]
   }

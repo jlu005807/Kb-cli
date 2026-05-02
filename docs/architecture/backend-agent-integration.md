@@ -34,6 +34,9 @@
 - `alias`：命中文档标识（用于 CLI 回显和调试定位）。
 - `snippet`：摘要片段（建议已做长度控制）。
 - `score`：相关性分数（建议范围 `0.0 ~ 1.0`）。
+- `source_layer`：命中来源层（`l3_projection|l2_semantic|l4_graph|l1_index`）。
+- `record_id`：稳定记录锚点（建议与 `alias` 对齐或可映射）。
+- `chunk_id`：分块锚点（`l1_index` fallback 可为空）。
 - `source`：后端来源标识（可选，如向量库分片/索引名）。
 
 ### AgentAnswerRequest
@@ -78,7 +81,7 @@
 
 1. CLI 收到 `kb ask <question> --top <k>`。
 2. `run_ask` 读取本地索引快照并调用 `build_ask_stack()`。
-3. `execute_ask` 调用 `Retriever::retrieve`。
+3. `execute_ask` 按 `L3 -> L2 -> L4 -> L1 fallback` 调用 `Retriever::retrieve`。
 4. Bridge 将请求映射到 `KnowledgeBackend::retrieve`。
 5. `execute_ask` 调用 `AnswerEngine::meta`。
 6. Bridge 将请求映射到 `AgentBackend::answer`。

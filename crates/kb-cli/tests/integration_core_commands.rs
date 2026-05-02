@@ -702,12 +702,20 @@ fn update_idempotency_and_prune_behavior() {
     let (ok, first) = run_json(&["update"], &dir);
     assert!(ok);
     assert_eq!(first["data"]["added"], 1);
+    assert_eq!(first["data"]["l2_compilation"]["processed"], 1);
+    assert_eq!(first["data"]["l2_compilation"]["reused"], 0);
+    assert!(dir.join(".kb/search.json").exists());
+    assert!(dir.join(".kb/graph.json").exists());
+    assert!(dir.join(".kb/wiki/manifest.json").exists());
+    assert!(dir.join(".kb/wiki/index.md").exists());
 
     let (ok, second) = run_json(&["update"], &dir);
     assert!(ok);
     assert_eq!(second["data"]["added"], 0);
     assert_eq!(second["data"]["updated"], 0);
     assert_eq!(second["data"]["removed"], 0);
+    assert_eq!(second["data"]["l2_compilation"]["processed"], 0);
+    assert_eq!(second["data"]["l2_compilation"]["reused"], 1);
 
     fs::remove_file(dir.join("docs/a.md")).expect("remove file for missing path test");
     let (ok, marked) = run_json(&["update"], &dir);
@@ -733,6 +741,9 @@ fn update_dry_run_does_not_persist_baseline() {
     assert!(ok);
     assert_eq!(dry["data"]["added"], 1);
     assert!(!dir.join(".kb/index.json").exists());
+    assert!(!dir.join(".kb/search.json").exists());
+    assert!(!dir.join(".kb/graph.json").exists());
+    assert!(!dir.join(".kb/wiki/manifest.json").exists());
 
     let (ok, persisted) = run_json(&["update"], &dir);
     assert!(ok);
@@ -740,6 +751,10 @@ fn update_dry_run_does_not_persist_baseline() {
     assert!(dir.join(".kb/index.json").exists());
     assert!(dir.join(".kb/index.errors.json").exists());
     assert!(dir.join(".kb/index.meta.json").exists());
+    assert!(dir.join(".kb/search.json").exists());
+    assert!(dir.join(".kb/graph.json").exists());
+    assert!(dir.join(".kb/wiki/manifest.json").exists());
+    assert!(dir.join(".kb/wiki/index.md").exists());
 }
 
 #[test]
@@ -798,13 +813,29 @@ fn update_default_mode_succeeds_with_progressive_warning() {
     assert!(ok);
     assert_eq!(body["status"], "success");
     assert_eq!(body["data"]["strict"], false);
+    assert_eq!(body["data"]["layer_status"]["l0_declaration"], "ok");
+    assert_eq!(body["data"]["layer_status"]["l1_registry"], "ok");
+    assert_eq!(body["data"]["layer_status"]["l1_index"], "ok");
     assert_eq!(body["data"]["layer_status"]["l2_semantic"], "warning");
-    let warnings = body["data"]["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(body["data"]["layer_status"]["l3_projection"], "ok");
+    assert_eq!(body["data"]["layer_status"]["l4_graph"], "ok");
+    assert_eq!(body["data"]["layer_status"]["l5_wiki_view"], "ok");
+    assert_eq!(body["data"]["l2_compilation"]["processed"], 1);
+    assert_eq!(body["data"]["l2_compilation"]["reused"], 0);
+    assert_eq!(body["data"]["l2_compilation"]["missing"], 0);
+    assert_eq!(body["data"]["l2_compilation"]["failed"], 0);
+    let warnings = body["data"]["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0]["layer"], "l2_semantic");
     assert_eq!(warnings[0]["retryable"], true);
     assert_eq!(
-        body["data"]["errors"].as_array().map(|x| x.len()).unwrap_or(0),
+        body["data"]["errors"]
+            .as_array()
+            .map(|x| x.len())
+            .unwrap_or(0),
         0
     );
 }
@@ -830,12 +861,102 @@ fn update_strict_mode_fails_on_progressive_layer_error() {
         body["error"]["details"]["layer_status"]["l2_semantic"],
         "error"
     );
+    assert_eq!(
+        body["error"]["details"]["layer_status"]["l3_projection"],
+        "ok"
+    );
+    assert_eq!(body["error"]["details"]["layer_status"]["l4_graph"], "ok");
+    assert_eq!(
+        body["error"]["details"]["layer_status"]["l5_wiki_view"],
+        "ok"
+    );
+    assert_eq!(body["error"]["details"]["l2_compilation"]["processed"], 1);
+    assert_eq!(body["error"]["details"]["l2_compilation"]["reused"], 0);
+    assert_eq!(body["error"]["details"]["l2_compilation"]["missing"], 0);
+    assert_eq!(body["error"]["details"]["l2_compilation"]["failed"], 0);
     let errors = body["error"]["details"]["errors"]
         .as_array()
         .cloned()
         .unwrap_or_default();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0]["layer"], "l2_semantic");
+    let failed_layers = body["error"]["details"]["failed_layers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(failed_layers.len(), 1);
+    assert_eq!(failed_layers[0], "l2_semantic");
+}
+
+#[test]
+fn update_default_mode_tracks_split_progressive_layers() {
+    let dir = unique_temp_dir("update-default-progressive-split-layers");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json_with_env(
+        &["update"],
+        &dir,
+        &[(
+            "KB_UPDATE_SIMULATE_LAYER_FAILURES",
+            "l3_projection,l4_graph,l5_wiki_view",
+        )],
+    );
+    assert!(ok);
+    assert_eq!(body["data"]["layer_status"]["l2_semantic"], "ok");
+    assert_eq!(body["data"]["layer_status"]["l3_projection"], "warning");
+    assert_eq!(body["data"]["layer_status"]["l4_graph"], "warning");
+    assert_eq!(body["data"]["layer_status"]["l5_wiki_view"], "warning");
+    assert_eq!(body["data"]["l2_compilation"]["processed"], 1);
+    assert_eq!(body["data"]["l2_compilation"]["reused"], 0);
+    assert_eq!(body["data"]["l2_compilation"]["missing"], 0);
+    assert_eq!(body["data"]["l2_compilation"]["failed"], 0);
+
+    let warnings = body["data"]["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(warnings.len(), 3);
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["layer"] == "l3_projection"));
+    assert!(warnings.iter().any(|issue| issue["layer"] == "l4_graph"));
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["layer"] == "l5_wiki_view"));
+}
+
+#[test]
+fn update_default_mode_keeps_legacy_combined_projection_simulation() {
+    let dir = unique_temp_dir("update-default-legacy-combined-simulation");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json_with_env(
+        &["update"],
+        &dir,
+        &[("KB_UPDATE_SIMULATE_LAYER_FAILURES", "l3_l4_projection")],
+    );
+    assert!(ok);
+    assert_eq!(body["data"]["layer_status"]["l3_projection"], "warning");
+    assert_eq!(body["data"]["layer_status"]["l4_graph"], "warning");
+    assert_eq!(body["data"]["layer_status"]["l5_wiki_view"], "ok");
+
+    let warnings = body["data"]["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(warnings.len(), 2);
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["layer"] == "l3_projection"));
+    assert!(warnings.iter().any(|issue| issue["layer"] == "l4_graph"));
 }
 
 #[test]
@@ -1129,7 +1250,13 @@ fn ask_returns_disabled_engine_and_retrieval_structure() {
         .expect("retrieved_context must be array");
     assert_eq!(retrieved.len(), 1);
     assert_eq!(retrieved[0]["alias"], "docs/config");
-    assert_eq!(retrieved[0]["snippet"], "Use kb config to change settings.");
+    assert!(retrieved[0]["snippet"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Use kb config to change settings."));
+    assert!(retrieved[0]["source_layer"].is_string());
+    assert_eq!(retrieved[0]["record_id"], "docs/config");
+    assert!(retrieved[0]["chunk_id"].is_string() || retrieved[0]["chunk_id"].is_null());
     let score = retrieved[0]["score"].as_f64().unwrap_or_default();
     assert!(score > 0.0 && score <= 1.0);
 }
@@ -1215,6 +1342,192 @@ fn ask_top_k_order_is_deterministic_for_multiple_docs() {
     assert_eq!(retrieved.len(), 2);
     assert_eq!(retrieved[0]["alias"], "docs/alpha");
     assert_eq!(retrieved[1]["alias"], "docs/beta");
+}
+
+#[test]
+fn ask_layered_retrieval_prioritizes_l3_l2_l4_then_l1_fallback() {
+    let dir = unique_temp_dir("ask-layered-retrieval-order");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(
+        &dir,
+        "./docs/l1.md",
+        "This line is a layered target fallback anchor for index retrieval.",
+    );
+    let (ok, _) = run_json(
+        &["add", "./docs/l1.md", "docs/l1", "--category", "raw"],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    write_json_file(
+        &dir,
+        "./.kb/knowledge.json",
+        &json!({
+            "schema_version": 1,
+            "generated_at": "2026-05-02T00:00:00+08:00",
+            "base_index_signature": "index:test",
+            "entries": [
+                {
+                    "record_id": "docs/l3",
+                    "path": "./virtual/l3.md",
+                    "input_signature": "sig-l3",
+                    "status": "active",
+                    "summary": "layered target entry for L3 projection",
+                    "tags": ["layered"],
+                    "key_concepts": ["target"],
+                    "chunks": [
+                        {
+                            "chunk_id": "docs/l3:0001",
+                            "byte_range": [0, 64],
+                            "content_signature": "sig-l3-c1",
+                            "summary": "l3 chunk summary",
+                            "preview": "layered target from l3 preview"
+                        }
+                    ],
+                    "provider": {
+                        "kind": "rule",
+                        "name": "rule-based-v1"
+                    }
+                },
+                {
+                    "record_id": "docs/l2",
+                    "path": "./virtual/l2.md",
+                    "input_signature": "sig-l2",
+                    "status": "active",
+                    "summary": "layered target entry for L2 semantic",
+                    "tags": ["semantic"],
+                    "key_concepts": ["layered", "target"],
+                    "chunks": [
+                        {
+                            "chunk_id": "docs/l2:0001",
+                            "byte_range": [0, 64],
+                            "content_signature": "sig-l2-c1",
+                            "summary": "l2 chunk summary with layered target",
+                            "preview": "layered target from l2 preview"
+                        }
+                    ],
+                    "provider": {
+                        "kind": "rule",
+                        "name": "rule-based-v1"
+                    }
+                }
+            ]
+        }),
+    );
+
+    write_json_file(
+        &dir,
+        "./.kb/search.json",
+        &json!({
+            "schema_version": 1,
+            "generated_at": "2026-05-02T00:00:00+08:00",
+            "base_knowledge_signature": "knowledge:test",
+            "hits": [
+                {
+                    "key": "docs/l3|docs/l3:0001|sig-l3-c1",
+                    "record_id": "docs/l3",
+                    "chunk_id": "docs/l3:0001",
+                    "content_signature": "sig-l3-c1",
+                    "score": 0.98,
+                    "matched_terms": ["layered", "target"]
+                }
+            ]
+        }),
+    );
+
+    write_json_file(
+        &dir,
+        "./.kb/graph.json",
+        &json!({
+            "schema_version": 1,
+            "generated_at": "2026-05-02T00:00:00+08:00",
+            "base_knowledge_signature": "knowledge:test",
+            "nodes": [
+                {
+                    "node_id": "file:docs/l4",
+                    "node_type": "file",
+                    "label": "docs/l4"
+                },
+                {
+                    "node_id": "concept:target",
+                    "node_type": "concept",
+                    "label": "target"
+                }
+            ],
+            "edges": [
+                {
+                    "edge_id": "file_mentions_concept|file:docs/l4|concept:target",
+                    "edge_type": "file_mentions_concept",
+                    "from_node_id": "file:docs/l4",
+                    "to_node_id": "concept:target",
+                    "evidence": [
+                        {
+                            "record_id": "docs/l4",
+                            "chunk_id": "docs/l4:0001",
+                            "reason": "layered target relation"
+                        }
+                    ]
+                }
+            ]
+        }),
+    );
+
+    let (ok, body) = run_json(&["ask", "layered target", "--top", "4"], &dir);
+    assert!(ok);
+    let retrieved = body["data"]["retrieved_context"]
+        .as_array()
+        .expect("retrieved_context must be array");
+    assert_eq!(retrieved.len(), 4);
+
+    assert_eq!(retrieved[0]["source_layer"], "l3_projection");
+    assert_eq!(retrieved[0]["record_id"], "docs/l3");
+    assert_eq!(retrieved[0]["chunk_id"], "docs/l3:0001");
+
+    assert_eq!(retrieved[1]["source_layer"], "l2_semantic");
+    assert_eq!(retrieved[1]["record_id"], "docs/l2");
+    assert_eq!(retrieved[1]["chunk_id"], "docs/l2:0001");
+
+    assert_eq!(retrieved[2]["source_layer"], "l4_graph");
+    assert_eq!(retrieved[2]["record_id"], "docs/l4");
+    assert_eq!(retrieved[2]["chunk_id"], "docs/l4:0001");
+
+    assert_eq!(retrieved[3]["source_layer"], "l1_index");
+    assert_eq!(retrieved[3]["record_id"], "docs/l1");
+    assert!(retrieved[3]["chunk_id"].is_null());
+}
+
+#[test]
+fn ask_layered_retrieval_falls_back_to_l1_when_compiled_layers_missing() {
+    let dir = unique_temp_dir("ask-layered-retrieval-l1-fallback");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    mk_file(&dir, "./docs/l1.md", "fallback-only anchor keyword");
+    let (ok, _) = run_json(
+        &["add", "./docs/l1.md", "docs/l1", "--category", "raw"],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let _ = fs::remove_file(dir.join(".kb/search.json"));
+    let _ = fs::remove_file(dir.join(".kb/knowledge.json"));
+    let _ = fs::remove_file(dir.join(".kb/graph.json"));
+
+    let (ok, body) = run_json(&["ask", "anchor keyword", "--top", "1"], &dir);
+    assert!(ok);
+    let retrieved = body["data"]["retrieved_context"]
+        .as_array()
+        .expect("retrieved_context must be array");
+    assert_eq!(retrieved.len(), 1);
+    assert_eq!(retrieved[0]["source_layer"], "l1_index");
+    assert_eq!(retrieved[0]["record_id"], "docs/l1");
+    assert!(retrieved[0]["chunk_id"].is_null());
 }
 
 #[test]

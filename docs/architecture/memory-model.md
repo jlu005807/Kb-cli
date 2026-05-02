@@ -182,19 +182,20 @@ Layer 5: Wiki Markdown View Layer
 
 ## 7. `kb ask` 的上下文连接与检索路径
 
-目标检索顺序：
+检索顺序（已实现）：
 
-1. L3 召回候选 chunk
-2. L2 取语义摘要与 chunk 证据
-3. L4 做小半径关系扩展（可选）
-4. L1 做兜底回退
-5. AnswerEngine/AgentBackend 输出 meta（或后续回答正文）
+1. `L3`：先用搜索投影命中候选 chunk。
+2. `L2`：补足语义层 chunk（去重后继续填充 top-k）。
+3. `L4`：补足图谱 evidence 命中（去重后继续填充 top-k）。
+4. `L1`：最后从 index 做 fallback，保证高层缺失时仍可返回结果。
+5. `AnswerEngine`：输出 `engine_status/provider/trace_id` 元信息。
 
 上下文连接要点：
 
-1. 每个命中上下文输出 `source_layer/record_id/chunk_id`。
-2. 这样后续图谱构建与问答可共享稳定锚点，而非仅靠全文重检索。
-3. 即使 LLM 不可用，也能保证跨轮可追溯与可复算。
+1. 每条命中都输出 `source_layer/record_id/chunk_id`。
+2. `source_layer` 枚举：`l3_projection | l2_semantic | l4_graph | l1_index`。
+3. `l1_index` 命中允许 `chunk_id = null`，其余层通常带 chunk 锚点。
+4. 这保证了问答、图谱和 wiki 视图都能回指同一证据锚点。
 
 ## 8. 一致性与重建约束
 
