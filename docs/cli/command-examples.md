@@ -436,7 +436,7 @@ kb update --output=json
       "l1_registry": "ok",
       "l1_index": "ok",
       "l2_semantic": "warning",
-      "l3_projection": "skipped",
+      "l3_projection": "ok",
       "l4_graph": "skipped",
       "l5_wiki_view": "skipped"
     },
@@ -480,7 +480,7 @@ layer_status:
   l1_registry: ok
   l1_index: ok
   l2_semantic: warning
-  l3_projection: skipped
+  l3_projection: ok
   l4_graph: skipped
   l5_wiki_view: skipped
 l2_compilation:
@@ -514,7 +514,7 @@ kb update --strict --output=json
         "l1_registry": "ok",
         "l1_index": "ok",
         "l2_semantic": "error",
-        "l3_projection": "skipped",
+        "l3_projection": "ok",
         "l4_graph": "skipped",
         "l5_wiki_view": "skipped"
       },

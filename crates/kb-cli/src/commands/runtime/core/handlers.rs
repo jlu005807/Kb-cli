@@ -686,6 +686,7 @@ pub(crate) fn run_update(
     let mut progressive_issues = collect_progressive_layer_issues();
 
     let knowledge_store = FsKnowledgeStore::new(cwd.clone());
+    let search_store = FsSearchStore::new(cwd.clone());
     let content_reader = FsFileContentReader::new(cwd.clone());
     let extractor = RuleBasedSemanticExtractor::new();
 
@@ -730,8 +731,37 @@ pub(crate) fn run_update(
         }
     }
 
+    let baseline_search = match search_store.read_search() {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L3_PROJECTION,
+                code: "W-L3-READ-SNAPSHOT-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+            None
+        }
+    };
+    let l3_outcome = compile_l3(
+        baseline_search.as_ref(),
+        &l2_outcome.snapshot,
+        &generated_at,
+    );
+
+    if !dry_run {
+        if let Err(err) = search_store.write_search(&l3_outcome.snapshot) {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L3_PROJECTION,
+                code: "W-L3-WRITE-SNAPSHOT-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+        }
+    }
+
     let mut l2_status = "ok";
-    let mut l3_status = "skipped";
+    let mut l3_status = "ok";
     let mut l4_status = "skipped";
     let mut l5_status = "skipped";
     if progressive_issues

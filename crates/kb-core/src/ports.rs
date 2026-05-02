@@ -1,7 +1,10 @@
 //! Ports 定义：核心层对外依赖抽象。
 //! 通过 trait 隔离存储、检索与应答实现，保证 usecase 可测试与可替换。
 
-use crate::domain::{IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SemanticProviderInfo};
+use crate::domain::{
+    IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
+    SemanticProviderInfo,
+};
 
 // 运行态引用视图：供 usecase 层消费，不暴露具体持久化细节。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +35,11 @@ pub trait IndexStore {
 pub trait KnowledgeStore {
     fn read_knowledge(&self) -> Result<Option<KnowledgeSnapshot>, String>;
     fn write_knowledge(&self, snapshot: &KnowledgeSnapshot) -> Result<(), String>;
+}
+
+pub trait SearchStore {
+    fn read_search(&self) -> Result<Option<SearchProjectionSnapshot>, String>;
+    fn write_search(&self, snapshot: &SearchProjectionSnapshot) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
