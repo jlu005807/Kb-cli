@@ -3,7 +3,7 @@
 
 use crate::domain::{
     GraphSnapshot, IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
-    SemanticProviderInfo,
+    SemanticProviderInfo, WikiManifestSnapshot, WikiViewSnapshot,
 };
 
 // 运行态引用视图：供 usecase 层消费，不暴露具体持久化细节。
@@ -45,6 +45,15 @@ pub trait SearchStore {
 pub trait GraphStore {
     fn read_graph(&self) -> Result<Option<GraphSnapshot>, String>;
     fn write_graph(&self, snapshot: &GraphSnapshot) -> Result<(), String>;
+}
+
+pub trait WikiStore {
+    fn read_wiki_manifest(&self) -> Result<Option<WikiManifestSnapshot>, String>;
+    fn write_wiki_view(
+        &self,
+        snapshot: &WikiViewSnapshot,
+        removed_paths: &[String],
+    ) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

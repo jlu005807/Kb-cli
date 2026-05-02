@@ -688,6 +688,7 @@ pub(crate) fn run_update(
     let knowledge_store = FsKnowledgeStore::new(cwd.clone());
     let search_store = FsSearchStore::new(cwd.clone());
     let graph_store = FsGraphStore::new(cwd.clone());
+    let wiki_store = FsWikiStore::new(cwd.clone());
     let content_reader = FsFileContentReader::new(cwd.clone());
     let extractor = RuleBasedSemanticExtractor::new();
 
@@ -797,10 +798,48 @@ pub(crate) fn run_update(
         }
     }
 
+    let baseline_wiki_manifest = match wiki_store.read_wiki_manifest() {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L5_WIKI_VIEW,
+                code: "W-L5-READ-MANIFEST-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+            None
+        }
+    };
+    let l5_outcome = compile_l5(
+        baseline_wiki_manifest.as_ref(),
+        &l2_outcome.snapshot,
+        &l4_outcome.snapshot,
+        &generated_at,
+    );
+    for issue in &l5_outcome.issues {
+        progressive_issues.push(LayerIssue {
+            layer: LAYER_L5_WIKI_VIEW,
+            code: issue.code.clone(),
+            message: issue.message.clone(),
+            retryable: issue.retryable,
+        });
+    }
+    if !dry_run {
+        if let Err(err) = wiki_store.write_wiki_view(&l5_outcome.snapshot, &l5_outcome.removed_paths)
+        {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L5_WIKI_VIEW,
+                code: "W-L5-WRITE-VIEW-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+        }
+    }
+
     let mut l2_status = "ok";
     let mut l3_status = "ok";
     let mut l4_status = "ok";
-    let mut l5_status = "skipped";
+    let mut l5_status = "ok";
     if progressive_issues
         .iter()
         .any(|issue| issue.layer == LAYER_L2_SEMANTIC)

@@ -438,7 +438,7 @@ kb update --output=json
       "l2_semantic": "warning",
       "l3_projection": "ok",
       "l4_graph": "ok",
-      "l5_wiki_view": "skipped"
+      "l5_wiki_view": "ok"
     },
     "l2_compilation": {
       "processed": 3,
@@ -482,7 +482,7 @@ layer_status:
   l2_semantic: warning
   l3_projection: ok
   l4_graph: ok
-  l5_wiki_view: skipped
+  l5_wiki_view: ok
 l2_compilation:
   processed: 3
   reused: 0
@@ -516,7 +516,7 @@ kb update --strict --output=json
         "l2_semantic": "error",
         "l3_projection": "ok",
         "l4_graph": "ok",
-        "l5_wiki_view": "skipped"
+        "l5_wiki_view": "ok"
       },
       "l2_compilation": {
         "processed": 3,
