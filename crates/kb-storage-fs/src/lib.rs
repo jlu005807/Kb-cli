@@ -13,7 +13,6 @@ mod lock_fs;
 mod migration;
 mod search_files;
 mod schema;
-mod search_files;
 mod wiki_view_files;
 
 pub use atomic_write::atomic_write_bytes;
@@ -28,5 +27,4 @@ pub use migration::{
 };
 pub use search_files::{read_search_file, write_search_file, SearchFiles};
 pub use schema::{read_schema_version, write_schema_version, SchemaStatus};
-pub use search_files::{read_search_file, write_search_file, SearchFiles};
 pub use wiki_view_files::{read_wiki_manifest_file, write_wiki_view_files, WikiViewFiles};
