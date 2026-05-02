@@ -5,7 +5,7 @@ use kb_core::domain::{
 use kb_core::ports::{
     FileContentReader, SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor,
 };
-use kb_core::usecases::compile_l2;
+use kb_core::usecases::{compile_l2, compile_l3};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
@@ -240,4 +240,128 @@ fn compile_l2_marks_missing_and_failed_entries() {
         .expect("failed entry");
     assert_eq!(failed_entry.status, KnowledgeStatus::Failed);
     assert_eq!(failed_entry.summary, "line one");
+}
+
+#[test]
+fn compile_l3_reuses_unchanged_hits() {
+    let knowledge = KnowledgeSnapshot {
+        schema_version: 1,
+        generated_at: "now".to_string(),
+        base_index_signature: "idx".to_string(),
+        entries: vec![KnowledgeEntry {
+            record_id: "docs/a".to_string(),
+            path: "./docs/a.md".to_string(),
+            input_signature: "./docs/a.md|sig-a".to_string(),
+            status: KnowledgeStatus::Active,
+            summary: "summary".to_string(),
+            tags: vec!["agent".to_string()],
+            key_concepts: vec!["Memory Model".to_string()],
+            chunks: vec![KnowledgeChunk {
+                chunk_id: "docs/a:0001".to_string(),
+                byte_range: [0, 12],
+                content_signature: "c:1".to_string(),
+                summary: "chunk summary".to_string(),
+                preview: "chunk preview".to_string(),
+            }],
+            provider: SemanticProviderInfo {
+                kind: "rule".to_string(),
+                name: "rule-based-v1".to_string(),
+            },
+        }],
+    };
+
+    let baseline = SearchProjectionSnapshot {
+        schema_version: 1,
+        generated_at: "old".to_string(),
+        base_knowledge_signature: "old".to_string(),
+        hits: vec![SearchHit {
+            key: "docs/a|docs/a:0001|c:1".to_string(),
+            record_id: "docs/a".to_string(),
+            chunk_id: "docs/a:0001".to_string(),
+            content_signature: "c:1".to_string(),
+            score: 0.91,
+            matched_terms: vec!["agent".to_string(), "memory".to_string()],
+        }],
+    };
+
+    let out = compile_l3(Some(&baseline), &knowledge, "new");
+    assert_eq!(out.reused, 1);
+    assert_eq!(out.processed, 0);
+    assert_eq!(out.snapshot.hits.len(), 1);
+    assert_eq!(out.snapshot.hits[0].score, 0.91);
+}
+
+#[test]
+fn compile_l3_rebuilds_changed_chunks_and_prunes_non_active_entries() {
+    let knowledge = KnowledgeSnapshot {
+        schema_version: 1,
+        generated_at: "now".to_string(),
+        base_index_signature: "idx".to_string(),
+        entries: vec![
+            KnowledgeEntry {
+                record_id: "docs/a".to_string(),
+                path: "./docs/a.md".to_string(),
+                input_signature: "./docs/a.md|sig-a2".to_string(),
+                status: KnowledgeStatus::Active,
+                summary: "summary".to_string(),
+                tags: vec!["agent".to_string()],
+                key_concepts: vec!["Memory".to_string()],
+                chunks: vec![KnowledgeChunk {
+                    chunk_id: "docs/a:0001".to_string(),
+                    byte_range: [0, 10],
+                    content_signature: "c:2".to_string(),
+                    summary: "new chunk".to_string(),
+                    preview: "new chunk preview".to_string(),
+                }],
+                provider: SemanticProviderInfo {
+                    kind: "rule".to_string(),
+                    name: "rule-based-v1".to_string(),
+                },
+            },
+            KnowledgeEntry {
+                record_id: "docs/b".to_string(),
+                path: "./docs/b.md".to_string(),
+                input_signature: "./docs/b.md|sig-b".to_string(),
+                status: KnowledgeStatus::Missing,
+                summary: String::new(),
+                tags: vec![],
+                key_concepts: vec![],
+                chunks: vec![],
+                provider: SemanticProviderInfo {
+                    kind: "system".to_string(),
+                    name: "missing-source".to_string(),
+                },
+            },
+        ],
+    };
+
+    let baseline = SearchProjectionSnapshot {
+        schema_version: 1,
+        generated_at: "old".to_string(),
+        base_knowledge_signature: "old".to_string(),
+        hits: vec![
+            SearchHit {
+                key: "docs/a|docs/a:0001|c:1".to_string(),
+                record_id: "docs/a".to_string(),
+                chunk_id: "docs/a:0001".to_string(),
+                content_signature: "c:1".to_string(),
+                score: 0.77,
+                matched_terms: vec!["legacy".to_string()],
+            },
+            SearchHit {
+                key: "docs/b|docs/b:0001|c:x".to_string(),
+                record_id: "docs/b".to_string(),
+                chunk_id: "docs/b:0001".to_string(),
+                content_signature: "c:x".to_string(),
+                score: 0.42,
+                matched_terms: vec!["legacy".to_string()],
+            },
+        ],
+    };
+
+    let out = compile_l3(Some(&baseline), &knowledge, "new");
+    assert_eq!(out.reused, 0);
+    assert_eq!(out.processed, 1);
+    assert_eq!(out.snapshot.hits.len(), 1);
+    assert_eq!(out.snapshot.hits[0].key, "docs/a|docs/a:0001|c:2");
 }
