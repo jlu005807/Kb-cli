@@ -23,6 +23,7 @@ pub enum CoreErrorKind {
     CategoryNotFound,
     NoRelevantContext,
     PersistIndexFailed,
+    StrictLayerFailure,
 }
 
 #[derive(Debug)]
@@ -161,6 +162,13 @@ pub fn map_core_error(kind: CoreErrorKind, details: Value) -> CliError {
             code: "E1003",
             message: "Failed to persist index files",
             suggestion: Some("Check write permissions for .kb directory and retry"),
+            details,
+            exit_code: 1,
+        },
+        CoreErrorKind::StrictLayerFailure => CliError {
+            code: "E1011",
+            message: "Strict mode failed on progressive layer error",
+            suggestion: Some("Retry after resolving failed layers or run without --strict"),
             details,
             exit_code: 1,
         },

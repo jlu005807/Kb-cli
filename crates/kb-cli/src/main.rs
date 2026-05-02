@@ -4,6 +4,7 @@ mod core_adapters;
 mod env_registry;
 mod errors;
 mod kb_md;
+mod llm_config;
 mod output;
 mod paths;
 mod registry;

@@ -401,13 +401,15 @@ kb check --output=json
 }
 ```
 
-## 8. `kb update [--dry-run] [--prune] [--yes] [--full]`
+## 8. `kb update [--dry-run] [--prune] [--yes] [--full] [--strict]`
 
 > 实现说明（2026-04-18）：`update` 会把 `check` 差异写入 `./.kb/regs.json`，移除过期/已删除/不存在条目，并刷新后端索引文件。
 > 当 `check` 确认为 `to_remove` 时，`update` 也会清理匹配的陈旧索引记录，即使这些路径已不在 `regs.json` 中。
 > 对于确认为 `not_found` 的声明，`update` 会同步删除 `kb.md` 中对应引用行。
 > `update` 是 `kb rm`、`kb chmod` 等“声明优先变更”的持久化步骤。
 > 为保证 raw 与 `kb.md` 对齐，`update` 还会按路径去重 `kb.md` 中重复的 raw 引用行。
+> 分层策略：默认模式下 `L2-L4` 失败只记 `warnings` 并返回成功；`--strict` 下 `L2-L4` 任一失败即整体失败。
+> 阶段键兼容说明：过渡输出可能使用 `l3_l4_projection`；规划中的稳定键会拆分为 `l3_projection` 与 `l4_graph`（并可扩展 `l5_wiki_view`）。
 
 
 ### 成功示例
@@ -427,7 +429,24 @@ kb update --output=json
     "marked_invalid": 0,
     "duration_ms": 187,
     "full": false,
-    "raw_category_created": false
+    "raw_category_created": false,
+    "strict": false,
+    "layer_status": {
+      "l0_declaration": "ok",
+      "l1_registry": "ok",
+      "l1_index": "ok",
+      "l2_semantic": "warning",
+      "l3_l4_projection": "skipped"
+    },
+    "warnings": [
+      {
+        "layer": "l2_semantic",
+        "code": "W-L2-EXTRACT-FAILED",
+        "message": "Semantic extraction stage failed",
+        "retryable": true
+      }
+    ],
+    "errors": []
   }
 }
 ```
@@ -447,12 +466,21 @@ duration_ms: 187
 dry_run: false
 prune: false
 full: false
+strict: false
+layer_status:
+  l0_declaration: ok
+  l1_registry: ok
+  l1_index: ok
+  l2_semantic: warning
+  l3_l4_projection: skipped
+warnings:
+  - [l2_semantic] W-L2-EXTRACT-FAILED: Semantic extraction stage failed (retryable)
 ```
 
 ### 失败示例
 **命令：**
 ```bash
-kb update --output=json
+kb update --strict --output=json
 ```
 **退出码：** 1
 
@@ -461,14 +489,29 @@ kb update --output=json
 {
   "schema_version": "1.0",
   "error": {
-    "code": "E1003",
-    "message": "Failed to persist index files",
-    "suggestion": "Check write permissions for .kb directory and retry",
+    "code": "E1011",
+    "message": "Strict mode failed on progressive layer error",
+    "suggestion": "Retry after resolving failed layers or run without --strict",
     "details": {
-      "targets": [
-        ".kb/index.json",
-        ".kb/index.errors.json",
-        ".kb/index.meta.json"
+      "strict": true,
+      "layer_status": {
+        "l0_declaration": "ok",
+        "l1_registry": "ok",
+        "l1_index": "ok",
+        "l2_semantic": "error",
+        "l3_l4_projection": "skipped"
+      },
+      "warnings": [],
+      "errors": [
+        {
+          "layer": "l2_semantic",
+          "code": "W-L2-EXTRACT-FAILED",
+          "message": "Semantic extraction stage failed",
+          "retryable": true
+        }
+      ],
+      "failed_layers": [
+        "l2_semantic"
       ]
     }
   }

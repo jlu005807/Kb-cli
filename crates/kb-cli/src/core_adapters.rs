@@ -373,3 +373,23 @@ impl AnswerEngine for DisabledAnswerEngine {
         })
     }
 }
+
+pub struct ConfiguredAnswerEngine {
+    provider: String,
+}
+
+impl ConfiguredAnswerEngine {
+    pub fn new(provider: String) -> Self {
+        Self { provider }
+    }
+}
+
+impl AnswerEngine for ConfiguredAnswerEngine {
+    fn meta(&self, _question: &str, _contexts: &[RetrievedContext]) -> Result<AnswerMeta, String> {
+        Ok(AnswerMeta {
+            engine_status: "configured".to_string(),
+            provider: Some(self.provider.clone()),
+            trace_id: None,
+        })
+    }
+}

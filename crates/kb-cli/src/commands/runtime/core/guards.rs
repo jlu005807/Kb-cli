@@ -1,4 +1,14 @@
-fn build_ask_stack() -> (Box<dyn Retriever>, Box<dyn AnswerEngine>) {
+fn build_ask_stack(cwd: &Path) -> (Box<dyn Retriever>, Box<dyn AnswerEngine>) {
+    let llm = resolve_llm_config(cwd);
+    let has_llm_credentials = llm.key.is_some();
+    if has_llm_credentials {
+        let provider = format!("openai-compatible:{}@{}", llm.model, llm.base_url);
+        return (
+            Box::new(DefaultRetriever),
+            Box::new(ConfiguredAnswerEngine::new(provider)),
+        );
+    }
+
     (Box::new(DefaultRetriever), Box::new(DisabledAnswerEngine))
 }
 

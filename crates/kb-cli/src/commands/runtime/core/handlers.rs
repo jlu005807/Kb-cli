@@ -523,9 +523,89 @@ pub(crate) fn run_check(
     Ok(with_text(data, text))
 }
 
-pub(crate) fn run_update(dry_run: bool, prune: bool, _yes: bool, full: bool) -> Result<Value, CliError> {
+const LAYER_L0_DECLARATION: &str = "l0_declaration";
+const LAYER_L1_REGISTRY: &str = "l1_registry";
+const LAYER_L1_INDEX: &str = "l1_index";
+const LAYER_L2_SEMANTIC: &str = "l2_semantic";
+const LAYER_L3_L4_PROJECTION: &str = "l3_l4_projection";
+const UPDATE_LAYER_FAILURES_ENV: &str = "KB_UPDATE_SIMULATE_LAYER_FAILURES";
+
+#[derive(Debug, Clone)]
+struct LayerIssue {
+    layer: &'static str,
+    code: &'static str,
+    message: String,
+    retryable: bool,
+}
+
+fn parse_simulated_layer_failures() -> HashSet<String> {
+    std::env::var(UPDATE_LAYER_FAILURES_ENV)
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(|part| part.trim().to_ascii_lowercase())
+                .filter(|part| !part.is_empty())
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
+    let injected = parse_simulated_layer_failures();
+    let mut issues = Vec::new();
+    if injected.contains(LAYER_L2_SEMANTIC) {
+        issues.push(LayerIssue {
+            layer: LAYER_L2_SEMANTIC,
+            code: "W-L2-EXTRACT-FAILED",
+            message: "Semantic extraction stage failed".to_string(),
+            retryable: true,
+        });
+    }
+    if injected.contains(LAYER_L3_L4_PROJECTION) {
+        issues.push(LayerIssue {
+            layer: LAYER_L3_L4_PROJECTION,
+            code: "W-L3L4-PROJECTION-FAILED",
+            message: "Projection stage failed".to_string(),
+            retryable: true,
+        });
+    }
+    issues
+}
+
+fn issue_json(issue: &LayerIssue) -> Value {
+    json!({
+        "layer": issue.layer,
+        "code": issue.code,
+        "message": issue.message,
+        "retryable": issue.retryable,
+    })
+}
+
+fn issue_text(issue: &LayerIssue) -> String {
+    format!(
+        "[{}] {}: {} ({})",
+        issue.layer,
+        issue.code,
+        issue.message,
+        if issue.retryable {
+            "retryable"
+        } else {
+            "non-retryable"
+        }
+    )
+}
+
+pub(crate) fn run_update(
+    dry_run: bool,
+    prune: bool,
+    _yes: bool,
+    full: bool,
+    strict: bool,
+) -> Result<Value, CliError> {
     let start = Instant::now();
     let cwd = ensure_initialized()?;
+    // Load LLM runtime config at update-time so layered semantic stages can reuse it.
+    let _llm_runtime = resolve_llm_config(&cwd);
     let kb_doc = parse_kb_document_file(&cwd.join("kb.md"))?;
     let ignored = load_ignore_rules(&cwd).into_iter().collect::<BTreeSet<_>>();
     let desired = collect_desired_entries(&cwd, &kb_doc, &ignored, false, None)?;
@@ -574,6 +654,45 @@ pub(crate) fn run_update(dry_run: bool, prune: bool, _yes: bool, full: bool) -> 
         })?;
     }
 
+    let progressive_issues = collect_progressive_layer_issues();
+    let mut l2_status = "skipped";
+    let mut l3_l4_status = "skipped";
+    if progressive_issues
+        .iter()
+        .any(|issue| issue.layer == LAYER_L2_SEMANTIC)
+    {
+        l2_status = if strict { "error" } else { "warning" };
+    }
+    if progressive_issues
+        .iter()
+        .any(|issue| issue.layer == LAYER_L3_L4_PROJECTION)
+    {
+        l3_l4_status = if strict { "error" } else { "warning" };
+    }
+
+    let layer_status = json!({
+        LAYER_L0_DECLARATION: "ok",
+        LAYER_L1_REGISTRY: "ok",
+        LAYER_L1_INDEX: "ok",
+        LAYER_L2_SEMANTIC: l2_status,
+        LAYER_L3_L4_PROJECTION: l3_l4_status,
+    });
+    let warning_items: Vec<Value> = progressive_issues.iter().map(issue_json).collect();
+    let warning_texts: Vec<String> = progressive_issues.iter().map(issue_text).collect();
+
+    if strict && !progressive_issues.is_empty() {
+        return Err(map_core_error(
+            CoreErrorKind::StrictLayerFailure,
+            json!({
+                "strict": true,
+                "layer_status": layer_status,
+                "warnings": [],
+                "errors": warning_items,
+                "failed_layers": progressive_issues.iter().map(|issue| issue.layer).collect::<Vec<_>>(),
+            }),
+        ));
+    }
+
     let duration_ms = start.elapsed().as_millis() as u64;
     let text = format_update_text(&UpdateTextSummary {
         added: diff.add_entries.len(),
@@ -584,6 +703,16 @@ pub(crate) fn run_update(dry_run: bool, prune: bool, _yes: bool, full: bool) -> 
         dry_run,
         prune: effective_prune,
         full,
+        strict,
+        layer_status: vec![
+            (LAYER_L0_DECLARATION, "ok"),
+            (LAYER_L1_REGISTRY, "ok"),
+            (LAYER_L1_INDEX, "ok"),
+            (LAYER_L2_SEMANTIC, l2_status),
+            (LAYER_L3_L4_PROJECTION, l3_l4_status),
+        ],
+        warnings: warning_texts,
+        errors: vec![],
     });
 
     let data = json!({
@@ -593,14 +722,18 @@ pub(crate) fn run_update(dry_run: bool, prune: bool, _yes: bool, full: bool) -> 
         "marked_invalid": 0,
         "duration_ms": duration_ms,
         "full": full,
-        "raw_category_created": false
+        "raw_category_created": false,
+        "strict": strict,
+        "layer_status": layer_status,
+        "warnings": warning_items,
+        "errors": [],
     });
     Ok(with_text(data, text))
 }
 
 pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
-    let index_store = FsIndexStore::new(cwd);
+    let index_store = FsIndexStore::new(cwd.clone());
     let snapshot = index_store
         .read_index()
         .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
@@ -611,7 +744,7 @@ pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliEr
         ));
     };
 
-    let (retriever, answer_engine) = build_ask_stack();
+    let (retriever, answer_engine) = build_ask_stack(&cwd);
     let out = kb_core::usecases::execute_ask(
         retriever.as_ref(),
         answer_engine.as_ref(),

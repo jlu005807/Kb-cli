@@ -53,13 +53,13 @@ fn add_help_contains_mode_and_category() {
 }
 
 #[test]
-fn update_help_contains_full_flag() {
+fn update_help_contains_full_and_strict_flags() {
     Command::cargo_bin("kb-cli")
         .expect("kb-cli binary should build")
         .args(["update", "--help"])
         .assert()
         .success()
-        .stdout(contains("--full"));
+        .stdout(contains("--full").and(contains("--strict")));
 }
 
 #[test]

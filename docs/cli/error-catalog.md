@@ -73,6 +73,7 @@ KB-CLI 按 `--output` 模式输出错误：
 |---|---|---|---|---|---|
 | `E1001` | `1` | `Failed to write configuration` | 配置写入失败 | `Check file permissions and disk space` | `init` 等涉及配置写入 |
 | `E1003` | `1` | `Failed to persist index files` | 索引文件持久化失败 | `Check write permissions for .kb directory and retry` | `update` |
+| `E1011` | `1` | `Strict mode failed on progressive layer error` | 严格模式下渐进层失败 | `Retry after resolving failed layers or run without --strict` | `update --strict` |
 | `E2001` | `2` | `Alias contains invalid characters` | 别名字符不合法 | `Use only letters, digits, -, _, ., / and length 1-128` | `add`, `mv` |
 | `E2002` | `2` | `Invalid glob pattern` | glob 过滤模式非法 | `Verify the filter string is a valid glob pattern` | `list` |
 | `E2003` | `2` | `Alias conflict` | 别名冲突 | `Choose another alias or cancel` | `add`, `mv` |

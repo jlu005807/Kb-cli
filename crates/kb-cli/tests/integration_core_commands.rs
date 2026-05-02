@@ -17,6 +17,21 @@ fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
     (success, body)
 }
 
+fn run_json_with_env(args: &[&str], current_dir: &Path, envs: &[(&str, &str)]) -> (bool, Value) {
+    let mut cmd = Command::cargo_bin("kb-cli").expect("kb-cli binary should build");
+    cmd.current_dir(current_dir)
+        .arg("--output")
+        .arg("json")
+        .args(args);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    let assert = cmd.assert();
+    let success = assert.get_output().status.success();
+    let body: Value = serde_json::from_slice(&assert.get_output().stdout).expect("json stdout");
+    (success, body)
+}
+
 fn run_json_with_global_config(
     args: &[&str],
     current_dir: &Path,
@@ -767,6 +782,63 @@ fn update_prunes_index_entries_confirmed_by_check_even_if_not_in_regs() {
 }
 
 #[test]
+fn update_default_mode_succeeds_with_progressive_warning() {
+    let dir = unique_temp_dir("update-default-progressive-warning");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json_with_env(
+        &["update"],
+        &dir,
+        &[("KB_UPDATE_SIMULATE_LAYER_FAILURES", "l2_semantic")],
+    );
+    assert!(ok);
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["strict"], false);
+    assert_eq!(body["data"]["layer_status"]["l2_semantic"], "warning");
+    let warnings = body["data"]["warnings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["layer"], "l2_semantic");
+    assert_eq!(warnings[0]["retryable"], true);
+    assert_eq!(
+        body["data"]["errors"].as_array().map(|x| x.len()).unwrap_or(0),
+        0
+    );
+}
+
+#[test]
+fn update_strict_mode_fails_on_progressive_layer_error() {
+    let dir = unique_temp_dir("update-strict-progressive-error");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json_with_env(
+        &["update", "--strict"],
+        &dir,
+        &[("KB_UPDATE_SIMULATE_LAYER_FAILURES", "l2_semantic")],
+    );
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E1011");
+    assert_eq!(body["error"]["details"]["strict"], true);
+    assert_eq!(
+        body["error"]["details"]["layer_status"]["l2_semantic"],
+        "error"
+    );
+    let errors = body["error"]["details"]["errors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["layer"], "l2_semantic");
+}
+
+#[test]
 fn check_and_update_apply_kbignore_before_scan() {
     let dir = unique_temp_dir("check-ignore");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -1060,6 +1132,57 @@ fn ask_returns_disabled_engine_and_retrieval_structure() {
     assert_eq!(retrieved[0]["snippet"], "Use kb config to change settings.");
     let score = retrieved[0]["score"].as_f64().unwrap_or_default();
     assert!(score > 0.0 && score <= 1.0);
+}
+
+#[test]
+fn ask_reports_configured_engine_when_llm_env_is_present() {
+    let dir = unique_temp_dir("ask-configured-llm");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/config.md",
+        "Use kb config to change settings.\nMore details",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/config.md",
+            "docs/config",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(&dir)
+        .env("KB_LLM_KEY", "demo-key")
+        .env("KB_LLM_MODEL", "demo-model")
+        .env("KB_LLM_BASE_URL", "https://api.example/v1")
+        .arg("ask")
+        .arg("hello")
+        .arg("--top")
+        .arg("1")
+        .arg("--output")
+        .arg("json")
+        .assert();
+    let output = assert.get_output();
+    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
+
+    let body: Value =
+        serde_json::from_slice(&output.stdout).expect("json stdout for configured ask success");
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["engine_status"], "configured");
+    assert_eq!(
+        body["data"]["provider"],
+        Value::String("openai-compatible:demo-model@https://api.example/v1".to_string())
+    );
 }
 
 #[test]

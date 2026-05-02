@@ -16,10 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::cli::{AddMode, Cli};
-use crate::core_adapters::{DefaultRetriever, DisabledAnswerEngine, FsIndexStore, FsStateStore};
+use crate::core_adapters::{
+    ConfiguredAnswerEngine, DefaultRetriever, DisabledAnswerEngine, FsIndexStore, FsStateStore,
+};
 use crate::env_registry::{list_existing_kb_roots, register_kb_root};
 use crate::errors::{map_core_error, CliError, CoreErrorKind};
 use crate::kb_md::parse_kb_document;
+use crate::llm_config::resolve_llm_config;
 use crate::paths::{
     is_ignored, load_ignore_rules, normalize_path, KBIGNORE_REL, RAW_DIR_REL, RAW_PREFIX,
 };
@@ -227,6 +230,10 @@ struct UpdateTextSummary {
     dry_run: bool,
     prune: bool,
     full: bool,
+    strict: bool,
+    layer_status: Vec<(&'static str, &'static str)>,
+    warnings: Vec<String>,
+    errors: Vec<String>,
 }
 
 fn format_update_text(summary: &UpdateTextSummary) -> String {
@@ -240,6 +247,23 @@ fn format_update_text(summary: &UpdateTextSummary) -> String {
     let _ = writeln!(out, "dry_run: {}", summary.dry_run);
     let _ = writeln!(out, "prune: {}", summary.prune);
     let _ = writeln!(out, "full: {}", summary.full);
+    let _ = writeln!(out, "strict: {}", summary.strict);
+    out.push_str("layer_status:\n");
+    for (layer, status) in &summary.layer_status {
+        let _ = writeln!(out, "  {}: {}", layer, status);
+    }
+    if !summary.warnings.is_empty() {
+        out.push_str("warnings:\n");
+        for line in &summary.warnings {
+            let _ = writeln!(out, "  - {}", line);
+        }
+    }
+    if !summary.errors.is_empty() {
+        out.push_str("errors:\n");
+        for line in &summary.errors {
+            let _ = writeln!(out, "  - {}", line);
+        }
+    }
     out
 }
 

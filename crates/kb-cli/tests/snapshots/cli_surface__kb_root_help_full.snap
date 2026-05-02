@@ -61,7 +61,7 @@ manage references
 
 maintain index state
   check       Show index diff without writing files
-  update      Apply index diff and persist snapshot
+  update      Apply index diff and persist snapshot (use --strict for L2-L4 hard-fail)
 
 retrieve and environment
   ask         Retrieve relevant context for a question

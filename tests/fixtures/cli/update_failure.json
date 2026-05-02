@@ -1,14 +1,29 @@
 {
   "schema_version": "1.0",
   "error": {
-    "code": "E1003",
-    "message": "Failed to persist index files",
-    "suggestion": "Check write permissions for .kb directory and retry",
+    "code": "E1011",
+    "message": "Strict mode failed on progressive layer error",
+    "suggestion": "Retry after resolving failed layers or run without --strict",
     "details": {
-      "targets": [
-        ".kb/index.json",
-        ".kb/index.errors.json",
-        ".kb/index.meta.json"
+      "strict": true,
+      "layer_status": {
+        "l0_declaration": "ok",
+        "l1_registry": "ok",
+        "l1_index": "ok",
+        "l2_semantic": "error",
+        "l3_l4_projection": "skipped"
+      },
+      "warnings": [],
+      "errors": [
+        {
+          "layer": "l2_semantic",
+          "code": "W-L2-EXTRACT-FAILED",
+          "message": "Semantic extraction stage failed",
+          "retryable": true
+        }
+      ],
+      "failed_layers": [
+        "l2_semantic"
       ]
     }
   }

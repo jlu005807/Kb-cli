@@ -62,6 +62,10 @@ pub fn list_existing_kb_roots() -> EnvRegistryList {
     }
 }
 
+pub(crate) fn resolve_global_config_path() -> PathBuf {
+    global_config_path()
+}
+
 fn global_config_path() -> PathBuf {
     if let Ok(path) = std::env::var(GLOBAL_CONFIG_ENV) {
         if !path.trim().is_empty() {

@@ -84,3 +84,45 @@
 6. Bridge 将请求映射到 `AgentBackend::answer`。
 7. CLI 输出统一 JSON：`engine_status/provider/trace_id/retrieved_context`。
 
+## 6. LLM 运行时配置优先级（已确认）
+
+当接入外部 LLM（OpenAI / DeepSeek / Mimo / 其他 OpenAI-compatible 服务）时，配置读取顺序固定为：
+
+1. 当前进程环境变量（最高优先级）
+2. 当前知识库 `<kb_root>/.kb/.env`
+3. 全局配置（全局 config / 全局 `.env`）
+
+关键配置键：
+
+1. `KB_LLM_KEY`
+2. `KB_LLM_MODEL`
+3. `KB_LLM_BASE_URL`
+
+约束：
+
+1. 如果进程环境变量已存在键值，不允许被 `.env` 覆盖。
+2. 未解析到完整配置时，系统应回退到本地 deterministic 行为，而不是崩溃。
+
+## 7. 最简 Agent 参与边界
+
+第一阶段不要求完整 ReAct 或复杂工具调用循环，最简可用形态即可：
+
+1. 输入：`question + retrieved_context`
+2. 输出：`engine_status/provider/trace_id`（以及后续可扩展 answer_text）
+3. 能力：支持“上传上下文 -> 返回结构化响应”的单轮模式
+
+建议先完成以下能力再演进复杂 agent：
+
+1. 可替换 provider（通过 `base_url + model + key` 切换）
+2. 稳定结构化输出（字段校验）
+3. 失败回退（不阻断基础命令）
+
+## 8. 分层上下文建议（面向后续图谱与记忆）
+
+为了让后续知识图谱和跨轮记忆更稳定，检索上下文建议携带：
+
+1. `source_layer`
+2. `record_id`
+3. `chunk_id`
+
+这样 Agent 回答和图谱更新都可以回到同一批证据锚点，减少“只靠自由文本”带来的漂移。

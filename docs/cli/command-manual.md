@@ -190,7 +190,7 @@
 - `kb.md` 格式非法：`E3003`（退出码 3）
 - 指定分类不存在：`E2007`（退出码 2）
 
-### 4.9 `kb update [--dry-run] [--prune] [--yes] [--full]`
+### 4.9 `kb update [--dry-run] [--prune] [--yes] [--full] [--strict]`
 
 行为：
 - 把 `check` 差异应用到 `regs.json`。
@@ -205,6 +205,17 @@
 - `--prune`：显式清理无效/缺失条目
 - `--yes`：保留兼容参数
 - `--full`：全量重建索引
+- `--strict`：L2-L4 任一失败时整体失败（非 0 退出）
+
+分层成功策略：
+- 基础层（L0->L1）失败：默认模式和严格模式都失败。
+- 默认模式：L2-L4 失败记入 `warnings`，命令仍返回成功。
+- 严格模式（`--strict`）：L2-L4 任一失败记入 `errors`，命令整体失败。
+
+阶段键兼容说明：
+
+1. 当前过渡实现可能仍使用 `l3_l4_projection` 合并键。
+2. 规划中的稳定形态为拆分键：`l3_projection`、`l4_graph`（以及可选 `l5_wiki_view`）。
 
 主要输出字段：
 - `added`
@@ -214,10 +225,15 @@
 - `duration_ms`
 - `full`
 - `raw_category_created`
+- `strict`
+- `layer_status`
+- `warnings`
+- `errors`
 
 错误与退出：
 - 索引快照读取或解析失败：`E3003`（退出码 3）
 - 索引持久化失败：`E1003`（退出码 1）
+- 严格模式下渐进层失败：`E1011`（退出码 1）
 
 ### 4.10 `kb ask <QUESTION> [--top <N>]`
 
