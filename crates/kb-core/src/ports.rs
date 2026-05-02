@@ -2,7 +2,7 @@
 //! 通过 trait 隔离存储、检索与应答实现，保证 usecase 可测试与可替换。
 
 use crate::domain::{
-    IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
+    GraphSnapshot, IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
     SemanticProviderInfo,
 };
 
@@ -40,6 +40,11 @@ pub trait KnowledgeStore {
 pub trait SearchStore {
     fn read_search(&self) -> Result<Option<SearchProjectionSnapshot>, String>;
     fn write_search(&self, snapshot: &SearchProjectionSnapshot) -> Result<(), String>;
+}
+
+pub trait GraphStore {
+    fn read_graph(&self) -> Result<Option<GraphSnapshot>, String>;
+    fn write_graph(&self, snapshot: &GraphSnapshot) -> Result<(), String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

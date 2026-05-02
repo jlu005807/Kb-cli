@@ -1,11 +1,12 @@
 use kb_core::domain::{
-    IndexMeta, IndexRecord, IndexSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot,
-    KnowledgeStatus, SearchHit, SearchProjectionSnapshot, SemanticProviderInfo,
+    GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot, IndexMeta,
+    IndexRecord, IndexSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus,
+    SearchHit, SearchProjectionSnapshot, SemanticProviderInfo,
 };
 use kb_core::ports::{
     FileContentReader, SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor,
 };
-use kb_core::usecases::{compile_l2, compile_l3};
+use kb_core::usecases::{compile_l2, compile_l3, compile_l4};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[test]
@@ -71,6 +72,42 @@ fn search_projection_snapshot_roundtrip_preserves_structure() {
     let raw = serde_json::to_string_pretty(&snapshot).expect("serialize search snapshot");
     let restored: SearchProjectionSnapshot =
         serde_json::from_str(&raw).expect("deserialize search snapshot");
+    assert_eq!(restored, snapshot);
+}
+
+#[test]
+fn graph_snapshot_roundtrip_preserves_structure() {
+    let snapshot = GraphSnapshot {
+        schema_version: 1,
+        generated_at: "2026-05-02T00:00:00+08:00".to_string(),
+        base_knowledge_signature: "knowledge:demo".to_string(),
+        nodes: vec![
+            GraphNode {
+                node_id: "file:docs/a".to_string(),
+                node_type: GraphNodeType::File,
+                label: "docs/a".to_string(),
+            },
+            GraphNode {
+                node_id: "tag:agent".to_string(),
+                node_type: GraphNodeType::Tag,
+                label: "agent".to_string(),
+            },
+        ],
+        edges: vec![GraphEdge {
+            edge_id: "file_has_tag|file:docs/a|tag:agent".to_string(),
+            edge_type: GraphEdgeType::FileHasTag,
+            from_node_id: "file:docs/a".to_string(),
+            to_node_id: "tag:agent".to_string(),
+            evidence: vec![GraphEvidence {
+                record_id: "docs/a".to_string(),
+                chunk_id: Some("docs/a:0001".to_string()),
+                reason: "tag derived from semantic extraction".to_string(),
+            }],
+        }],
+    };
+
+    let raw = serde_json::to_string_pretty(&snapshot).expect("serialize graph snapshot");
+    let restored: GraphSnapshot = serde_json::from_str(&raw).expect("deserialize graph snapshot");
     assert_eq!(restored, snapshot);
 }
 
@@ -364,4 +401,124 @@ fn compile_l3_rebuilds_changed_chunks_and_prunes_non_active_entries() {
     assert_eq!(out.processed, 1);
     assert_eq!(out.snapshot.hits.len(), 1);
     assert_eq!(out.snapshot.hits[0].key, "docs/a|docs/a:0001|c:2");
+}
+
+#[test]
+fn graph_builder_reuses_unchanged_edges() {
+    let knowledge = KnowledgeSnapshot {
+        schema_version: 1,
+        generated_at: "now".to_string(),
+        base_index_signature: "idx".to_string(),
+        entries: vec![
+            KnowledgeEntry {
+                record_id: "docs/a".to_string(),
+                path: "./docs/a.md".to_string(),
+                input_signature: "./docs/a.md|sig-a".to_string(),
+                status: KnowledgeStatus::Active,
+                summary: "summary".to_string(),
+                tags: vec!["agent".to_string()],
+                key_concepts: vec!["memory model".to_string()],
+                chunks: vec![KnowledgeChunk {
+                    chunk_id: "docs/a:0001".to_string(),
+                    byte_range: [0, 12],
+                    content_signature: "c:1".to_string(),
+                    summary: "chunk summary".to_string(),
+                    preview: "chunk preview".to_string(),
+                }],
+                provider: SemanticProviderInfo {
+                    kind: "rule".to_string(),
+                    name: "rule-based-v1".to_string(),
+                },
+            },
+            KnowledgeEntry {
+                record_id: "docs/b".to_string(),
+                path: "./docs/b.md".to_string(),
+                input_signature: "./docs/b.md|sig-b".to_string(),
+                status: KnowledgeStatus::Active,
+                summary: "summary".to_string(),
+                tags: vec!["agent".to_string(), "rag".to_string()],
+                key_concepts: vec!["memory model".to_string()],
+                chunks: vec![KnowledgeChunk {
+                    chunk_id: "docs/b:0001".to_string(),
+                    byte_range: [0, 10],
+                    content_signature: "c:2".to_string(),
+                    summary: "chunk summary".to_string(),
+                    preview: "chunk preview".to_string(),
+                }],
+                provider: SemanticProviderInfo {
+                    kind: "rule".to_string(),
+                    name: "rule-based-v1".to_string(),
+                },
+            },
+        ],
+    };
+
+    let first = compile_l4(None, &knowledge, "gen-1");
+    assert_eq!(first.invalid_edges, 0);
+    assert_eq!(first.issues.len(), 0);
+    assert!(!first.snapshot.edges.is_empty());
+
+    let second = compile_l4(Some(&first.snapshot), &knowledge, "gen-2");
+    assert_eq!(second.processed, 0);
+    assert_eq!(second.reused, first.snapshot.edges.len());
+}
+
+#[test]
+fn graph_builder_enforces_evidence_and_prunes_non_active_entries() {
+    let knowledge = KnowledgeSnapshot {
+        schema_version: 1,
+        generated_at: "now".to_string(),
+        base_index_signature: "idx".to_string(),
+        entries: vec![
+            KnowledgeEntry {
+                record_id: "docs/a".to_string(),
+                path: "./docs/a.md".to_string(),
+                input_signature: "./docs/a.md|sig-a".to_string(),
+                status: KnowledgeStatus::Active,
+                summary: "summary".to_string(),
+                tags: vec!["agent".to_string()],
+                key_concepts: vec!["memory".to_string(), "model".to_string()],
+                chunks: vec![KnowledgeChunk {
+                    chunk_id: "docs/a:0001".to_string(),
+                    byte_range: [0, 12],
+                    content_signature: "c:1".to_string(),
+                    summary: "chunk summary".to_string(),
+                    preview: "chunk preview".to_string(),
+                }],
+                provider: SemanticProviderInfo {
+                    kind: "rule".to_string(),
+                    name: "rule-based-v1".to_string(),
+                },
+            },
+            KnowledgeEntry {
+                record_id: "docs/missing".to_string(),
+                path: "./docs/missing.md".to_string(),
+                input_signature: "./docs/missing.md|sig-m".to_string(),
+                status: KnowledgeStatus::Missing,
+                summary: String::new(),
+                tags: vec!["agent".to_string()],
+                key_concepts: vec!["memory".to_string()],
+                chunks: vec![],
+                provider: SemanticProviderInfo {
+                    kind: "system".to_string(),
+                    name: "missing-source".to_string(),
+                },
+            },
+        ],
+    };
+
+    let out = compile_l4(None, &knowledge, "gen-1");
+    assert_eq!(out.invalid_edges, 0);
+    assert_eq!(out.issues.len(), 0);
+    assert!(out.processed > 0);
+    assert!(out
+        .snapshot
+        .nodes
+        .iter()
+        .all(|node| !node.node_id.contains("docs/missing")));
+    assert!(out
+        .snapshot
+        .edges
+        .iter()
+        .all(|edge| !edge.evidence.is_empty()));
 }

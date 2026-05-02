@@ -437,7 +437,7 @@ kb update --output=json
       "l1_index": "ok",
       "l2_semantic": "warning",
       "l3_projection": "ok",
-      "l4_graph": "skipped",
+      "l4_graph": "ok",
       "l5_wiki_view": "skipped"
     },
     "l2_compilation": {
@@ -481,7 +481,7 @@ layer_status:
   l1_index: ok
   l2_semantic: warning
   l3_projection: ok
-  l4_graph: skipped
+  l4_graph: ok
   l5_wiki_view: skipped
 l2_compilation:
   processed: 3
@@ -515,7 +515,7 @@ kb update --strict --output=json
         "l1_index": "ok",
         "l2_semantic": "error",
         "l3_projection": "ok",
-        "l4_graph": "skipped",
+        "l4_graph": "ok",
         "l5_wiki_view": "skipped"
       },
       "l2_compilation": {

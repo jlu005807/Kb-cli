@@ -687,6 +687,7 @@ pub(crate) fn run_update(
 
     let knowledge_store = FsKnowledgeStore::new(cwd.clone());
     let search_store = FsSearchStore::new(cwd.clone());
+    let graph_store = FsGraphStore::new(cwd.clone());
     let content_reader = FsFileContentReader::new(cwd.clone());
     let extractor = RuleBasedSemanticExtractor::new();
 
@@ -760,9 +761,45 @@ pub(crate) fn run_update(
         }
     }
 
+    let baseline_graph = match graph_store.read_graph() {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L4_GRAPH,
+                code: "W-L4-READ-SNAPSHOT-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+            None
+        }
+    };
+    let l4_outcome = compile_l4(
+        baseline_graph.as_ref(),
+        &l2_outcome.snapshot,
+        &generated_at,
+    );
+    for issue in &l4_outcome.issues {
+        progressive_issues.push(LayerIssue {
+            layer: LAYER_L4_GRAPH,
+            code: issue.code.clone(),
+            message: issue.message.clone(),
+            retryable: issue.retryable,
+        });
+    }
+    if !dry_run {
+        if let Err(err) = graph_store.write_graph(&l4_outcome.snapshot) {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L4_GRAPH,
+                code: "W-L4-WRITE-SNAPSHOT-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+        }
+    }
+
     let mut l2_status = "ok";
     let mut l3_status = "ok";
-    let mut l4_status = "skipped";
+    let mut l4_status = "ok";
     let mut l5_status = "skipped";
     if progressive_issues
         .iter()
