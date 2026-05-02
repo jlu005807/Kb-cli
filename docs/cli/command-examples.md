@@ -408,8 +408,8 @@ kb check --output=json
 > 对于确认为 `not_found` 的声明，`update` 会同步删除 `kb.md` 中对应引用行。
 > `update` 是 `kb rm`、`kb chmod` 等“声明优先变更”的持久化步骤。
 > 为保证 raw 与 `kb.md` 对齐，`update` 还会按路径去重 `kb.md` 中重复的 raw 引用行。
-> 分层策略：默认模式下 `L2-L4` 失败只记 `warnings` 并返回成功；`--strict` 下 `L2-L4` 任一失败即整体失败。
-> 阶段键兼容说明：过渡输出可能使用 `l3_l4_projection`；规划中的稳定键会拆分为 `l3_projection` 与 `l4_graph`（并可扩展 `l5_wiki_view`）。
+> 分层策略：默认模式下 `L2-L5` 失败只记 `warnings` 并返回成功；`--strict` 下 `L2-L5` 任一失败即整体失败。
+> 阶段键：`l0_declaration`、`l1_registry`、`l1_index`、`l2_semantic`、`l3_projection`、`l4_graph`、`l5_wiki_view`。
 
 
 ### 成功示例
@@ -436,7 +436,9 @@ kb update --output=json
       "l1_registry": "ok",
       "l1_index": "ok",
       "l2_semantic": "warning",
-      "l3_l4_projection": "skipped"
+      "l3_projection": "skipped",
+      "l4_graph": "skipped",
+      "l5_wiki_view": "skipped"
     },
     "warnings": [
       {
@@ -472,7 +474,9 @@ layer_status:
   l1_registry: ok
   l1_index: ok
   l2_semantic: warning
-  l3_l4_projection: skipped
+  l3_projection: skipped
+  l4_graph: skipped
+  l5_wiki_view: skipped
 warnings:
   - [l2_semantic] W-L2-EXTRACT-FAILED: Semantic extraction stage failed (retryable)
 ```
@@ -499,7 +503,9 @@ kb update --strict --output=json
         "l1_registry": "ok",
         "l1_index": "ok",
         "l2_semantic": "error",
-        "l3_l4_projection": "skipped"
+        "l3_projection": "skipped",
+        "l4_graph": "skipped",
+        "l5_wiki_view": "skipped"
       },
       "warnings": [],
       "errors": [

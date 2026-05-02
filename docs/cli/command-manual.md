@@ -205,17 +205,22 @@
 - `--prune`：显式清理无效/缺失条目
 - `--yes`：保留兼容参数
 - `--full`：全量重建索引
-- `--strict`：L2-L4 任一失败时整体失败（非 0 退出）
+- `--strict`：L2-L5 任一失败时整体失败（非 0 退出）
 
 分层成功策略：
 - 基础层（L0->L1）失败：默认模式和严格模式都失败。
-- 默认模式：L2-L4 失败记入 `warnings`，命令仍返回成功。
-- 严格模式（`--strict`）：L2-L4 任一失败记入 `errors`，命令整体失败。
+- 默认模式：L2-L5 失败记入 `warnings`，命令仍返回成功。
+- 严格模式（`--strict`）：L2-L5 任一失败记入 `errors`，命令整体失败。
 
-阶段键兼容说明：
+阶段键：
 
-1. 当前过渡实现可能仍使用 `l3_l4_projection` 合并键。
-2. 规划中的稳定形态为拆分键：`l3_projection`、`l4_graph`（以及可选 `l5_wiki_view`）。
+1. `l0_declaration`
+2. `l1_registry`
+3. `l1_index`
+4. `l2_semantic`
+5. `l3_projection`
+6. `l4_graph`
+7. `l5_wiki_view`
 
 主要输出字段：
 - `added`

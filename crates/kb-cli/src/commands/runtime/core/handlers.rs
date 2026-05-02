@@ -527,7 +527,10 @@ const LAYER_L0_DECLARATION: &str = "l0_declaration";
 const LAYER_L1_REGISTRY: &str = "l1_registry";
 const LAYER_L1_INDEX: &str = "l1_index";
 const LAYER_L2_SEMANTIC: &str = "l2_semantic";
-const LAYER_L3_L4_PROJECTION: &str = "l3_l4_projection";
+const LAYER_L3_PROJECTION: &str = "l3_projection";
+const LAYER_L4_GRAPH: &str = "l4_graph";
+const LAYER_L5_WIKI_VIEW: &str = "l5_wiki_view";
+const LAYER_L3_L4_PROJECTION_LEGACY: &str = "l3_l4_projection";
 const UPDATE_LAYER_FAILURES_ENV: &str = "KB_UPDATE_SIMULATE_LAYER_FAILURES";
 
 #[derive(Debug, Clone)]
@@ -553,6 +556,8 @@ fn parse_simulated_layer_failures() -> HashSet<String> {
 fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
     let injected = parse_simulated_layer_failures();
     let mut issues = Vec::new();
+    let legacy_l3_l4 = injected.contains(LAYER_L3_L4_PROJECTION_LEGACY);
+
     if injected.contains(LAYER_L2_SEMANTIC) {
         issues.push(LayerIssue {
             layer: LAYER_L2_SEMANTIC,
@@ -561,11 +566,27 @@ fn collect_progressive_layer_issues() -> Vec<LayerIssue> {
             retryable: true,
         });
     }
-    if injected.contains(LAYER_L3_L4_PROJECTION) {
+    if injected.contains(LAYER_L3_PROJECTION) || legacy_l3_l4 {
         issues.push(LayerIssue {
-            layer: LAYER_L3_L4_PROJECTION,
-            code: "W-L3L4-PROJECTION-FAILED",
-            message: "Projection stage failed".to_string(),
+            layer: LAYER_L3_PROJECTION,
+            code: "W-L3-PROJECTION-FAILED",
+            message: "Search projection stage failed".to_string(),
+            retryable: true,
+        });
+    }
+    if injected.contains(LAYER_L4_GRAPH) || legacy_l3_l4 {
+        issues.push(LayerIssue {
+            layer: LAYER_L4_GRAPH,
+            code: "W-L4-GRAPH-FAILED",
+            message: "Graph build stage failed".to_string(),
+            retryable: true,
+        });
+    }
+    if injected.contains(LAYER_L5_WIKI_VIEW) {
+        issues.push(LayerIssue {
+            layer: LAYER_L5_WIKI_VIEW,
+            code: "W-L5-WIKI-VIEW-FAILED",
+            message: "Wiki markdown view stage failed".to_string(),
             retryable: true,
         });
     }
@@ -656,18 +677,26 @@ pub(crate) fn run_update(
 
     let progressive_issues = collect_progressive_layer_issues();
     let mut l2_status = "skipped";
-    let mut l3_l4_status = "skipped";
+    let mut l3_status = "skipped";
+    let mut l4_status = "skipped";
+    let mut l5_status = "skipped";
     if progressive_issues
         .iter()
         .any(|issue| issue.layer == LAYER_L2_SEMANTIC)
     {
         l2_status = if strict { "error" } else { "warning" };
     }
+    if progressive_issues.iter().any(|issue| issue.layer == LAYER_L3_PROJECTION) {
+        l3_status = if strict { "error" } else { "warning" };
+    }
+    if progressive_issues.iter().any(|issue| issue.layer == LAYER_L4_GRAPH) {
+        l4_status = if strict { "error" } else { "warning" };
+    }
     if progressive_issues
         .iter()
-        .any(|issue| issue.layer == LAYER_L3_L4_PROJECTION)
+        .any(|issue| issue.layer == LAYER_L5_WIKI_VIEW)
     {
-        l3_l4_status = if strict { "error" } else { "warning" };
+        l5_status = if strict { "error" } else { "warning" };
     }
 
     let layer_status = json!({
@@ -675,7 +704,9 @@ pub(crate) fn run_update(
         LAYER_L1_REGISTRY: "ok",
         LAYER_L1_INDEX: "ok",
         LAYER_L2_SEMANTIC: l2_status,
-        LAYER_L3_L4_PROJECTION: l3_l4_status,
+        LAYER_L3_PROJECTION: l3_status,
+        LAYER_L4_GRAPH: l4_status,
+        LAYER_L5_WIKI_VIEW: l5_status,
     });
     let warning_items: Vec<Value> = progressive_issues.iter().map(issue_json).collect();
     let warning_texts: Vec<String> = progressive_issues.iter().map(issue_text).collect();
@@ -709,7 +740,9 @@ pub(crate) fn run_update(
             (LAYER_L1_REGISTRY, "ok"),
             (LAYER_L1_INDEX, "ok"),
             (LAYER_L2_SEMANTIC, l2_status),
-            (LAYER_L3_L4_PROJECTION, l3_l4_status),
+            (LAYER_L3_PROJECTION, l3_status),
+            (LAYER_L4_GRAPH, l4_status),
+            (LAYER_L5_WIKI_VIEW, l5_status),
         ],
         warnings: warning_texts,
         errors: vec![],

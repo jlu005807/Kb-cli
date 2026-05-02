@@ -11,7 +11,9 @@
         "l1_registry": "ok",
         "l1_index": "ok",
         "l2_semantic": "error",
-        "l3_l4_projection": "skipped"
+        "l3_projection": "skipped",
+        "l4_graph": "skipped",
+        "l5_wiki_view": "skipped"
       },
       "warnings": [],
       "errors": [
