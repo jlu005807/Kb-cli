@@ -1,7 +1,7 @@
 //! Ports 定义：核心层对外依赖抽象。
 //! 通过 trait 隔离存储、检索与应答实现，保证 usecase 可测试与可替换。
 
-use crate::domain::IndexSnapshot;
+use crate::domain::{IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SemanticProviderInfo};
 
 // 运行态引用视图：供 usecase 层消费，不暴露具体持久化细节。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,11 +29,44 @@ pub trait IndexStore {
     fn write_index(&self, snapshot: &IndexSnapshot) -> Result<(), String>;
 }
 
+pub trait KnowledgeStore {
+    fn read_knowledge(&self) -> Result<Option<KnowledgeSnapshot>, String>;
+    fn write_knowledge(&self, snapshot: &KnowledgeSnapshot) -> Result<(), String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticExtractRequest {
+    pub record_id: String,
+    pub path: String,
+    pub text: String,
+    pub input_signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticExtractResponse {
+    pub summary: String,
+    pub tags: Vec<String>,
+    pub key_concepts: Vec<String>,
+    pub chunks: Vec<KnowledgeChunk>,
+    pub provider: SemanticProviderInfo,
+}
+
+pub trait SemanticExtractor {
+    fn extract(&self, request: &SemanticExtractRequest) -> Result<SemanticExtractResponse, String>;
+}
+
+pub trait FileContentReader {
+    fn read_text(&self, path: &str) -> Result<String, String>;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetrievedContext {
     pub alias: String,
     pub snippet: String,
     pub score: f64,
+    pub source_layer: Option<String>,
+    pub record_id: Option<String>,
+    pub chunk_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +185,9 @@ impl<B: KnowledgeBackend> Retriever for BackendRetrieverBridge<B> {
                 alias: item.alias,
                 snippet: item.snippet,
                 score: item.score,
+                source_layer: item.source,
+                record_id: None,
+                chunk_id: None,
             })
             .collect())
     }
