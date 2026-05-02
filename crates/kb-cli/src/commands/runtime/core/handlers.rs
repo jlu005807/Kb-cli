@@ -762,6 +762,12 @@ pub(crate) fn run_update(
         LAYER_L4_GRAPH: l4_status,
         LAYER_L5_WIKI_VIEW: l5_status,
     });
+    let l2_compilation = json!({
+        "processed": l2_outcome.processed,
+        "reused": l2_outcome.reused,
+        "missing": l2_outcome.missing,
+        "failed": l2_outcome.failed,
+    });
     let warning_items: Vec<Value> = progressive_issues.iter().map(issue_json).collect();
     let warning_texts: Vec<String> = progressive_issues.iter().map(issue_text).collect();
 
@@ -771,6 +777,7 @@ pub(crate) fn run_update(
             json!({
                 "strict": true,
                 "layer_status": layer_status,
+                "l2_compilation": l2_compilation,
                 "warnings": [],
                 "errors": warning_items,
                 "failed_layers": progressive_issues.iter().map(|issue| issue.layer).collect::<Vec<_>>(),
@@ -798,6 +805,10 @@ pub(crate) fn run_update(
             (LAYER_L4_GRAPH, l4_status),
             (LAYER_L5_WIKI_VIEW, l5_status),
         ],
+        l2_processed: l2_outcome.processed,
+        l2_reused: l2_outcome.reused,
+        l2_missing: l2_outcome.missing,
+        l2_failed: l2_outcome.failed,
         warnings: warning_texts,
         errors: vec![],
     });
@@ -812,6 +823,7 @@ pub(crate) fn run_update(
         "raw_category_created": false,
         "strict": strict,
         "layer_status": layer_status,
+        "l2_compilation": l2_compilation,
         "warnings": warning_items,
         "errors": [],
     });

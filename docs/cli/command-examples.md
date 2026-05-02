@@ -440,6 +440,12 @@ kb update --output=json
       "l4_graph": "skipped",
       "l5_wiki_view": "skipped"
     },
+    "l2_compilation": {
+      "processed": 3,
+      "reused": 0,
+      "missing": 0,
+      "failed": 1
+    },
     "warnings": [
       {
         "layer": "l2_semantic",
@@ -477,6 +483,11 @@ layer_status:
   l3_projection: skipped
   l4_graph: skipped
   l5_wiki_view: skipped
+l2_compilation:
+  processed: 3
+  reused: 0
+  missing: 0
+  failed: 1
 warnings:
   - [l2_semantic] W-L2-EXTRACT-FAILED: Semantic extraction stage failed (retryable)
 ```
@@ -506,6 +517,12 @@ kb update --strict --output=json
         "l3_projection": "skipped",
         "l4_graph": "skipped",
         "l5_wiki_view": "skipped"
+      },
+      "l2_compilation": {
+        "processed": 3,
+        "reused": 0,
+        "missing": 0,
+        "failed": 1
       },
       "warnings": [],
       "errors": [

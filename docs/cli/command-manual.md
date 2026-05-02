@@ -232,6 +232,7 @@
 - `raw_category_created`
 - `strict`
 - `layer_status`
+- `l2_compilation`
 - `warnings`
 - `errors`
 

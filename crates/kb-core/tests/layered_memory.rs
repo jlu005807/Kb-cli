@@ -1,6 +1,6 @@
 use kb_core::domain::{
     IndexMeta, IndexRecord, IndexSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot,
-    KnowledgeStatus, SemanticProviderInfo,
+    KnowledgeStatus, SearchHit, SearchProjectionSnapshot, SemanticProviderInfo,
 };
 use kb_core::ports::{
     FileContentReader, SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor,
@@ -50,6 +50,28 @@ fn knowledge_status_uses_snake_case_wire_values() {
 
     let encoded = serde_json::to_string(&KnowledgeStatus::Missing).expect("serialize status");
     assert_eq!(encoded, r#""missing""#);
+}
+
+#[test]
+fn search_projection_snapshot_roundtrip_preserves_structure() {
+    let snapshot = SearchProjectionSnapshot {
+        schema_version: 1,
+        generated_at: "2026-05-02T00:00:00+08:00".to_string(),
+        base_knowledge_signature: "knowledge:demo".to_string(),
+        hits: vec![SearchHit {
+            key: "docs/a|docs/a:0001|c:1".to_string(),
+            record_id: "docs/a".to_string(),
+            chunk_id: "docs/a:0001".to_string(),
+            content_signature: "c:1".to_string(),
+            score: 0.95,
+            matched_terms: vec!["agent".to_string(), "memory".to_string()],
+        }],
+    };
+
+    let raw = serde_json::to_string_pretty(&snapshot).expect("serialize search snapshot");
+    let restored: SearchProjectionSnapshot =
+        serde_json::from_str(&raw).expect("deserialize search snapshot");
+    assert_eq!(restored, snapshot);
 }
 
 struct FakeReader {
