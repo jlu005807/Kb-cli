@@ -1,0 +1,18 @@
+[package]
+name = "kb-llm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kb-core = { path = "../kb-core" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { workspace = true }
+ureq = { version = "2.10.1", features = ["json"] }
+unicode-segmentation = "1.11.0"
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+insta = { workspace = true }
+serde_json = { workspace = true }
+similar = { workspace = true }

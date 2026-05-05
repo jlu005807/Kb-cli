@@ -709,7 +709,20 @@ pub(crate) fn run_update(
         "rule"
     };
     let extractor: Box<dyn SemanticExtractor> = if semantic_mode == "llm" {
-        Box::new(LlmSemanticExtractor::new(llm_runtime.clone()))
+        Box::new(LlmSemanticExtractor::new(LlmSemanticConfig {
+            key: llm_runtime.key.clone(),
+            model: llm_runtime.model.clone(),
+            base_url: llm_runtime.base_url.clone(),
+            semantic_flow: llm_runtime.semantic_flow.clone(),
+            timeout_secs: llm_runtime.timeout_secs,
+            temperature: llm_runtime.temperature,
+            max_output_tokens: llm_runtime.max_output_tokens,
+            analysis_max_output_tokens: llm_runtime.analysis_max_output_tokens,
+            max_input_chars: llm_runtime.max_input_chars,
+            max_chunks: llm_runtime.max_chunks,
+            retry_max_attempts: llm_runtime.retry_max_attempts,
+            retry_backoff_ms: llm_runtime.retry_backoff_ms,
+        }))
     } else {
         Box::new(RuleBasedSemanticExtractor::new())
     };

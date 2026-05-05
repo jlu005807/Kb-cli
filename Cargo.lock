@@ -532,13 +532,12 @@ dependencies = [
  "insta",
  "kb-core",
  "kb-index-memory",
+ "kb-llm",
  "kb-storage-fs",
  "predicates",
  "serde",
  "serde_json",
  "similar",
- "unicode-segmentation",
- "ureq",
 ]
 
 [[package]]
@@ -566,6 +565,21 @@ dependencies = [
  "serde_json",
  "similar",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "kb-llm"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "insta",
+ "kb-core",
+ "predicates",
+ "serde",
+ "serde_json",
+ "similar",
+ "unicode-segmentation",
+ "ureq",
 ]
 
 [[package]]

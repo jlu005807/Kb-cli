@@ -7,13 +7,12 @@ edition.workspace = true
 kb-core = { path = "../kb-core" }
 kb-storage-fs = { path = "../kb-storage-fs" }
 kb-index-memory = { path = "../kb-index-memory" }
+kb-llm = { path = "../kb-llm" }
 clap = { version = "4.5.38", features = ["derive"] }
 clap_complete = "4.5.46"
 ctrlc = "3.4.5"
-unicode-segmentation = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { workspace = true }
-ureq = { version = "2.10.1", features = ["json"] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

@@ -82,6 +82,7 @@ crates/
   kb-core/
   kb-storage-fs/
   kb-index-memory/
+  kb-llm/
 
 docs/
   cli/
@@ -122,6 +123,34 @@ cargo clippy --workspace --all-targets -- -D warnings
 # 文档与 fixtures 一致性
 node tests/tools/validate-doc-fixture-diff.js
 ```
+
+## LLM 模块化架构（2026-05-05）
+
+当前 LLM 语义编译已按职责拆分为独立 crate，便于维护和替换 provider：
+
+- `crates/kb-cli`：只负责配置解析、命令编排、输出结构。
+- `crates/kb-core`：定义语义提取 port（`SemanticExtractor`）和默认规则提取器。
+- `crates/kb-llm`：实现 OpenAI-compatible 语义编译器（`LlmSemanticExtractor`）。
+- `crates/kb-storage-fs`：负责持久化（L2/L3/L4/L5 快照写入）。
+- `crates/kb-index-memory`：负责分层检索实现。
+
+`kb update` 的 L2 语义流程：
+
+1. `kb-cli` 解析 `.kb/.env` / `.kb/config.json` / 环境变量得到 LLM 运行时配置。
+2. 若 `KB_LLM_ENABLE_SEMANTIC=1` 且存在 `KB_LLM_KEY`，装配 `kb-llm::LlmSemanticExtractor`。
+3. 通过 `kb-core::compile_l2` 对每个文件执行语义提取（支持增量复用）。
+4. 写入 `.kb/knowledge.json`，后续继续编译 L3/L4/L5。
+
+支持两种语义编译模式：
+
+- `KB_LLM_SEMANTIC_FLOW=two_step`（推荐）：分析 -> 生成。
+- `KB_LLM_SEMANTIC_FLOW=single_step`：单请求直出结构化记忆。
+
+并内置 provider 兼容与稳定性策略：
+
+- OpenAI 标准 Chat Completions 请求格式。
+- `max_completion_tokens` 与 `max_tokens` 回退兼容。
+- 可配置重试与退避：`KB_LLM_RETRY_MAX_ATTEMPTS`、`KB_LLM_RETRY_BACKOFF_MS`。
 
 ## 文档
 

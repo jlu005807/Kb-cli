@@ -20,9 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::{AddMode, Cli};
-use crate::core_adapters::{
-    ConfiguredAnswerEngine, DisabledAnswerEngine, FsStateStore, LlmSemanticExtractor,
-};
+use crate::core_adapters::{ConfiguredAnswerEngine, DisabledAnswerEngine, FsStateStore};
 use crate::env_registry::{list_existing_kb_roots, register_kb_root};
 use crate::errors::{map_core_error, CliError, CoreErrorKind};
 use crate::kb_md::parse_kb_document;
@@ -34,6 +32,7 @@ use crate::registry::{load_registry, save_registry, RegistryEntry, RegistryState
 use crate::state::{load_state, save_state, RefEntry, State};
 use kb_core::RuleBasedSemanticExtractor;
 use kb_index_memory::LayeredRetriever;
+use kb_llm::{LlmSemanticConfig, LlmSemanticExtractor};
 use kb_storage_fs::{
     FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore, FsSearchStore, FsWikiStore,
 };

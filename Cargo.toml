@@ -4,6 +4,7 @@ members = [
   "crates/kb-core",
   "crates/kb-storage-fs",
   "crates/kb-index-memory",
+  "crates/kb-llm",
 ]
 resolver = "2"
 
