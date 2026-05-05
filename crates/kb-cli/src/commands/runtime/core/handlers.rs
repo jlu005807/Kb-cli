@@ -28,6 +28,8 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     fs::create_dir_all(cwd.join(RAW_DIR_REL.trim_start_matches("./")))
         .map_err(|_| write_config_error())?;
     fs::write(cwd.join(KBIGNORE_REL), DEFAULT_KBIGNORE_CONTENT).map_err(|_| write_config_error())?;
+    fs::write(cwd.join(".kb/.env.template"), DEFAULT_LLM_ENV_TEMPLATE)
+        .map_err(|_| write_config_error())?;
     fs::write(&kb_md, "# raw\n").map_err(|_| write_config_error())?;
     save_state(&cwd, &State::default())?;
     save_registry(&cwd, &RegistryState::default())?;
@@ -47,6 +49,7 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     text.push_str("path: ./kb.md\n");
     text.push_str("ignore_file: ./.kb/.kbignore\n");
     text.push_str("raw_dir: ./.kb/raw\n");
+    text.push_str("llm_env_template: ./.kb/.env.template\n");
     if force {
         let _ = writeln!(
             text,
@@ -634,7 +637,7 @@ pub(crate) fn run_update(
     let start = Instant::now();
     let cwd = ensure_initialized()?;
     // Load LLM runtime config at update-time so layered semantic stages can reuse it.
-    let _llm_runtime = resolve_llm_config(&cwd);
+    let llm_runtime = resolve_llm_config(&cwd);
     let kb_doc = parse_kb_document_file(&cwd.join("kb.md"))?;
     let ignored = load_ignore_rules(&cwd).into_iter().collect::<BTreeSet<_>>();
     let desired = collect_desired_entries(&cwd, &kb_doc, &ignored, false, None)?;
@@ -690,7 +693,26 @@ pub(crate) fn run_update(
     let graph_store = FsGraphStore::new(cwd.clone());
     let wiki_store = FsWikiStore::new(cwd.clone());
     let content_reader = FsFileContentReader::new(cwd.clone());
-    let extractor = RuleBasedSemanticExtractor::new();
+    let semantic_mode = if llm_runtime.semantic_enabled {
+        if llm_runtime.key.is_some() {
+            "llm"
+        } else {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L2_SEMANTIC,
+                code: "W-L2-LLM-CONFIG-MISSING".to_string(),
+                message: "LLM semantic extraction enabled but KB_LLM_KEY is missing".to_string(),
+                retryable: false,
+            });
+            "rule"
+        }
+    } else {
+        "rule"
+    };
+    let extractor: Box<dyn SemanticExtractor> = if semantic_mode == "llm" {
+        Box::new(LlmSemanticExtractor::new(llm_runtime.clone()))
+    } else {
+        Box::new(RuleBasedSemanticExtractor::new())
+    };
 
     let baseline_knowledge = match knowledge_store.read_knowledge() {
         Ok(snapshot) => snapshot,
@@ -710,7 +732,7 @@ pub(crate) fn run_update(
         baseline_knowledge.as_ref(),
         &outcome.snapshot,
         &content_reader,
-        &extractor,
+        extractor.as_ref(),
         &generated_at,
     );
     for issue in &l2_outcome.issues {
@@ -930,6 +952,19 @@ pub(crate) fn run_update(
         "strict": strict,
         "layer_status": layer_status,
         "l2_compilation": l2_compilation,
+        "semantic_extractor": {
+            "mode": semantic_mode,
+            "provider": if semantic_mode == "llm" { Some(format!("openai-compatible:{}@{}", llm_runtime.model, llm_runtime.base_url)) } else { None },
+            "semantic_flow": llm_runtime.semantic_flow,
+            "temperature": llm_runtime.temperature,
+            "max_output_tokens": llm_runtime.max_output_tokens,
+            "analysis_max_output_tokens": llm_runtime.analysis_max_output_tokens,
+            "max_input_chars": llm_runtime.max_input_chars,
+            "max_chunks": llm_runtime.max_chunks,
+            "timeout_secs": llm_runtime.timeout_secs,
+            "retry_max_attempts": llm_runtime.retry_max_attempts,
+            "retry_backoff_ms": llm_runtime.retry_backoff_ms
+        },
         "warnings": warning_items,
         "errors": [],
     });

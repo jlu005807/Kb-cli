@@ -9,6 +9,7 @@
 pub mod config;
 pub mod domain;
 pub mod ports;
+pub mod semantic_default;
 pub mod usecases;
 
 pub use config::{ConfigLayers, ConfigMergeTrace, ConfigSource, MergeResult};
@@ -27,3 +28,4 @@ pub use ports::{
     KnowledgeStore, RetrievedContext, Retriever, SearchStore, SemanticExtractRequest,
     SemanticExtractResponse, SemanticExtractor, StateRef, StateSnapshot, StateStore, WikiStore,
 };
+pub use semantic_default::RuleBasedSemanticExtractor;

@@ -8,8 +8,8 @@ use kb_core::usecases::{
     InitPlanError, ListRow, MovePlanError, PathPlanError,
 };
 use kb_core::{
-    AnswerEngine, GraphStore, IndexStore, KnowledgeStore, Retriever, SearchStore, StateStore,
-    WikiStore,
+    AnswerEngine, GraphStore, IndexStore, KnowledgeStore, Retriever, SearchStore,
+    SemanticExtractor, StateStore, WikiStore,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -21,9 +21,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::{AddMode, Cli};
 use crate::core_adapters::{
-    ConfiguredAnswerEngine, DisabledAnswerEngine, FsFileContentReader, FsGraphStore, FsIndexStore,
-    FsKnowledgeStore, FsSearchStore, FsStateStore, FsWikiStore, LayeredRetriever,
-    RuleBasedSemanticExtractor,
+    ConfiguredAnswerEngine, DisabledAnswerEngine, FsStateStore, LlmSemanticExtractor,
 };
 use crate::env_registry::{list_existing_kb_roots, register_kb_root};
 use crate::errors::{map_core_error, CliError, CoreErrorKind};
@@ -34,8 +32,14 @@ use crate::paths::{
 };
 use crate::registry::{load_registry, save_registry, RegistryEntry, RegistryState};
 use crate::state::{load_state, save_state, RefEntry, State};
+use kb_core::RuleBasedSemanticExtractor;
+use kb_index_memory::LayeredRetriever;
+use kb_storage_fs::{
+    FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore, FsSearchStore, FsWikiStore,
+};
 
 const DEFAULT_KBIGNORE_CONTENT: &str = "# KB internal files (auto-generated)\n./kb.md\n./.kb/.kbignore\n./.kb/refs.json\n./.kb/regs.json\n./.kb/index.json\n./.kb/index.errors.json\n./.kb/index.meta.json\n./.kb/schema.version\n./.kb/*.lock\n";
+const DEFAULT_LLM_ENV_TEMPLATE: &str = "# KB LLM runtime template\n# Enable LLM-based L2 semantic compilation during `kb update`\nKB_LLM_ENABLE_SEMANTIC=0\n\n# OpenAI-compatible endpoint settings\nKB_LLM_KEY=\nKB_LLM_MODEL=gpt-4o-mini\nKB_LLM_BASE_URL=https://api.openai.com/v1\n\n# LLM compile flow:\n#   two_step   -> analysis then memory generation (recommended)\n#   single_step -> direct generation in one request\nKB_LLM_SEMANTIC_FLOW=two_step\n\n# Tuning for multi-file semantic compilation\nKB_LLM_TIMEOUT_SECS=60\nKB_LLM_TEMPERATURE=0.1\nKB_LLM_MAX_OUTPUT_TOKENS=900\nKB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS=700\nKB_LLM_MAX_INPUT_CHARS=12000\nKB_LLM_MAX_CHUNKS=12\n\n# Retry strategy for transient provider/network failures\nKB_LLM_RETRY_MAX_ATTEMPTS=3\nKB_LLM_RETRY_BACKOFF_MS=600\n";
 
 fn write_config_error() -> CliError {
     map_core_error(CoreErrorKind::WriteConfigFailed, json!({}))

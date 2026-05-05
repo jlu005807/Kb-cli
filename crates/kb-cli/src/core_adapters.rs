@@ -1,24 +1,21 @@
-//! `kb-cli` 到 `kb-core` 的适配层：
-//! - 将 CLI 本地状态模型映射到 core ports
-//! - 连接文件存储索引实现
-//! - 提供默认本地检索器与占位应答引擎
+﻿//! `kb-cli` 閸?`kb-core` 閻ㄥ嫰鈧倿鍘ょ仦鍌︾窗
+//! - 鐏?CLI 閺堫剙婀撮悩鑸碘偓浣鼓侀崹瀣Ё鐏忓嫬鍩?core ports
+//! - 鏉╃偞甯撮弬鍥︽鐎涙ê鍋嶇槐銏犵穿鐎圭偟骞?//! - 閹绘劒绶垫妯款吇閺堫剙婀村Λ鈧槐銏犳珤娑撳骸宕版担宥呯安缁涙柨绱╅幙?
 
-use std::cmp::Ordering;
+use serde::Deserialize;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 use unicode_segmentation::UnicodeSegmentation;
 
-use kb_core::domain::{
-    GraphSnapshot, IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
-    SemanticProviderInfo,
-};
+use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
 use kb_core::{
-    AnswerEngine, AnswerMeta, FileContentReader, GraphStore, IndexStore, KnowledgeStore,
-    RetrievedContext, Retriever, SearchStore, SemanticExtractRequest, SemanticExtractResponse,
-    SemanticExtractor, StateRef, StateSnapshot, StateStore, WikiStore,
+    AnswerEngine, AnswerMeta, RetrievedContext, SemanticExtractRequest, SemanticExtractResponse,
+    SemanticExtractor, StateRef, StateSnapshot, StateStore,
 };
 
+use crate::llm_config::LlmRuntimeConfig;
 use crate::state::{load_state, save_state, RefEntry, State};
 
 pub struct FsStateStore {
@@ -26,14 +23,14 @@ pub struct FsStateStore {
 }
 
 impl FsStateStore {
-    /// 基于当前工作目录创建状态存储适配器。
+    /// 閸╄桨绨ぐ鎾冲瀹搞儰缍旈惄顔肩秿閸掓稑缂撻悩鑸碘偓浣哥摠閸屻劑鈧倿鍘ら崳銊ｂ偓?
     pub fn new(cwd: PathBuf) -> Self {
         Self { cwd }
     }
 }
 
 impl StateStore for FsStateStore {
-    // 适配层负责在 CLI State 与 core StateSnapshot 之间做结构转换。
+    // 闁倿鍘ょ仦鍌濈鐠愶絽婀?CLI State 娑?core StateSnapshot 娑斿妫块崑姘辩波閺嬪嫯娴嗛幑顫偓?
     fn load_state(&self) -> Result<StateSnapshot, String> {
         let cli_state = load_state(&self.cwd).map_err(|err| err.message.to_string())?;
         Ok(StateSnapshot {
@@ -67,811 +64,663 @@ impl StateStore for FsStateStore {
     }
 }
 
-pub struct FsIndexStore {
-    cwd: PathBuf,
+#[derive(Debug, Clone)]
+pub struct LlmSemanticExtractor {
+    config: LlmRuntimeConfig,
+    endpoint: String,
+    provider_name: String,
 }
 
-impl FsIndexStore {
-    /// 基于当前工作目录创建索引存储适配器。
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
-    }
-}
-
-impl IndexStore for FsIndexStore {
-    fn read_index(&self) -> Result<Option<IndexSnapshot>, String> {
-        kb_storage_fs::read_index_files(&self.cwd).map_err(|err| err.to_string())
-    }
-
-    fn write_index(&self, snapshot: &IndexSnapshot) -> Result<(), String> {
-        kb_storage_fs::write_index_files(&self.cwd, snapshot)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-}
-
-pub struct DefaultRetriever;
-
-impl Retriever for DefaultRetriever {
-    /// 默认本地检索流程：
-    /// 1) 计算 query token
-    /// 2) 对 present 记录打分并排序
-    /// 3) 生成稳定摘要片段
-    fn retrieve(
-        &self,
-        question: &str,
-        top: usize,
-        snapshot: &IndexSnapshot,
-    ) -> Result<Vec<RetrievedContext>, String> {
-        // 查询文本统一降小写，便于后续 token 匹配与包含匹配。
-        let normalized_question = question.to_ascii_lowercase();
-        let question_tokens = normalized_tokens(question);
-
-        let present_records: Vec<&kb_core::domain::IndexRecord> = snapshot
-            .records
-            .iter()
-            .filter(|record| record.present)
-            .collect();
-
-        let mut ranked: Vec<(f64, &kb_core::domain::IndexRecord)> = present_records
-            .iter()
-            .map(|record| {
-                (
-                    score_record(record, &normalized_question, &question_tokens),
-                    *record,
-                )
-            })
-            .filter(|(score, _)| *score > 0.0)
-            .collect();
-
-        ranked.sort_by(|(score_a, rec_a), (score_b, rec_b)| {
-            score_b
-                .partial_cmp(score_a)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| rec_a.alias.cmp(&rec_b.alias))
-                .then_with(|| rec_a.path.cmp(&rec_b.path))
-        });
-
-        if ranked.is_empty() {
-            // 零命中时返回稳定兜底结果，保证 ask 输出结构可预测。
-            ranked = present_records
-                .into_iter()
-                .map(|record| (0.01, record))
-                .collect();
-            ranked.sort_by(|(_, rec_a), (_, rec_b)| {
-                rec_a
-                    .alias
-                    .cmp(&rec_b.alias)
-                    .then_with(|| rec_a.path.cmp(&rec_b.path))
-            });
-        }
-
-        Ok(ranked
-            .into_iter()
-            .take(top)
-            .map(|(score, record)| RetrievedContext {
-                alias: record.alias.clone(),
-                snippet: snippet_for(record, &question_tokens),
-                score,
-                source_layer: Some("l1_index".to_string()),
-                record_id: Some(record.alias.clone()),
-                chunk_id: None,
-            })
-            .collect())
-    }
-}
-
-pub struct LayeredRetriever {
-    search_snapshot: Option<SearchProjectionSnapshot>,
-    knowledge_snapshot: Option<KnowledgeSnapshot>,
-    graph_snapshot: Option<GraphSnapshot>,
-    fallback: DefaultRetriever,
-}
-
-impl LayeredRetriever {
-    pub fn new(
-        search_snapshot: Option<SearchProjectionSnapshot>,
-        knowledge_snapshot: Option<KnowledgeSnapshot>,
-        graph_snapshot: Option<GraphSnapshot>,
-    ) -> Self {
+impl LlmSemanticExtractor {
+    pub fn new(config: LlmRuntimeConfig) -> Self {
+        let endpoint = build_chat_completion_endpoint(&config.base_url);
+        let provider_name = format!("openai-compatible:{}@{}", config.model, config.base_url);
         Self {
-            search_snapshot,
-            knowledge_snapshot,
-            graph_snapshot,
-            fallback: DefaultRetriever,
+            config,
+            endpoint,
+            provider_name,
         }
     }
-}
 
-impl Retriever for LayeredRetriever {
-    fn retrieve(
+    fn call_openai_chat_with_retry(
         &self,
-        question: &str,
-        top: usize,
-        snapshot: &IndexSnapshot,
-    ) -> Result<Vec<RetrievedContext>, String> {
-        let limit = top.max(1);
-        let normalized_question = question.to_ascii_lowercase();
-        let question_tokens = normalized_tokens(question);
-        let mut out = Vec::new();
-        let mut seen = BTreeSet::new();
-
-        let mut knowledge_chunk_map = BTreeMap::new();
-        if let Some(knowledge) = &self.knowledge_snapshot {
-            for entry in &knowledge.entries {
-                if entry.status != kb_core::KnowledgeStatus::Active {
-                    continue;
-                }
-                for chunk in &entry.chunks {
-                    knowledge_chunk_map.insert(
-                        format!("{}|{}", entry.record_id, chunk.chunk_id),
-                        (entry, chunk),
-                    );
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_output_tokens: u32,
+    ) -> Result<Value, String> {
+        let mut errors = Vec::new();
+        for attempt in 1..=self.config.retry_max_attempts {
+            match self.call_openai_chat_once(api_key, system_prompt, user_prompt, max_output_tokens)
+            {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    errors.push(format!(
+                        "attempt {}/{} failed: {}",
+                        attempt, self.config.retry_max_attempts, err
+                    ));
+                    if attempt < self.config.retry_max_attempts && self.config.retry_backoff_ms > 0
+                    {
+                        std::thread::sleep(Duration::from_millis(self.config.retry_backoff_ms));
+                    }
                 }
             }
         }
 
-        if let Some(search) = &self.search_snapshot {
-            let mut ranked = search
-                .hits
-                .iter()
-                .filter_map(|hit| {
-                    let chunk_key = format!("{}|{}", hit.record_id, hit.chunk_id);
-                    let (entry, chunk) = knowledge_chunk_map.get(chunk_key.as_str())?;
-                    let score = score_search_hit(hit, &normalized_question, &question_tokens);
-                    if score <= 0.0 {
-                        return None;
-                    }
-                    Some((score, hit, *entry, *chunk))
-                })
-                .collect::<Vec<_>>();
-            ranked.sort_by(|a, b| {
-                b.0.partial_cmp(&a.0)
-                    .unwrap_or(Ordering::Equal)
-                    .then_with(|| a.1.record_id.cmp(&b.1.record_id))
-                    .then_with(|| a.1.chunk_id.cmp(&b.1.chunk_id))
-            });
-
-            for (score, hit, entry, chunk) in ranked {
-                if out.len() >= limit {
-                    break;
-                }
-                let key = format!("{}|{}", hit.record_id, hit.chunk_id);
-                if seen.contains(&key) {
-                    continue;
-                }
-                seen.insert(key);
-                out.push(RetrievedContext {
-                    alias: hit.record_id.clone(),
-                    snippet: snippet_from_chunk(entry, chunk, &question_tokens),
-                    score,
-                    source_layer: Some("l3_projection".to_string()),
-                    record_id: Some(hit.record_id.clone()),
-                    chunk_id: Some(hit.chunk_id.clone()),
-                });
-            }
-        }
-
-        if out.len() < limit {
-            if let Some(knowledge) = &self.knowledge_snapshot {
-                let mut ranked = Vec::new();
-                for entry in &knowledge.entries {
-                    if entry.status != kb_core::KnowledgeStatus::Active {
-                        continue;
-                    }
-                    for chunk in &entry.chunks {
-                        let key = format!("{}|{}", entry.record_id, chunk.chunk_id);
-                        if seen.contains(&key) {
-                            continue;
-                        }
-                        let score = score_knowledge_chunk(
-                            entry,
-                            chunk,
-                            &normalized_question,
-                            &question_tokens,
-                        );
-                        if score <= 0.0 {
-                            continue;
-                        }
-                        ranked.push((score, entry, chunk));
-                    }
-                }
-                ranked.sort_by(|a, b| {
-                    b.0.partial_cmp(&a.0)
-                        .unwrap_or(Ordering::Equal)
-                        .then_with(|| a.1.record_id.cmp(&b.1.record_id))
-                        .then_with(|| a.2.chunk_id.cmp(&b.2.chunk_id))
-                });
-
-                for (score, entry, chunk) in ranked {
-                    if out.len() >= limit {
-                        break;
-                    }
-                    let key = format!("{}|{}", entry.record_id, chunk.chunk_id);
-                    if seen.contains(&key) {
-                        continue;
-                    }
-                    seen.insert(key);
-                    out.push(RetrievedContext {
-                        alias: entry.record_id.clone(),
-                        snippet: snippet_from_chunk(entry, chunk, &question_tokens),
-                        score,
-                        source_layer: Some("l2_semantic".to_string()),
-                        record_id: Some(entry.record_id.clone()),
-                        chunk_id: Some(chunk.chunk_id.clone()),
-                    });
-                }
-            }
-        }
-
-        if out.len() < limit {
-            if let Some(graph) = &self.graph_snapshot {
-                let mut ranked = graph
-                    .edges
-                    .iter()
-                    .filter_map(|edge| {
-                        let evidence = edge.evidence.first()?;
-                        let summary = format!(
-                            "{} -> {} | {}",
-                            edge.from_node_id,
-                            edge.to_node_id,
-                            edge.evidence
-                                .iter()
-                                .map(|item| item.reason.as_str())
-                                .collect::<Vec<_>>()
-                                .join("; ")
-                        );
-                        let score =
-                            score_graph_edge(&summary, &normalized_question, &question_tokens);
-                        if score <= 0.0 {
-                            return None;
-                        }
-                        Some((score, edge, evidence, summary))
-                    })
-                    .collect::<Vec<_>>();
-                ranked.sort_by(|a, b| {
-                    b.0.partial_cmp(&a.0)
-                        .unwrap_or(Ordering::Equal)
-                        .then_with(|| a.1.edge_id.cmp(&b.1.edge_id))
-                });
-
-                for (score, edge, evidence, summary) in ranked {
-                    if out.len() >= limit {
-                        break;
-                    }
-                    let key = format!(
-                        "{}|{}",
-                        evidence.record_id,
-                        evidence.chunk_id.as_deref().unwrap_or("-")
-                    );
-                    if seen.contains(&key) {
-                        continue;
-                    }
-                    seen.insert(key);
-                    out.push(RetrievedContext {
-                        alias: evidence.record_id.clone(),
-                        snippet: stable_excerpt_window(&summary, &question_tokens, 180),
-                        score,
-                        source_layer: Some("l4_graph".to_string()),
-                        record_id: Some(evidence.record_id.clone()),
-                        chunk_id: evidence.chunk_id.clone(),
-                    });
-                    let _ = edge;
-                }
-            }
-        }
-
-        if out.len() < limit {
-            let fallback = self.fallback.retrieve(question, limit, snapshot)?;
-            for mut item in fallback {
-                if out.len() >= limit {
-                    break;
-                }
-                let key = format!(
-                    "{}|{}",
-                    item.record_id.clone().unwrap_or_else(|| item.alias.clone()),
-                    item.chunk_id.clone().unwrap_or_else(|| "-".to_string())
-                );
-                if seen.contains(&key) {
-                    continue;
-                }
-                seen.insert(key);
-                item.source_layer = Some("l1_index".to_string());
-                if item.record_id.is_none() {
-                    item.record_id = Some(item.alias.clone());
-                }
-                out.push(item);
-            }
-        }
-
-        Ok(out.into_iter().take(limit).collect())
-    }
-}
-
-pub struct FsKnowledgeStore {
-    cwd: PathBuf,
-}
-
-impl FsKnowledgeStore {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
-    }
-}
-
-impl KnowledgeStore for FsKnowledgeStore {
-    fn read_knowledge(&self) -> Result<Option<kb_core::KnowledgeSnapshot>, String> {
-        kb_storage_fs::read_knowledge_file(&self.cwd).map_err(|err| err.to_string())
+        Err(format!(
+            "llm request failed after {} attempts; {}",
+            self.config.retry_max_attempts,
+            errors.join(" | ")
+        ))
     }
 
-    fn write_knowledge(&self, snapshot: &kb_core::KnowledgeSnapshot) -> Result<(), String> {
-        kb_storage_fs::write_knowledge_file(&self.cwd, snapshot)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-}
-
-pub struct FsSearchStore {
-    cwd: PathBuf,
-}
-
-impl FsSearchStore {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
-    }
-}
-
-impl SearchStore for FsSearchStore {
-    fn read_search(&self) -> Result<Option<kb_core::SearchProjectionSnapshot>, String> {
-        kb_storage_fs::read_search_file(&self.cwd).map_err(|err| err.to_string())
-    }
-
-    fn write_search(&self, snapshot: &kb_core::SearchProjectionSnapshot) -> Result<(), String> {
-        kb_storage_fs::write_search_file(&self.cwd, snapshot)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-}
-
-pub struct FsGraphStore {
-    cwd: PathBuf,
-}
-
-impl FsGraphStore {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
-    }
-}
-
-impl GraphStore for FsGraphStore {
-    fn read_graph(&self) -> Result<Option<kb_core::GraphSnapshot>, String> {
-        kb_storage_fs::read_graph_file(&self.cwd).map_err(|err| err.to_string())
-    }
-
-    fn write_graph(&self, snapshot: &kb_core::GraphSnapshot) -> Result<(), String> {
-        kb_storage_fs::write_graph_file(&self.cwd, snapshot)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-}
-
-pub struct FsWikiStore {
-    cwd: PathBuf,
-}
-
-impl FsWikiStore {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
-    }
-}
-
-impl WikiStore for FsWikiStore {
-    fn read_wiki_manifest(&self) -> Result<Option<kb_core::WikiManifestSnapshot>, String> {
-        kb_storage_fs::read_wiki_manifest_file(&self.cwd).map_err(|err| err.to_string())
-    }
-
-    fn write_wiki_view(
+    fn call_openai_chat_once(
         &self,
-        snapshot: &kb_core::WikiViewSnapshot,
-        removed_paths: &[String],
-    ) -> Result<(), String> {
-        kb_storage_fs::write_wiki_view_files(&self.cwd, snapshot, removed_paths)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
+        api_key: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        max_output_tokens: u32,
+    ) -> Result<Value, String> {
+        let body = json!({
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            "temperature": self.config.temperature,
+            "max_completion_tokens": max_output_tokens,
+            "response_format": { "type": "json_object" }
+        });
+        match self.send_openai_chat(api_key, &body) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                if supports_max_tokens_fallback(&err) {
+                    let fallback_body = json!({
+                        "model": self.config.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": system_prompt
+                            },
+                            {
+                                "role": "user",
+                                "content": user_prompt
+                            }
+                        ],
+                        "temperature": self.config.temperature,
+                        "max_tokens": max_output_tokens,
+                        "response_format": { "type": "json_object" }
+                    });
+                    self.send_openai_chat(api_key, &fallback_body)
+                        .map_err(|fallback_err| {
+                            format!(
+                                "primary(max_completion_tokens) failed: {}; fallback(max_tokens) failed: {}",
+                                err, fallback_err
+                            )
+                        })
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    fn send_openai_chat(&self, api_key: &str, body: &Value) -> Result<Value, String> {
+        let request = ureq::post(&self.endpoint)
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .timeout(Duration::from_secs(self.config.timeout_secs));
+
+        let raw = match request.send_string(&body.to_string()) {
+            Ok(response) => response
+                .into_string()
+                .map_err(|err| format!("failed to read llm response: {}", err))?,
+            Err(ureq::Error::Status(code, response)) => {
+                let body_text = response
+                    .into_string()
+                    .unwrap_or_else(|_| "<failed to read error body>".to_string());
+                return Err(format!(
+                    "http status {} from llm provider: {}",
+                    code, body_text
+                ));
+            }
+            Err(ureq::Error::Transport(err)) => {
+                return Err(format!("llm transport error: {}", err));
+            }
+        };
+
+        serde_json::from_str(&raw).map_err(|err| format!("invalid llm response json: {}", err))
+    }
+
+    fn extract_single_step(
+        &self,
+        api_key: &str,
+        request: &SemanticExtractRequest,
+        truncated_text: &str,
+        planned_chunks: &[KnowledgeChunk],
+    ) -> Result<LlmSemanticExecution, String> {
+        let user_prompt =
+            build_semantic_prompt_single_step(request, truncated_text, planned_chunks);
+        let response = self.call_openai_chat_with_retry(
+            api_key,
+            "You are a semantic compiler for a local knowledge base. Return JSON only.",
+            &user_prompt,
+            self.config.max_output_tokens,
+        )?;
+        let content = extract_chat_message_content(&response)
+            .ok_or_else(|| "missing choices[0].message.content in llm response".to_string())?;
+        let payload_value = parse_json_object_from_text(&content)?;
+        let payload = serde_json::from_value::<LlmSemanticPayload>(payload_value)
+            .map_err(|err| format!("invalid llm semantic payload: {}", err))?;
+        Ok(LlmSemanticExecution {
+            payload,
+            analysis: None,
+        })
+    }
+
+    fn extract_two_step(
+        &self,
+        api_key: &str,
+        request: &SemanticExtractRequest,
+        truncated_text: &str,
+        planned_chunks: &[KnowledgeChunk],
+    ) -> Result<LlmSemanticExecution, String> {
+        let analysis_prompt =
+            build_semantic_prompt_analysis(request, truncated_text, planned_chunks);
+        let analysis_response = self.call_openai_chat_with_retry(
+            api_key,
+            "You are an analysis engine for memory compilation. Return JSON only.",
+            &analysis_prompt,
+            self.config.analysis_max_output_tokens,
+        )?;
+        let analysis_content = extract_chat_message_content(&analysis_response)
+            .ok_or_else(|| "missing choices[0].message.content in analysis response".to_string())?;
+        let analysis_value = parse_json_object_from_text(&analysis_content)?;
+        let analysis_payload =
+            serde_json::from_value::<LlmSemanticAnalysisPayload>(analysis_value.clone())
+                .map_err(|err| format!("invalid llm semantic analysis payload: {}", err))?;
+
+        let generation_prompt =
+            build_semantic_prompt_generation(request, planned_chunks, &analysis_value);
+        let generation_response = self.call_openai_chat_with_retry(
+            api_key,
+            "You are a semantic compiler for a local knowledge base. Return JSON only.",
+            &generation_prompt,
+            self.config.max_output_tokens,
+        )?;
+        let generation_content =
+            extract_chat_message_content(&generation_response).ok_or_else(|| {
+                "missing choices[0].message.content in generation response".to_string()
+            })?;
+        let generation_value = parse_json_object_from_text(&generation_content)?;
+        let payload = serde_json::from_value::<LlmSemanticPayload>(generation_value)
+            .map_err(|err| format!("invalid llm semantic payload: {}", err))?;
+
+        Ok(LlmSemanticExecution {
+            payload,
+            analysis: Some(analysis_payload),
+        })
     }
 }
 
-pub struct FsFileContentReader {
-    cwd: PathBuf,
-}
-
-impl FsFileContentReader {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self { cwd }
-    }
-}
-
-impl FileContentReader for FsFileContentReader {
-    fn read_text(&self, path: &str) -> Result<String, String> {
-        let abs = self.cwd.join(path.trim_start_matches("./"));
-        fs::read_to_string(&abs).map_err(|err| format!("failed to read {}: {}", path, err))
-    }
-}
-
-pub struct RuleBasedSemanticExtractor;
-
-impl RuleBasedSemanticExtractor {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl SemanticExtractor for RuleBasedSemanticExtractor {
+impl SemanticExtractor for LlmSemanticExtractor {
     fn extract(&self, request: &SemanticExtractRequest) -> Result<SemanticExtractResponse, String> {
-        let summary = request
-            .text
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(|line| stable_truncate(line, 240))
-            .unwrap_or_else(|| format!("Content from {}", request.path));
+        let Some(api_key) = self.config.key.as_deref() else {
+            return Err("llm semantic extraction requires KB_LLM_KEY".to_string());
+        };
 
-        let mut tags = BTreeSet::new();
-        for token in request
-            .path
-            .split(|ch: char| !ch.is_alphanumeric())
-            .filter(|token| !token.is_empty())
-        {
-            tags.insert(token.to_ascii_lowercase());
-        }
-
-        let mut key_concepts = request
-            .text
-            .lines()
-            .map(str::trim)
-            .filter_map(|line| line.strip_prefix('#'))
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToString::to_string)
-            .take(4)
-            .collect::<Vec<_>>();
-        if key_concepts.is_empty() {
-            key_concepts = tags.iter().take(3).cloned().collect();
-        }
-
-        let mut chunks = Vec::new();
-        for (idx, raw_chunk) in request.text.split("\n\n").enumerate().take(8) {
-            let chunk_text = raw_chunk.trim();
-            if chunk_text.is_empty() {
-                continue;
-            }
-            chunks.push(KnowledgeChunk {
-                chunk_id: format!("{}:{:04}", request.record_id, idx + 1),
-                byte_range: [0, chunk_text.len() as u64],
-                content_signature: format!("len:{}", chunk_text.len()),
-                summary: stable_truncate(chunk_text, 120),
-                preview: stable_truncate(chunk_text, 200),
-            });
-        }
+        let truncated_text = truncate_by_chars(&request.text, self.config.max_input_chars);
+        let mut chunks =
+            plan_semantic_chunks(&request.record_id, &truncated_text, self.config.max_chunks);
         if chunks.is_empty() {
             chunks.push(KnowledgeChunk {
                 chunk_id: format!("{}:0001", request.record_id),
-                byte_range: [0, request.text.len() as u64],
-                content_signature: format!("len:{}", request.text.len()),
-                summary: summary.clone(),
-                preview: stable_truncate(&request.text, 200),
+                byte_range: [0, truncated_text.len() as u64],
+                content_signature: format!(
+                    "fnv1a64:{:016x}",
+                    fnv1a64_local(truncated_text.as_bytes())
+                ),
+                summary: stable_truncate(&truncated_text, 120),
+                preview: stable_truncate(&truncated_text, 200),
             });
         }
 
+        let execution = if self.config.semantic_flow == "single_step" {
+            self.extract_single_step(api_key, request, &truncated_text, &chunks)?
+        } else {
+            self.extract_two_step(api_key, request, &truncated_text, &chunks)?
+        };
+        let LlmSemanticExecution { payload, analysis } = execution;
+        let LlmSemanticPayload {
+            summary: payload_summary,
+            tags: payload_tags,
+            key_concepts: payload_key_concepts,
+            chunk_summaries,
+        } = payload;
+
+        let mut chunk_summary_map = BTreeMap::new();
+        for item in chunk_summaries {
+            let chunk_id = item.chunk_id.trim();
+            let summary = item.summary.trim();
+            if chunk_id.is_empty() || summary.is_empty() {
+                continue;
+            }
+            chunk_summary_map.insert(chunk_id.to_string(), summary.to_string());
+        }
+        if chunk_summary_map.is_empty() {
+            if let Some(analysis) = analysis.as_ref() {
+                for insight in &analysis.chunk_insights {
+                    let chunk_id = insight.chunk_id.trim();
+                    if chunk_id.is_empty() {
+                        continue;
+                    }
+                    if let Some(summary) = first_non_empty_list_item(&insight.facts) {
+                        chunk_summary_map
+                            .insert(chunk_id.to_string(), stable_truncate(summary, 120));
+                    }
+                }
+            }
+        }
+
+        for chunk in &mut chunks {
+            if let Some(summary) = chunk_summary_map.get(&chunk.chunk_id) {
+                chunk.summary = stable_truncate(summary, 120);
+            }
+        }
+
+        let fallback_summary = analysis
+            .as_ref()
+            .and_then(|analysis| normalize_text_field(analysis.summary.clone()))
+            .or_else(|| first_non_empty_line_local(&truncated_text))
+            .unwrap_or_else(|| format!("Content from {}", request.path));
+        let summary = normalize_text_field(payload_summary).unwrap_or(fallback_summary);
+        let tags = if payload_tags.is_empty() {
+            analysis
+                .as_ref()
+                .map(|analysis| analysis.tags.clone())
+                .unwrap_or_default()
+        } else {
+            payload_tags
+        };
+        let key_concepts = if payload_key_concepts.is_empty() {
+            analysis
+                .as_ref()
+                .map(|analysis| analysis.key_concepts.clone())
+                .unwrap_or_default()
+        } else {
+            payload_key_concepts
+        };
+
         Ok(SemanticExtractResponse {
-            summary,
-            tags: tags.into_iter().take(8).collect(),
-            key_concepts,
+            summary: stable_truncate(&summary, 240),
+            tags: normalize_semantic_list(tags, 12, true),
+            key_concepts: normalize_semantic_list(key_concepts, 12, false),
             chunks,
             provider: SemanticProviderInfo {
-                kind: "rule".to_string(),
-                name: "rule-based-v1".to_string(),
+                kind: "llm".to_string(),
+                name: format!("{};flow={}", self.provider_name, self.config.semantic_flow),
             },
         })
     }
 }
 
-fn normalized_tokens(input: &str) -> BTreeSet<String> {
-    input
-        .to_ascii_lowercase()
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .map(|token| token.to_string())
-        .collect()
+#[derive(Debug)]
+struct LlmSemanticExecution {
+    payload: LlmSemanticPayload,
+    analysis: Option<LlmSemanticAnalysisPayload>,
 }
 
-fn score_record(
-    record: &kb_core::domain::IndexRecord,
-    normalized_question: &str,
-    question_tokens: &BTreeSet<String>,
-) -> f64 {
-    if question_tokens.is_empty() {
-        return 0.0;
-    }
-
-    let record_tokens = normalized_tokens(&format!(
-        "{} {} {} {}",
-        record.alias,
-        record.path,
-        record.category,
-        record.excerpt.as_deref().unwrap_or("")
-    ));
-    if record_tokens.is_empty() {
-        return 0.0;
-    }
-
-    let matched = question_tokens
-        .iter()
-        .filter(|q| {
-            record_tokens
-                .iter()
-                .any(|d| d == *q || d.contains(q.as_str()) || q.contains(d.as_str()))
-        })
-        .count();
-
-    if matched == 0 {
-        return 0.0;
-    }
-
-    // 评分模型：
-    // overlap 为查询词覆盖率，density 为命中密度，alias/path 命中提供轻量加权。
-    let overlap = matched as f64 / question_tokens.len() as f64;
-    let density = matched as f64 / record_tokens.len() as f64;
-    let alias_hit = if !normalized_question.trim().is_empty()
-        && record
-            .alias
-            .to_ascii_lowercase()
-            .contains(normalized_question)
-    {
-        0.1
-    } else {
-        0.0
-    };
-    let path_hit = if !normalized_question.trim().is_empty()
-        && record
-            .path
-            .to_ascii_lowercase()
-            .contains(normalized_question)
-    {
-        0.05
-    } else {
-        0.0
-    };
-
-    (0.75 * overlap + 0.15 * density + alias_hit + path_hit).min(1.0)
+#[derive(Debug, Deserialize)]
+struct LlmSemanticPayload {
+    summary: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    key_concepts: Vec<String>,
+    #[serde(default)]
+    chunk_summaries: Vec<LlmChunkSummary>,
 }
 
-fn snippet_for(
-    record: &kb_core::domain::IndexRecord,
-    question_tokens: &BTreeSet<String>,
+#[derive(Debug, Deserialize)]
+struct LlmChunkSummary {
+    chunk_id: String,
+    summary: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LlmSemanticAnalysisPayload {
+    summary: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    key_concepts: Vec<String>,
+    #[serde(default)]
+    chunk_insights: Vec<LlmChunkInsight>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LlmChunkInsight {
+    chunk_id: String,
+    #[serde(default)]
+    facts: Vec<String>,
+}
+
+fn build_chat_completion_endpoint(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else {
+        format!("{}/chat/completions", trimmed)
+    }
+}
+
+fn build_semantic_prompt_single_step(
+    request: &SemanticExtractRequest,
+    truncated_text: &str,
+    planned_chunks: &[KnowledgeChunk],
 ) -> String {
-    if let Some(excerpt) = record.excerpt.as_deref() {
-        let trimmed = excerpt.trim();
-        if !trimmed.is_empty() {
-            return stable_excerpt_window(trimmed, question_tokens, 180);
-        }
-    }
-    // excerpt 缺失时使用可解释的兜底文案，避免返回空字符串。
-    format!("Matched {} at {}", record.alias, record.path)
-}
-
-fn snippet_from_chunk(
-    entry: &kb_core::KnowledgeEntry,
-    chunk: &kb_core::KnowledgeChunk,
-    question_tokens: &BTreeSet<String>,
-) -> String {
-    let base = if chunk.preview.trim().is_empty() {
-        if chunk.summary.trim().is_empty() {
-            entry.summary.as_str()
-        } else {
-            chunk.summary.as_str()
-        }
-    } else {
-        chunk.preview.as_str()
-    };
-    if base.trim().is_empty() {
-        return format!("Matched {} at {}", entry.record_id, entry.path);
-    }
-    stable_excerpt_window(base.trim(), question_tokens, 180)
-}
-
-fn score_search_hit(
-    hit: &kb_core::SearchHit,
-    normalized_question: &str,
-    question_tokens: &BTreeSet<String>,
-) -> f64 {
-    let matched = question_tokens
+    let chunk_descriptors = planned_chunks
         .iter()
-        .filter(|token| {
-            hit.matched_terms.iter().any(|term| {
-                term == *token
-                    || term.contains(token.as_str())
-                    || token.contains(term.as_str())
-                    || hit.record_id.to_ascii_lowercase().contains(token.as_str())
+        .map(|chunk| {
+            json!({
+                "chunk_id": chunk.chunk_id,
+                "preview": chunk.preview
             })
         })
-        .count();
-    let overlap = if question_tokens.is_empty() {
-        0.0
-    } else {
-        matched as f64 / question_tokens.len() as f64
-    };
-    let alias_hit = if !normalized_question.trim().is_empty()
-        && hit
-            .record_id
-            .to_ascii_lowercase()
-            .contains(normalized_question)
-    {
-        0.05
-    } else {
-        0.0
-    };
-    (0.7 * hit.score + 0.25 * overlap + alias_hit).min(1.0)
-}
+        .collect::<Vec<_>>();
+    let chunk_json =
+        serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
 
-fn score_knowledge_chunk(
-    entry: &kb_core::KnowledgeEntry,
-    chunk: &kb_core::KnowledgeChunk,
-    normalized_question: &str,
-    question_tokens: &BTreeSet<String>,
-) -> f64 {
-    let doc = format!(
-        "{} {} {} {} {}",
-        entry.record_id,
-        entry.summary,
-        entry.tags.join(" "),
-        entry.key_concepts.join(" "),
-        chunk.summary
+    format!(
+        "Task: build semantic memory for one source file.\n\
+Record ID: {record_id}\n\
+Path: {path}\n\
+\n\
+SOURCE_TEXT:\n\
+{source_text}\n\
+\n\
+CHUNKS:\n\
+{chunk_json}\n\
+\n\
+Return JSON with exact keys:\n\
+{{\n\
+  \"summary\": \"one concise summary\",\n\
+  \"tags\": [\"topic\", \"keyword\"],\n\
+  \"key_concepts\": [\"Concept A\", \"Concept B\"],\n\
+  \"chunk_summaries\": [{{\"chunk_id\": \"<id>\", \"summary\": \"short summary\"}}]\n\
+}}\n\
+Rules:\n\
+- Output JSON only, no markdown.\n\
+- Keep tags lowercase.\n\
+- chunk_summaries must only reference chunk_id from CHUNKS.\n\
+- Keep each chunk summary short and factual.",
+        record_id = request.record_id,
+        path = request.path,
+        source_text = truncated_text,
+        chunk_json = chunk_json
     )
-    .to_ascii_lowercase();
-    let doc_tokens = normalized_tokens(&doc);
-    let matched = question_tokens
-        .iter()
-        .filter(|q| {
-            doc_tokens
-                .iter()
-                .any(|d| d == *q || d.contains(q.as_str()) || q.contains(d.as_str()))
-        })
-        .count();
-    if matched == 0 {
-        return 0.0;
-    }
-    let overlap = matched as f64 / question_tokens.len().max(1) as f64;
-    let density = matched as f64 / doc_tokens.len().max(1) as f64;
-    let alias_hit = if !normalized_question.trim().is_empty()
-        && entry
-            .record_id
-            .to_ascii_lowercase()
-            .contains(normalized_question)
-    {
-        0.05
-    } else {
-        0.0
-    };
-    (0.8 * overlap + 0.15 * density + alias_hit).min(1.0)
 }
 
-fn score_graph_edge(
-    summary: &str,
-    normalized_question: &str,
-    question_tokens: &BTreeSet<String>,
-) -> f64 {
-    let lowered = summary.to_ascii_lowercase();
-    let doc_tokens = normalized_tokens(&lowered);
-    let matched = question_tokens
-        .iter()
-        .filter(|q| {
-            doc_tokens
-                .iter()
-                .any(|d| d == *q || d.contains(q.as_str()) || q.contains(d.as_str()))
-        })
-        .count();
-    if matched == 0 {
-        return 0.0;
-    }
-    let overlap = matched as f64 / question_tokens.len().max(1) as f64;
-    let direct = if !normalized_question.trim().is_empty() && lowered.contains(normalized_question)
-    {
-        0.1
-    } else {
-        0.0
-    };
-    (0.85 * overlap + direct).min(1.0)
-}
-
-fn stable_excerpt_window(
-    text: &str,
-    question_tokens: &BTreeSet<String>,
-    max_chars: usize,
+fn build_semantic_prompt_analysis(
+    request: &SemanticExtractRequest,
+    truncated_text: &str,
+    planned_chunks: &[KnowledgeChunk],
 ) -> String {
-    // 按 grapheme cluster 切片，避免把 emoji/组合字符截断成乱码。
-    let grapheme_starts: Vec<usize> = UnicodeSegmentation::grapheme_indices(text, true)
-        .map(|(idx, _)| idx)
-        .collect();
-    let grapheme_len = grapheme_starts.len();
-    if grapheme_len <= max_chars {
-        return text.to_string();
+    let chunk_descriptors = planned_chunks
+        .iter()
+        .map(|chunk| {
+            json!({
+                "chunk_id": chunk.chunk_id,
+                "preview": chunk.preview
+            })
+        })
+        .collect::<Vec<_>>();
+    let chunk_json =
+        serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
+
+    format!(
+        "Step 1 of 2: analyze one source file for semantic memory compilation.\n\
+Record ID: {record_id}\n\
+Path: {path}\n\
+\n\
+SOURCE_TEXT:\n\
+{source_text}\n\
+\n\
+CHUNKS:\n\
+{chunk_json}\n\
+\n\
+Return JSON with exact keys:\n\
+{{\n\
+  \"summary\": \"one concise source summary\",\n\
+  \"tags\": [\"topic\", \"keyword\"],\n\
+  \"key_concepts\": [\"Concept A\", \"Concept B\"],\n\
+  \"chunk_insights\": [{{\"chunk_id\": \"<id>\", \"facts\": [\"fact1\", \"fact2\"]}}]\n\
+}}\n\
+Rules:\n\
+- Output JSON only.\n\
+- Keep tags lowercase.\n\
+- chunk_insights must only reference chunk_id from CHUNKS.\n\
+- Facts should be short and factual.",
+        record_id = request.record_id,
+        path = request.path,
+        source_text = truncated_text,
+        chunk_json = chunk_json
+    )
+}
+
+fn build_semantic_prompt_generation(
+    request: &SemanticExtractRequest,
+    planned_chunks: &[KnowledgeChunk],
+    analysis_value: &Value,
+) -> String {
+    let chunk_descriptors = planned_chunks
+        .iter()
+        .map(|chunk| {
+            json!({
+                "chunk_id": chunk.chunk_id,
+                "preview": chunk.preview
+            })
+        })
+        .collect::<Vec<_>>();
+    let chunk_json =
+        serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
+    let analysis_json =
+        serde_json::to_string_pretty(analysis_value).unwrap_or_else(|_| "{}".to_string());
+
+    format!(
+        "Step 2 of 2: generate compile-ready semantic memory from analysis.\n\
+Record ID: {record_id}\n\
+Path: {path}\n\
+\n\
+CHUNKS:\n\
+{chunk_json}\n\
+\n\
+ANALYSIS_JSON:\n\
+{analysis_json}\n\
+\n\
+Return JSON with exact keys:\n\
+{{\n\
+  \"summary\": \"one concise summary\",\n\
+  \"tags\": [\"topic\", \"keyword\"],\n\
+  \"key_concepts\": [\"Concept A\", \"Concept B\"],\n\
+  \"chunk_summaries\": [{{\"chunk_id\": \"<id>\", \"summary\": \"short summary\"}}]\n\
+}}\n\
+Rules:\n\
+- Output JSON only, no markdown.\n\
+- Keep tags lowercase.\n\
+- chunk_summaries must only reference chunk_id from CHUNKS.\n\
+- Keep each chunk summary short and factual.",
+        record_id = request.record_id,
+        path = request.path,
+        chunk_json = chunk_json,
+        analysis_json = analysis_json
+    )
+}
+
+fn extract_chat_message_content(response: &Value) -> Option<String> {
+    let message_content = response.pointer("/choices/0/message/content")?;
+    if let Some(text) = message_content.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(parts) = message_content.as_array() {
+        let joined = parts
+            .iter()
+            .filter_map(|item| item.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+        if !joined.trim().is_empty() {
+            return Some(joined);
+        }
+    }
+    None
+}
+
+fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        return Ok(value);
     }
 
-    let mut hit_diff = vec![0i32; grapheme_len + 1];
-    let lowered = text.to_ascii_lowercase();
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            if end > start {
+                let candidate = &text[start..=end];
+                if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+                    return Ok(value);
+                }
+            }
+        }
+    }
 
-    for token in question_tokens {
-        if token.is_empty() {
+    Err("llm content is not a valid json object".to_string())
+}
+
+fn supports_max_tokens_fallback(error_text: &str) -> bool {
+    let lowered = error_text.to_ascii_lowercase();
+    lowered.contains("max_completion_tokens")
+        || lowered.contains("unknown field")
+        || lowered.contains("unrecognized field")
+        || lowered.contains("invalid request")
+        || lowered.contains("unexpected field")
+}
+
+fn first_non_empty_list_item(items: &[String]) -> Option<&str> {
+    items
+        .iter()
+        .map(|item| item.trim())
+        .find(|item| !item.is_empty())
+}
+
+fn truncate_by_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    input.chars().take(max_chars).collect::<String>()
+}
+
+fn plan_semantic_chunks(record_id: &str, text: &str, max_chunks: usize) -> Vec<KnowledgeChunk> {
+    if max_chunks == 0 || text.trim().is_empty() {
+        return vec![];
+    }
+
+    let mut chunks = Vec::new();
+    let mut cursor = 0usize;
+    for raw_part in text.split("\n\n") {
+        if chunks.len() >= max_chunks {
+            break;
+        }
+
+        let local_trimmed = raw_part.trim();
+        if local_trimmed.is_empty() {
+            cursor = cursor.saturating_add(raw_part.len() + 2);
             continue;
         }
-        let mut search_from = 0usize;
-        while let Some(pos) = lowered[search_from..].find(token) {
-            let start_b = search_from + pos;
-            let end_b = start_b + token.len();
-            let start_g = grapheme_floor_index(&grapheme_starts, start_b);
-            let end_g = grapheme_end_index(&grapheme_starts, end_b, text.len());
-            if start_g < end_g && end_g <= grapheme_len {
-                hit_diff[start_g] += 1;
-                hit_diff[end_g] -= 1;
-            }
-            search_from = end_b;
-            if search_from >= lowered.len() {
-                break;
-            }
+
+        let local_offset = raw_part.find(local_trimmed).unwrap_or(0);
+        let start = cursor.saturating_add(local_offset);
+        let end = start.saturating_add(local_trimmed.len()).min(text.len());
+        let chunk_index = chunks.len() + 1;
+
+        chunks.push(KnowledgeChunk {
+            chunk_id: format!("{}:{:04}", record_id, chunk_index),
+            byte_range: [start as u64, end as u64],
+            content_signature: format!("fnv1a64:{:016x}", fnv1a64_local(local_trimmed.as_bytes())),
+            summary: stable_truncate(local_trimmed, 120),
+            preview: stable_truncate(local_trimmed, 200),
+        });
+
+        cursor = cursor.saturating_add(raw_part.len() + 2);
+    }
+
+    if chunks.is_empty() {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            chunks.push(KnowledgeChunk {
+                chunk_id: format!("{}:0001", record_id),
+                byte_range: [0, trimmed.len() as u64],
+                content_signature: format!("fnv1a64:{:016x}", fnv1a64_local(trimmed.as_bytes())),
+                summary: stable_truncate(trimmed, 120),
+                preview: stable_truncate(trimmed, 200),
+            });
         }
     }
 
-    // 用差分 + 前缀和做滑窗打分，避免每个窗口重复 O(window) 求和。
-    let mut token_hits = vec![0usize; grapheme_len];
-    let mut running = 0i32;
-    for i in 0..grapheme_len {
-        running += hit_diff[i];
-        token_hits[i] = running.max(0) as usize;
-    }
-    let mut prefix_hits = vec![0usize; grapheme_len + 1];
-    for i in 0..grapheme_len {
-        prefix_hits[i + 1] = prefix_hits[i] + token_hits[i];
-    }
+    chunks
+}
 
-    let mut best_start = 0usize;
-    let mut best_end = max_chars.min(grapheme_len);
-    let mut best_score = 0usize;
-    for start in 0..=(grapheme_len - max_chars) {
-        let end = start + max_chars;
-        let score = prefix_hits[end] - prefix_hits[start];
-        if score > best_score
-            || (score == best_score
-                && (start < best_start || (start == best_start && end < best_end)))
-        {
-            best_score = score;
-            best_start = start;
-            best_end = end;
+fn normalize_text_field(input: Option<String>) -> Option<String> {
+    input.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
         }
-    }
+    })
+}
 
-    if best_score == 0 {
-        // 无命中时走稳定截断，确保输出长度和展示行为一致。
-        return stable_truncate(text, max_chars);
-    }
-
-    let start = best_start;
-    let end = best_end.min(grapheme_len);
-
-    let start_b = grapheme_starts[start];
-    let end_b = if end < grapheme_len {
-        grapheme_starts[end]
-    } else {
-        text.len()
-    };
-
-    let mut out = text[start_b..end_b].to_string();
-    if start > 0 {
-        out = format!("...{}", out);
-    }
-    if end < grapheme_len {
-        out.push_str("...");
+fn normalize_semantic_list(values: Vec<String>, limit: usize, lowercase: bool) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for raw in values {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let canonical = if lowercase {
+            trimmed.to_ascii_lowercase()
+        } else {
+            trimmed.to_string()
+        };
+        if seen.insert(canonical.clone()) {
+            out.push(canonical);
+        }
+        if out.len() >= limit {
+            break;
+        }
     }
     out
+}
+
+fn first_non_empty_line_local(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToString::to_string)
+}
+
+fn fnv1a64_local(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn stable_truncate(text: &str, max_chars: usize) -> String {
@@ -890,27 +739,10 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
     out
 }
 
-fn grapheme_floor_index(starts: &[usize], byte_index: usize) -> usize {
-    starts
-        .partition_point(|&s| s <= byte_index)
-        .saturating_sub(1)
-}
-
-fn grapheme_end_index(starts: &[usize], byte_end: usize, text_len: usize) -> usize {
-    if byte_end >= text_len {
-        return starts.len();
-    }
-    if byte_end == 0 {
-        return 0;
-    }
-    let last_byte = byte_end - 1;
-    starts.partition_point(|&s| s <= last_byte)
-}
-
 pub struct DisabledAnswerEngine;
 
 impl AnswerEngine for DisabledAnswerEngine {
-    // 当前阶段不接外部 LLM，只返回元信息占位。
+    // 瑜版挸澧犻梼鑸殿唽娑撳秵甯存径鏍劥 LLM閿涘苯褰ф潻鏂挎礀閸忓啩淇婇幁顖氬窗娴ｅ秲鈧?
     fn meta(&self, _question: &str, _contexts: &[RetrievedContext]) -> Result<AnswerMeta, String> {
         Ok(AnswerMeta {
             engine_status: "disabled".to_string(),

@@ -99,6 +99,11 @@ fn init_creates_kbignore() {
     assert!(ignore_raw.contains("./kb.md"));
     assert!(ignore_raw.contains("./.kb/refs.json"));
     assert!(dir.join(".kb/raw").exists());
+    assert!(dir.join(".kb/.env.template").exists());
+    let env_template =
+        fs::read_to_string(dir.join(".kb/.env.template")).expect("read llm env template");
+    assert!(env_template.contains("KB_LLM_SEMANTIC_FLOW=two_step"));
+    assert!(env_template.contains("KB_LLM_RETRY_MAX_ATTEMPTS=3"));
 }
 
 #[test]
@@ -838,6 +843,50 @@ fn update_default_mode_succeeds_with_progressive_warning() {
             .unwrap_or(0),
         0
     );
+}
+
+#[test]
+fn update_semantic_enabled_without_key_falls_back_with_warning() {
+    let dir = unique_temp_dir("update-llm-semantic-missing-key");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json_with_env(
+        &["update"],
+        &dir,
+        &[
+            ("KB_LLM_ENABLE_SEMANTIC", "1"),
+            ("KB_LLM_SEMANTIC_FLOW", "single-step"),
+            ("KB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS", "333"),
+            ("KB_LLM_RETRY_MAX_ATTEMPTS", "5"),
+            ("KB_LLM_RETRY_BACKOFF_MS", "900"),
+        ],
+    );
+    assert!(ok);
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["semantic_extractor"]["mode"], "rule");
+    assert_eq!(
+        body["data"]["semantic_extractor"]["semantic_flow"],
+        "single_step"
+    );
+    assert_eq!(
+        body["data"]["semantic_extractor"]["analysis_max_output_tokens"],
+        333
+    );
+    assert_eq!(body["data"]["semantic_extractor"]["retry_max_attempts"], 5);
+    assert_eq!(body["data"]["semantic_extractor"]["retry_backoff_ms"], 900);
+    assert_eq!(body["data"]["layer_status"]["l2_semantic"], "warning");
+
+    let warnings = body["data"]["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["code"] == "W-L2-LLM-CONFIG-MISSING"));
 }
 
 #[test]
