@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
 use kb_core::{SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -21,6 +21,9 @@ pub struct LlmSemanticConfig {
     pub max_chunks: usize,
     pub retry_max_attempts: usize,
     pub retry_backoff_ms: u64,
+    pub agent_loop_max_rounds: usize,
+    pub agent_reflection_enabled: bool,
+    pub agent_min_chunk_coverage: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -172,11 +175,7 @@ impl LlmSemanticExtractor {
             &user_prompt,
             self.config.max_output_tokens,
         )?;
-        let content = extract_chat_message_content(&response)
-            .ok_or_else(|| "missing choices[0].message.content in llm response".to_string())?;
-        let payload_value = parse_json_object_from_text(&content)?;
-        let payload = serde_json::from_value::<LlmSemanticPayload>(payload_value)
-            .map_err(|err| format!("invalid llm semantic payload: {}", err))?;
+        let payload = decode_semantic_payload(&response, "llm response")?;
         Ok(LlmSemanticExecution {
             payload,
             analysis: None,
@@ -213,18 +212,55 @@ impl LlmSemanticExtractor {
             &generation_prompt,
             self.config.max_output_tokens,
         )?;
-        let generation_content =
-            extract_chat_message_content(&generation_response).ok_or_else(|| {
-                "missing choices[0].message.content in generation response".to_string()
-            })?;
-        let generation_value = parse_json_object_from_text(&generation_content)?;
-        let payload = serde_json::from_value::<LlmSemanticPayload>(generation_value)
-            .map_err(|err| format!("invalid llm semantic payload: {}", err))?;
+        let payload = decode_semantic_payload(&generation_response, "generation response")?;
 
         Ok(LlmSemanticExecution {
             payload,
             analysis: Some(analysis_payload),
         })
+    }
+
+    fn run_reflection_loop(
+        &self,
+        api_key: &str,
+        request: &SemanticExtractRequest,
+        planned_chunks: &[KnowledgeChunk],
+        mut execution: LlmSemanticExecution,
+    ) -> Result<LlmSemanticExecution, String> {
+        let max_rounds = self.config.agent_loop_max_rounds.clamp(1, 4);
+        if !self.config.agent_reflection_enabled || max_rounds <= 1 {
+            return Ok(execution);
+        }
+
+        let min_coverage = self.config.agent_min_chunk_coverage.clamp(0.0, 1.0);
+        for round in 2..=max_rounds {
+            let coverage = calculate_chunk_coverage(&execution.payload, planned_chunks);
+            if is_payload_good_enough(&execution.payload, coverage, min_coverage) {
+                break;
+            }
+
+            let missing_chunk_ids = collect_missing_chunk_ids(&execution.payload, planned_chunks);
+            let user_prompt = build_semantic_prompt_reflection(
+                request,
+                planned_chunks,
+                &execution.payload,
+                execution.analysis.as_ref(),
+                coverage,
+                min_coverage,
+                round,
+                &missing_chunk_ids,
+            );
+            let reflection_response = self.call_openai_chat_with_retry(
+                api_key,
+                "You are a semantic memory verifier and repair engine. Return JSON only.",
+                &user_prompt,
+                self.config.max_output_tokens,
+            )?;
+            let reflected = decode_semantic_payload(&reflection_response, "reflection response")?;
+            execution.payload = merge_semantic_payloads(&execution.payload, &reflected);
+        }
+
+        Ok(execution)
     }
 }
 
@@ -255,6 +291,7 @@ impl SemanticExtractor for LlmSemanticExtractor {
         } else {
             self.extract_two_step(api_key, request, &truncated_text, &chunks)?
         };
+        let execution = self.run_reflection_loop(api_key, request, &chunks, execution)?;
         let LlmSemanticExecution { payload, analysis } = execution;
         let LlmSemanticPayload {
             summary: payload_summary,
@@ -335,7 +372,7 @@ struct LlmSemanticExecution {
     analysis: Option<LlmSemanticAnalysisPayload>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct LlmSemanticPayload {
     summary: Option<String>,
     #[serde(default)]
@@ -346,13 +383,13 @@ struct LlmSemanticPayload {
     chunk_summaries: Vec<LlmChunkSummary>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct LlmChunkSummary {
     chunk_id: String,
     summary: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct LlmSemanticAnalysisPayload {
     summary: Option<String>,
     #[serde(default)]
@@ -363,7 +400,7 @@ struct LlmSemanticAnalysisPayload {
     chunk_insights: Vec<LlmChunkInsight>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct LlmChunkInsight {
     chunk_id: String,
     #[serde(default)]
@@ -520,6 +557,195 @@ Rules:\n\
         chunk_json = chunk_json,
         analysis_json = analysis_json
     )
+}
+
+fn build_semantic_prompt_reflection(
+    request: &SemanticExtractRequest,
+    planned_chunks: &[KnowledgeChunk],
+    prior_payload: &LlmSemanticPayload,
+    analysis_payload: Option<&LlmSemanticAnalysisPayload>,
+    current_coverage: f64,
+    min_coverage: f64,
+    round: usize,
+    missing_chunk_ids: &[String],
+) -> String {
+    let chunk_descriptors = planned_chunks
+        .iter()
+        .map(|chunk| {
+            json!({
+                "chunk_id": chunk.chunk_id,
+                "preview": chunk.preview
+            })
+        })
+        .collect::<Vec<_>>();
+    let chunk_json =
+        serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
+    let prior_payload_json =
+        serde_json::to_string_pretty(prior_payload).unwrap_or_else(|_| "{}".to_string());
+    let analysis_json = analysis_payload
+        .and_then(|analysis| serde_json::to_string_pretty(analysis).ok())
+        .unwrap_or_else(|| "null".to_string());
+    let missing_json =
+        serde_json::to_string_pretty(missing_chunk_ids).unwrap_or_else(|_| "[]".to_string());
+
+    format!(
+        "Agent reflection round {round}: verify and repair semantic memory output.\n\
+Record ID: {record_id}\n\
+Path: {path}\n\
+Current chunk coverage: {current_coverage:.3}\n\
+Required minimum coverage: {min_coverage:.3}\n\
+\n\
+CHUNKS:\n\
+{chunk_json}\n\
+\n\
+PREVIOUS_OUTPUT:\n\
+{prior_payload_json}\n\
+\n\
+ANALYSIS_JSON:\n\
+{analysis_json}\n\
+\n\
+MISSING_CHUNK_IDS:\n\
+{missing_json}\n\
+\n\
+Return JSON with exact keys:\n\
+{{\n\
+  \"summary\": \"one concise summary\",\n\
+  \"tags\": [\"topic\", \"keyword\"],\n\
+  \"key_concepts\": [\"Concept A\", \"Concept B\"],\n\
+  \"chunk_summaries\": [{{\"chunk_id\": \"<id>\", \"summary\": \"short summary\"}}]\n\
+}}\n\
+Rules:\n\
+- Output JSON only.\n\
+- Keep tags lowercase.\n\
+- chunk_summaries must only reference chunk_id from CHUNKS.\n\
+- Prioritize filling missing chunk coverage first.\n\
+- Keep each chunk summary short and factual.",
+        round = round,
+        record_id = request.record_id,
+        path = request.path,
+        current_coverage = current_coverage,
+        min_coverage = min_coverage,
+        chunk_json = chunk_json,
+        prior_payload_json = prior_payload_json,
+        analysis_json = analysis_json,
+        missing_json = missing_json
+    )
+}
+
+fn decode_semantic_payload(response: &Value, label: &str) -> Result<LlmSemanticPayload, String> {
+    let content = extract_chat_message_content(response)
+        .ok_or_else(|| format!("missing choices[0].message.content in {}", label))?;
+    let payload_value = parse_json_object_from_text(&content)?;
+    serde_json::from_value::<LlmSemanticPayload>(payload_value)
+        .map_err(|err| format!("invalid llm semantic payload from {}: {}", label, err))
+}
+
+fn merge_semantic_payloads(
+    prior: &LlmSemanticPayload,
+    patch: &LlmSemanticPayload,
+) -> LlmSemanticPayload {
+    let summary = normalize_text_field(patch.summary.clone())
+        .or_else(|| normalize_text_field(prior.summary.clone()));
+
+    let tags = if patch.tags.is_empty() {
+        prior.tags.clone()
+    } else {
+        normalize_semantic_list(
+            prior
+                .tags
+                .iter()
+                .chain(patch.tags.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+            16,
+            true,
+        )
+    };
+    let key_concepts = if patch.key_concepts.is_empty() {
+        prior.key_concepts.clone()
+    } else {
+        normalize_semantic_list(
+            prior
+                .key_concepts
+                .iter()
+                .chain(patch.key_concepts.iter())
+                .cloned()
+                .collect::<Vec<_>>(),
+            16,
+            false,
+        )
+    };
+
+    let mut summaries = BTreeMap::<String, String>::new();
+    for item in &prior.chunk_summaries {
+        let chunk_id = item.chunk_id.trim();
+        let summary_text = item.summary.trim();
+        if !chunk_id.is_empty() && !summary_text.is_empty() {
+            summaries.insert(chunk_id.to_string(), summary_text.to_string());
+        }
+    }
+    for item in &patch.chunk_summaries {
+        let chunk_id = item.chunk_id.trim();
+        let summary_text = item.summary.trim();
+        if !chunk_id.is_empty() && !summary_text.is_empty() {
+            summaries.insert(chunk_id.to_string(), summary_text.to_string());
+        }
+    }
+    let chunk_summaries = summaries
+        .into_iter()
+        .map(|(chunk_id, summary_text)| LlmChunkSummary {
+            chunk_id,
+            summary: summary_text,
+        })
+        .collect::<Vec<_>>();
+
+    LlmSemanticPayload {
+        summary,
+        tags,
+        key_concepts,
+        chunk_summaries,
+    }
+}
+
+fn calculate_chunk_coverage(
+    payload: &LlmSemanticPayload,
+    planned_chunks: &[KnowledgeChunk],
+) -> f64 {
+    if planned_chunks.is_empty() {
+        return 1.0;
+    }
+    let allowed_ids = planned_chunks
+        .iter()
+        .map(|chunk| chunk.chunk_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let covered = payload
+        .chunk_summaries
+        .iter()
+        .map(|item| item.chunk_id.trim())
+        .filter(|chunk_id| allowed_ids.contains(chunk_id))
+        .collect::<BTreeSet<_>>()
+        .len();
+    covered as f64 / planned_chunks.len() as f64
+}
+
+fn collect_missing_chunk_ids(
+    payload: &LlmSemanticPayload,
+    planned_chunks: &[KnowledgeChunk],
+) -> Vec<String> {
+    let covered = payload
+        .chunk_summaries
+        .iter()
+        .map(|item| item.chunk_id.trim())
+        .collect::<BTreeSet<_>>();
+    planned_chunks
+        .iter()
+        .filter(|chunk| !covered.contains(chunk.chunk_id.as_str()))
+        .map(|chunk| chunk.chunk_id.clone())
+        .collect()
+}
+
+fn is_payload_good_enough(payload: &LlmSemanticPayload, coverage: f64, min_coverage: f64) -> bool {
+    normalize_text_field(payload.summary.clone()).is_some() && coverage >= min_coverage
 }
 
 fn extract_chat_message_content(response: &Value) -> Option<String> {

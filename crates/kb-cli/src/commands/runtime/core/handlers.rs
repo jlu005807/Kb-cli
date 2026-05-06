@@ -722,6 +722,9 @@ pub(crate) fn run_update(
             max_chunks: llm_runtime.max_chunks,
             retry_max_attempts: llm_runtime.retry_max_attempts,
             retry_backoff_ms: llm_runtime.retry_backoff_ms,
+            agent_loop_max_rounds: llm_runtime.agent_loop_max_rounds,
+            agent_reflection_enabled: llm_runtime.agent_reflection_enabled,
+            agent_min_chunk_coverage: llm_runtime.agent_min_chunk_coverage,
         }))
     } else {
         Box::new(RuleBasedSemanticExtractor::new())
@@ -976,7 +979,10 @@ pub(crate) fn run_update(
             "max_chunks": llm_runtime.max_chunks,
             "timeout_secs": llm_runtime.timeout_secs,
             "retry_max_attempts": llm_runtime.retry_max_attempts,
-            "retry_backoff_ms": llm_runtime.retry_backoff_ms
+            "retry_backoff_ms": llm_runtime.retry_backoff_ms,
+            "agent_loop_max_rounds": llm_runtime.agent_loop_max_rounds,
+            "agent_reflection_enabled": llm_runtime.agent_reflection_enabled,
+            "agent_min_chunk_coverage": llm_runtime.agent_min_chunk_coverage
         },
         "warnings": warning_items,
         "errors": [],

@@ -136,21 +136,112 @@ node tests/tools/validate-doc-fixture-diff.js
 
 `kb update` 的 L2 语义流程：
 
-1. `kb-cli` 解析 `.kb/.env` / `.kb/config.json` / 环境变量得到 LLM 运行时配置。
-2. 若 `KB_LLM_ENABLE_SEMANTIC=1` 且存在 `KB_LLM_KEY`，装配 `kb-llm::LlmSemanticExtractor`。
-3. 通过 `kb-core::compile_l2` 对每个文件执行语义提取（支持增量复用）。
-4. 写入 `.kb/knowledge.json`，后续继续编译 L3/L4/L5。
+1. `kb-cli` 调用 `kb-llm::config` 解析 LLM 运行时配置（独立模块）。
+2. 配置优先级固定为：`进程环境变量 > 项目配置(.kb/config.json) > 全局配置($KB_GLOBAL_CONFIG 或 ~/.kb-cli/config.json)`。
+3. 若 `KB_LLM_ENABLE_SEMANTIC=1` 且存在 `KB_LLM_KEY`，装配 `kb-llm::LlmSemanticExtractor`。
+4. 通过 `kb-core::compile_l2` 对每个文件执行语义提取（支持增量复用）。
+5. 写入 `.kb/knowledge.json`，后续继续编译 L3/L4/L5。
 
 支持两种语义编译模式：
 
 - `KB_LLM_SEMANTIC_FLOW=two_step`（推荐）：分析 -> 生成。
 - `KB_LLM_SEMANTIC_FLOW=single_step`：单请求直出结构化记忆。
 
+并支持轻量级 agent 式反思修复循环（参考 GenericAgent 的最小循环思想）：
+
+- `KB_LLM_AGENT_LOOP_MAX_ROUNDS`：最多反思轮次（1-4）。
+- `KB_LLM_AGENT_REFLECTION_ENABLED`：是否开启反思修复。
+- `KB_LLM_AGENT_MIN_CHUNK_COVERAGE`：最小 chunk 覆盖率阈值（0.0-1.0）。
+
 并内置 provider 兼容与稳定性策略：
 
 - OpenAI 标准 Chat Completions 请求格式。
 - `max_completion_tokens` 与 `max_tokens` 回退兼容。
 - 可配置重试与退避：`KB_LLM_RETRY_MAX_ATTEMPTS`、`KB_LLM_RETRY_BACKOFF_MS`。
+
+## LLM 配置与测试实操
+
+### 1) 项目级配置（推荐）
+
+在知识库根目录创建 `./.kb/config.json`：
+
+```json
+{
+  "llm": {
+    "enable_semantic": true,
+    "key": "YOUR_OPENAI_KEY",
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1",
+    "semantic_flow": "two_step",
+    "timeout_secs": 60,
+    "temperature": 0.1,
+    "max_output_tokens": 900,
+    "analysis_max_output_tokens": 700,
+    "max_input_chars": 12000,
+    "max_chunks": 12,
+    "retry_max_attempts": 3,
+    "retry_backoff_ms": 600,
+    "agent_loop_max_rounds": 2,
+    "agent_reflection_enabled": true,
+    "agent_min_chunk_coverage": 0.6
+  }
+}
+```
+
+### 2) 全局配置（可选）
+
+默认路径为 `~/.kb-cli/config.json`，或用环境变量 `KB_GLOBAL_CONFIG` 指向自定义路径。
+
+```json
+{
+  "llm": {
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1"
+  }
+}
+```
+
+### 3) 环境变量覆盖（最高优先级）
+
+PowerShell 示例：
+
+```powershell
+$env:KB_LLM_KEY="YOUR_OPENAI_KEY"
+$env:KB_LLM_MODEL="gpt-4o-mini"
+$env:KB_LLM_BASE_URL="https://api.openai.com/v1"
+$env:KB_LLM_ENABLE_SEMANTIC="1"
+```
+
+当三层同时存在时，最终生效顺序是：  
+`环境变量 > 项目 .kb/config.json > 全局 config.json`。
+
+### 4) 多文件记忆编译验证
+
+```bash
+# 1. 初始化
+kb init demo
+
+# 2. 添加多文件
+kb add ./docs/a.md a
+kb add ./docs/b.md b
+kb add ./docs/c.md c
+
+# 3. 触发编译
+kb update
+```
+
+验证点：
+
+- `kb update` 返回 `semantic_extractor.mode = "llm"`。
+- 输出中包含 `semantic_flow`、`agent_loop_max_rounds`、`agent_min_chunk_coverage` 等字段。
+- 产物文件存在：`./.kb/knowledge.json`、`./.kb/search.json`、`./.kb/graph.json`、`./.kb/wiki/`。
+
+### 5) 本仓库开发测试命令
+
+```bash
+cargo fmt --all
+cargo test --workspace
+```
 
 ## 文档
 
