@@ -14,6 +14,7 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     let cwd = std::env::current_dir().map_err(|_| write_config_error())?;
     let kb_md = cwd.join("kb.md");
     let already_initialized = kb_md.exists() && cwd.join(".kb").exists();
+    let global_config_path = resolve_global_config_path();
 
     let plan =
         plan_init(project_name(&cwd), name, already_initialized, force).map_err(
@@ -30,15 +31,24 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     fs::write(cwd.join(KBIGNORE_REL), DEFAULT_KBIGNORE_CONTENT).map_err(|_| write_config_error())?;
     fs::write(cwd.join(".kb/.env.template"), DEFAULT_LLM_ENV_TEMPLATE)
         .map_err(|_| write_config_error())?;
+    fs::write(cwd.join(".kb/config.json"), DEFAULT_PROJECT_LLM_CONFIG)
+        .map_err(|_| write_config_error())?;
     fs::write(&kb_md, "# raw\n").map_err(|_| write_config_error())?;
     save_state(&cwd, &State::default())?;
     save_registry(&cwd, &RegistryState::default())?;
-    let _ = register_kb_root(&cwd);
+    let global_register_error = register_kb_root(&cwd).err();
+    let global_config_registered = global_register_error.is_none();
 
     let mut data = json!({
         "project": plan.project,
-        "path": "./kb.md"
+        "path": "./kb.md",
+        "project_config_path": "./.kb/config.json",
+        "global_config_path": global_config_path.to_string_lossy(),
+        "global_config_registered": global_config_registered
     });
+    if let Some(message) = global_register_error.as_ref() {
+        data["global_config_error"] = Value::String(message.clone());
+    }
     if force {
         data["overwritten"] = Value::Bool(plan.overwritten);
     }
@@ -50,6 +60,20 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     text.push_str("ignore_file: ./.kb/.kbignore\n");
     text.push_str("raw_dir: ./.kb/raw\n");
     text.push_str("llm_env_template: ./.kb/.env.template\n");
+    text.push_str("llm_project_config: ./.kb/config.json\n");
+    let _ = writeln!(
+        text,
+        "llm_global_config: {}",
+        global_config_path.to_string_lossy()
+    );
+    let _ = writeln!(
+        text,
+        "llm_global_config_registered: {}",
+        global_config_registered
+    );
+    if let Some(message) = global_register_error {
+        let _ = writeln!(text, "llm_global_config_error: {}", message);
+    }
     if force {
         let _ = writeln!(
             text,

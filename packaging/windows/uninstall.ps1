@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA "kb-cli\bin"),
+    [string]$InstallDir = (Join-Path $(if ($env:USERPROFILE) { $env:USERPROFILE } else { $env:LOCALAPPDATA }) ".kb-cli\bin"),
     [string]$BinaryName = "kb.exe"
 )
 
@@ -34,8 +34,13 @@ $pathItems = @(
         }
 )
 $newPath = [string]::Join(";", $pathItems)
-[Environment]::SetEnvironmentVariable("Path", $newPath, "User")
-Write-Step "Removed install directory from user PATH"
+try {
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Step "Removed install directory from user PATH"
+}
+catch {
+    Write-Step "Warning: failed to update user PATH automatically. You may remove it manually: $InstallDir"
+}
 
 if (Test-Path -LiteralPath $InstallDir) {
     $remain = Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue

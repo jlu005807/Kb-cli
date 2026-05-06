@@ -88,6 +88,27 @@ fn read_json_file(root: &Path, rel: &str) -> Value {
     serde_json::from_str(&raw).expect("parse json file")
 }
 
+fn normalize_display_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}", rest);
+        }
+        if let Some(rest) = path.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    path.to_string()
+}
+
+fn canonical_display_path(path: &Path) -> String {
+    let raw = fs::canonicalize(path)
+        .expect("path should exist")
+        .to_string_lossy()
+        .to_string();
+    normalize_display_path(&raw)
+}
+
 #[test]
 fn init_creates_kbignore() {
     let dir = unique_temp_dir("init-kbignore");
@@ -104,6 +125,16 @@ fn init_creates_kbignore() {
         fs::read_to_string(dir.join(".kb/.env.template")).expect("read llm env template");
     assert!(env_template.contains("KB_LLM_SEMANTIC_FLOW=two_step"));
     assert!(env_template.contains("KB_LLM_RETRY_MAX_ATTEMPTS=3"));
+    assert!(dir.join(".kb/config.json").exists());
+    let local_cfg = read_json_file(&dir, "./.kb/config.json");
+    assert!(local_cfg.get("llm").is_some());
+    assert_eq!(local_cfg["llm"]["semantic_flow"], "two_step");
+    assert_eq!(
+        body["data"]["project_config_path"]
+            .as_str()
+            .unwrap_or_default(),
+        "./.kb/config.json"
+    );
 }
 
 #[test]
@@ -1743,11 +1774,16 @@ fn env_list_shows_only_existing_registered_kb_roots() {
 
     let (ok, _) = run_json_with_global_config(&["init", "demo"], &kb_one, &global_config);
     assert!(ok, "init should register kb root into global config");
+    assert!(
+        global_config.exists(),
+        "global config should be created by init"
+    );
+    let global_cfg_raw = fs::read_to_string(&global_config).expect("read global config");
+    let global_cfg: Value = serde_json::from_str(&global_cfg_raw).expect("parse global config");
+    assert!(global_cfg.get("llm").is_some());
+    assert!(global_cfg.get("knowledge_bases").is_some());
 
-    let kb_one_abs = fs::canonicalize(&kb_one)
-        .expect("kb root should exist")
-        .to_string_lossy()
-        .to_string();
+    let kb_one_abs = canonical_display_path(&kb_one);
 
     let (ok, listed) = run_json_with_global_config(&["env", "--list"], &caller, &global_config);
     assert!(ok);
