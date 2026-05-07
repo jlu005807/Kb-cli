@@ -6,6 +6,8 @@ const KB_LLM_KEY_ENV: &str = "KB_LLM_KEY";
 const KB_LLM_MODEL_ENV: &str = "KB_LLM_MODEL";
 const KB_LLM_BASE_URL_ENV: &str = "KB_LLM_BASE_URL";
 const KB_LLM_ENABLE_SEMANTIC_ENV: &str = "KB_LLM_ENABLE_SEMANTIC";
+const KB_LLM_ENABLE_GRAPH_ENV: &str = "KB_LLM_ENABLE_GRAPH";
+const KB_LLM_ENABLE_WIKI_ENV: &str = "KB_LLM_ENABLE_WIKI";
 const KB_LLM_TIMEOUT_SECS_ENV: &str = "KB_LLM_TIMEOUT_SECS";
 const KB_LLM_TEMPERATURE_ENV: &str = "KB_LLM_TEMPERATURE";
 const KB_LLM_MAX_OUTPUT_TOKENS_ENV: &str = "KB_LLM_MAX_OUTPUT_TOKENS";
@@ -22,6 +24,8 @@ const KB_LLM_AGENT_MIN_CHUNK_COVERAGE_ENV: &str = "KB_LLM_AGENT_MIN_CHUNK_COVERA
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const DEFAULT_ENABLE_SEMANTIC: bool = false;
+const DEFAULT_ENABLE_GRAPH: bool = false;
+const DEFAULT_ENABLE_WIKI: bool = false;
 const DEFAULT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_TEMPERATURE: f64 = 0.1;
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 900;
@@ -67,6 +71,8 @@ pub struct LlmRuntimeConfig {
     pub model: String,
     pub base_url: String,
     pub semantic_enabled: bool,
+    pub graph_enabled: bool,
+    pub wiki_enabled: bool,
     pub semantic_flow: String,
     pub timeout_secs: u64,
     pub temperature: f64,
@@ -89,6 +95,8 @@ struct LlmConfigPartial {
     model: Option<String>,
     base_url: Option<String>,
     semantic_enabled: Option<bool>,
+    graph_enabled: Option<bool>,
+    wiki_enabled: Option<bool>,
     semantic_flow: Option<String>,
     timeout_secs: Option<u64>,
     temperature: Option<f64>,
@@ -150,6 +158,25 @@ fn resolve_from_layers(
             ),
         ],
         DEFAULT_ENABLE_SEMANTIC,
+    );
+    let graph_enabled = pick_bool(
+        &[
+            (&process_env.graph_enabled, LlmConfigSource::ProcessEnv),
+            (
+                &project_config.graph_enabled,
+                LlmConfigSource::ProjectConfig,
+            ),
+            (&global_config.graph_enabled, LlmConfigSource::GlobalConfig),
+        ],
+        DEFAULT_ENABLE_GRAPH,
+    );
+    let wiki_enabled = pick_bool(
+        &[
+            (&process_env.wiki_enabled, LlmConfigSource::ProcessEnv),
+            (&project_config.wiki_enabled, LlmConfigSource::ProjectConfig),
+            (&global_config.wiki_enabled, LlmConfigSource::GlobalConfig),
+        ],
+        DEFAULT_ENABLE_WIKI,
     );
     let semantic_flow = normalize_semantic_flow(
         &pick_required(
@@ -330,11 +357,13 @@ fn resolve_from_layers(
         base_url: base_url_source,
     };
     let trace = format!(
-        "key={}; model={}; base_url={}; semantic_enabled={}; semantic_flow={}; timeout_secs={}; temperature={}; max_output_tokens={}; analysis_max_output_tokens={}; max_input_chars={}; max_chunks={}; retry_max_attempts={}; retry_backoff_ms={}; agent_loop_max_rounds={}; agent_reflection_enabled={}; agent_min_chunk_coverage={}",
+        "key={}; model={}; base_url={}; semantic_enabled={}; graph_enabled={}; wiki_enabled={}; semantic_flow={}; timeout_secs={}; temperature={}; max_output_tokens={}; analysis_max_output_tokens={}; max_input_chars={}; max_chunks={}; retry_max_attempts={}; retry_backoff_ms={}; agent_loop_max_rounds={}; agent_reflection_enabled={}; agent_min_chunk_coverage={}",
         source.key.as_str(),
         source.model.as_str(),
         source.base_url.as_str(),
         semantic_enabled,
+        graph_enabled,
+        wiki_enabled,
         semantic_flow,
         timeout_secs,
         temperature,
@@ -354,6 +383,8 @@ fn resolve_from_layers(
         model,
         base_url,
         semantic_enabled,
+        graph_enabled,
+        wiki_enabled,
         semantic_flow,
         timeout_secs,
         temperature,
@@ -377,6 +408,12 @@ fn read_process_env() -> LlmConfigPartial {
         model: normalize_value(std::env::var(KB_LLM_MODEL_ENV).ok()),
         base_url: normalize_value(std::env::var(KB_LLM_BASE_URL_ENV).ok()),
         semantic_enabled: std::env::var(KB_LLM_ENABLE_SEMANTIC_ENV)
+            .ok()
+            .and_then(|value| parse_bool(&value)),
+        graph_enabled: std::env::var(KB_LLM_ENABLE_GRAPH_ENV)
+            .ok()
+            .and_then(|value| parse_bool(&value)),
+        wiki_enabled: std::env::var(KB_LLM_ENABLE_WIKI_ENV)
             .ok()
             .and_then(|value| parse_bool(&value)),
         semantic_flow: normalize_value(std::env::var(KB_LLM_SEMANTIC_FLOW_ENV).ok()),
@@ -437,6 +474,8 @@ fn load_json_config(path: &Path) -> LlmConfigPartial {
         "enable_semantic",
         KB_LLM_ENABLE_SEMANTIC_ENV,
     );
+    let graph_enabled = read_bool(llm_obj, &parsed, "enable_graph", KB_LLM_ENABLE_GRAPH_ENV);
+    let wiki_enabled = read_bool(llm_obj, &parsed, "enable_wiki", KB_LLM_ENABLE_WIKI_ENV);
     let semantic_flow = read_string(llm_obj, &parsed, "semantic_flow", KB_LLM_SEMANTIC_FLOW_ENV);
     let timeout_secs = read_u64(llm_obj, &parsed, "timeout_secs", KB_LLM_TIMEOUT_SECS_ENV);
     let temperature = read_f64(llm_obj, &parsed, "temperature", KB_LLM_TEMPERATURE_ENV);
@@ -495,6 +534,8 @@ fn load_json_config(path: &Path) -> LlmConfigPartial {
         model: normalize_value(model),
         base_url: normalize_value(base_url),
         semantic_enabled,
+        graph_enabled,
+        wiki_enabled,
         semantic_flow: normalize_value(semantic_flow),
         timeout_secs,
         temperature,
@@ -702,7 +743,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    const ENV_KEYS: [&str; 3] = ["KB_LLM_MODEL", "KB_LLM_BASE_URL", "KB_LLM_ENABLE_SEMANTIC"];
+    const ENV_KEYS: [&str; 5] = [
+        "KB_LLM_MODEL",
+        "KB_LLM_BASE_URL",
+        "KB_LLM_ENABLE_SEMANTIC",
+        "KB_LLM_ENABLE_GRAPH",
+        "KB_LLM_ENABLE_WIKI",
+    ];
 
     struct EnvGuard {
         saved: Vec<(String, Option<String>)>,
@@ -756,11 +803,15 @@ mod tests {
         std::env::set_var("KB_LLM_MODEL", "env-model");
         std::env::set_var("KB_LLM_BASE_URL", "https://env.example/v1");
         std::env::set_var("KB_LLM_ENABLE_SEMANTIC", "1");
+        std::env::set_var("KB_LLM_ENABLE_GRAPH", "1");
+        std::env::set_var("KB_LLM_ENABLE_WIKI", "0");
 
         let cfg = resolve_llm_config(&dir, &global_config);
         assert_eq!(cfg.model, "env-model");
         assert_eq!(cfg.base_url, "https://env.example/v1");
         assert!(cfg.semantic_enabled);
+        assert!(cfg.graph_enabled);
+        assert!(!cfg.wiki_enabled);
         assert_eq!(cfg.source.model, LlmConfigSource::ProcessEnv);
         assert_eq!(cfg.source.base_url, LlmConfigSource::ProcessEnv);
     }
@@ -795,6 +846,8 @@ mod tests {
         assert_eq!(cfg.model, "project-model");
         assert_eq!(cfg.base_url, "https://project.example/v1");
         assert_eq!(cfg.agent_loop_max_rounds, 3);
+        assert!(!cfg.graph_enabled);
+        assert!(!cfg.wiki_enabled);
         assert_eq!(cfg.source.model, LlmConfigSource::ProjectConfig);
         assert_eq!(cfg.source.base_url, LlmConfigSource::ProjectConfig);
     }

@@ -26,7 +26,7 @@ KB-CLI 是一个本地知识库命令行工具，用于把分散文件声明、�
 - `kb chmod <alias|category> <perms>`：修改权限
 - `kb list`：列出当前登记项
 - `kb check`：检查声明与登记差异
-- `kb update`：执行分层更新
+- `kb update [--llm]`：执行分层更新（可用 `--llm` 强制启用本次 LLM 语义/图谱/wiki 构建）
 - `kb ask <question>`：执行检索问答
 - `kb env --list`：列出已登记知识库
 - `kb completion <shell>`：生成补全脚本
@@ -83,6 +83,35 @@ kb ask "这个项目如何更新索引？"
 LLM 生效优先级：
 
 `环境变量 > 项目 .kb/config.json > 全局 config.json`
+
+LLM 参与构建（`kb update`）：
+
+- 满足 `KB_LLM_ENABLE_SEMANTIC=1` 且配置 `KB_LLM_KEY` 后，L2 语义编译将进入 `mode=llm`
+- 可额外启用：
+- `KB_LLM_ENABLE_GRAPH=1`：L4 图谱在规则构建后进入 LLM 增强
+- `KB_LLM_ENABLE_WIKI=1`：L5 wiki 在规则构建后进入 LLM 增强
+- `--llm` 会在本次 `update` 中同时尝试启用 semantic/graph/wiki 的 LLM 路径
+- 默认使用 OpenAI-compatible Chat Completions（标准 `messages` 请求格式）
+- 内置轻量 agent 风格原子工具上下文：
+- `read_raw_file`：读取当前源文件原文片段
+- `read_knowledge_graph`：读取 `.kb/graph.json` 关联关系
+- `read_file_summary`：读取 `.kb/knowledge.json` 中历史摘要
+- `read_graph_neighbors`：读取指定文件节点邻接关系（L4）
+- `read_wiki_page`：读取 wiki 页面上下文（L5）
+
+快速验证：
+
+```bash
+kb update --output json
+```
+
+检查返回字段：
+
+- `data.semantic_extractor.mode = "llm"`
+- `data.semantic_extractor.agent_tools.enabled = true`
+- `data.semantic_extractor.agent_tools.tools` 包含上述 3 个工具名
+- `data.graph_builder.mode`（`llm`/`rule`）
+- `data.wiki_builder.mode`（`llm`/`rule`）
 
 ## 更多文档
 

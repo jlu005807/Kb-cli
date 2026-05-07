@@ -900,6 +900,10 @@ fn update_semantic_enabled_without_key_falls_back_with_warning() {
     assert_eq!(body["status"], "success");
     assert_eq!(body["data"]["semantic_extractor"]["mode"], "rule");
     assert_eq!(
+        body["data"]["semantic_extractor"]["agent_tools"]["enabled"],
+        false
+    );
+    assert_eq!(
         body["data"]["semantic_extractor"]["semantic_flow"],
         "single_step"
     );
@@ -918,6 +922,59 @@ fn update_semantic_enabled_without_key_falls_back_with_warning() {
     assert!(warnings
         .iter()
         .any(|issue| issue["code"] == "W-L2-LLM-CONFIG-MISSING"));
+}
+
+#[test]
+fn update_llm_flag_forces_semantic_path_and_warns_when_key_missing() {
+    let dir = unique_temp_dir("update-llm-flag-missing-key");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "docs/a", "--category", "raw"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["update", "--llm"], &dir);
+    assert!(ok);
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["semantic_extractor"]["forced_by_cli"], true);
+    assert_eq!(body["data"]["semantic_extractor"]["mode"], "rule");
+    assert_eq!(body["data"]["graph_builder"]["mode"], "rule");
+    assert_eq!(body["data"]["wiki_builder"]["mode"], "rule");
+    assert_eq!(
+        body["data"]["semantic_extractor"]["agent_tools"]["enabled"],
+        false
+    );
+    assert_eq!(
+        body["data"]["graph_builder"]["agent_tools"]["enabled"],
+        false
+    );
+    assert_eq!(
+        body["data"]["wiki_builder"]["agent_tools"]["enabled"],
+        false
+    );
+    assert_eq!(body["data"]["layer_status"]["l2_semantic"], "warning");
+    assert_eq!(body["data"]["layer_status"]["l4_graph"], "warning");
+    assert_eq!(body["data"]["layer_status"]["l5_wiki_view"], "warning");
+
+    let warnings = body["data"]["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["code"] == "W-L2-LLM-CONFIG-MISSING"));
+    assert!(warnings.iter().any(|issue| {
+        issue["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--llm")
+    }));
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["code"] == "W-L4-LLM-CONFIG-MISSING"));
+    assert!(warnings
+        .iter()
+        .any(|issue| issue["code"] == "W-L5-LLM-CONFIG-MISSING"));
 }
 
 #[test]

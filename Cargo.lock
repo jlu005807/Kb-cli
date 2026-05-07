@@ -523,7 +523,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kb-cli"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "kb-core"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "kb-index-memory"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "assert_cmd",
  "insta",
@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "kb-llm"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "assert_cmd",
  "insta",
@@ -584,7 +584,7 @@ dependencies = [
 
 [[package]]
 name = "kb-storage-fs"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "assert_cmd",
  "insta",

@@ -59,7 +59,11 @@ fn update_help_contains_full_and_strict_flags() {
         .args(["update", "--help"])
         .assert()
         .success()
-        .stdout(contains("--full").and(contains("--strict")));
+        .stdout(
+            contains("--full")
+                .and(contains("--strict"))
+                .and(contains("--llm")),
+        );
 }
 
 #[test]

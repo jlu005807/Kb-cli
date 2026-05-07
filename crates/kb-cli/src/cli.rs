@@ -116,6 +116,8 @@ pub enum Commands {
         full: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         strict: bool,
+        #[arg(long, action = ArgAction::SetTrue)]
+        llm: bool,
     },
     Ask {
         question: String,

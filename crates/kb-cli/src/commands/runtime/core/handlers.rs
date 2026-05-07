@@ -657,6 +657,7 @@ pub(crate) fn run_update(
     _yes: bool,
     full: bool,
     strict: bool,
+    llm: bool,
 ) -> Result<Value, CliError> {
     let start = Instant::now();
     let cwd = ensure_initialized()?;
@@ -717,14 +718,23 @@ pub(crate) fn run_update(
     let graph_store = FsGraphStore::new(cwd.clone());
     let wiki_store = FsWikiStore::new(cwd.clone());
     let content_reader = FsFileContentReader::new(cwd.clone());
-    let semantic_mode = if llm_runtime.semantic_enabled {
+    let semantic_llm_requested = llm || llm_runtime.semantic_enabled;
+    let graph_llm_requested = llm || llm_runtime.graph_enabled;
+    let wiki_llm_requested = llm || llm_runtime.wiki_enabled;
+
+    let semantic_mode = if semantic_llm_requested {
         if llm_runtime.key.is_some() {
             "llm"
         } else {
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L2_SEMANTIC,
                 code: "W-L2-LLM-CONFIG-MISSING".to_string(),
-                message: "LLM semantic extraction enabled but KB_LLM_KEY is missing".to_string(),
+                message: if llm {
+                    "LLM semantic extraction requested by --llm but KB_LLM_KEY is missing"
+                        .to_string()
+                } else {
+                    "LLM semantic extraction enabled but KB_LLM_KEY is missing".to_string()
+                },
                 retryable: false,
             });
             "rule"
@@ -732,24 +742,65 @@ pub(crate) fn run_update(
     } else {
         "rule"
     };
+    let graph_mode = if graph_llm_requested {
+        if llm_runtime.key.is_some() {
+            "llm"
+        } else {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L4_GRAPH,
+                code: "W-L4-LLM-CONFIG-MISSING".to_string(),
+                message: if llm {
+                    "LLM graph enrichment requested by --llm but KB_LLM_KEY is missing".to_string()
+                } else {
+                    "LLM graph enrichment enabled but KB_LLM_KEY is missing".to_string()
+                },
+                retryable: false,
+            });
+            "rule"
+        }
+    } else {
+        "rule"
+    };
+    let wiki_mode = if wiki_llm_requested {
+        if llm_runtime.key.is_some() {
+            "llm"
+        } else {
+            progressive_issues.push(LayerIssue {
+                layer: LAYER_L5_WIKI_VIEW,
+                code: "W-L5-LLM-CONFIG-MISSING".to_string(),
+                message: if llm {
+                    "LLM wiki enrichment requested by --llm but KB_LLM_KEY is missing".to_string()
+                } else {
+                    "LLM wiki enrichment enabled but KB_LLM_KEY is missing".to_string()
+                },
+                retryable: false,
+            });
+            "rule"
+        }
+    } else {
+        "rule"
+    };
+
+    let llm_semantic_config = LlmSemanticConfig {
+        key: llm_runtime.key.clone(),
+        model: llm_runtime.model.clone(),
+        base_url: llm_runtime.base_url.clone(),
+        workspace_root: Some(cwd.clone()),
+        semantic_flow: llm_runtime.semantic_flow.clone(),
+        timeout_secs: llm_runtime.timeout_secs,
+        temperature: llm_runtime.temperature,
+        max_output_tokens: llm_runtime.max_output_tokens,
+        analysis_max_output_tokens: llm_runtime.analysis_max_output_tokens,
+        max_input_chars: llm_runtime.max_input_chars,
+        max_chunks: llm_runtime.max_chunks,
+        retry_max_attempts: llm_runtime.retry_max_attempts,
+        retry_backoff_ms: llm_runtime.retry_backoff_ms,
+        agent_loop_max_rounds: llm_runtime.agent_loop_max_rounds,
+        agent_reflection_enabled: llm_runtime.agent_reflection_enabled,
+        agent_min_chunk_coverage: llm_runtime.agent_min_chunk_coverage,
+    };
     let extractor: Box<dyn SemanticExtractor> = if semantic_mode == "llm" {
-        Box::new(LlmSemanticExtractor::new(LlmSemanticConfig {
-            key: llm_runtime.key.clone(),
-            model: llm_runtime.model.clone(),
-            base_url: llm_runtime.base_url.clone(),
-            semantic_flow: llm_runtime.semantic_flow.clone(),
-            timeout_secs: llm_runtime.timeout_secs,
-            temperature: llm_runtime.temperature,
-            max_output_tokens: llm_runtime.max_output_tokens,
-            analysis_max_output_tokens: llm_runtime.analysis_max_output_tokens,
-            max_input_chars: llm_runtime.max_input_chars,
-            max_chunks: llm_runtime.max_chunks,
-            retry_max_attempts: llm_runtime.retry_max_attempts,
-            retry_backoff_ms: llm_runtime.retry_backoff_ms,
-            agent_loop_max_rounds: llm_runtime.agent_loop_max_rounds,
-            agent_reflection_enabled: llm_runtime.agent_reflection_enabled,
-            agent_min_chunk_coverage: llm_runtime.agent_min_chunk_coverage,
-        }))
+        Box::new(LlmSemanticExtractor::new(llm_semantic_config.clone()))
     } else {
         Box::new(RuleBasedSemanticExtractor::new())
     };
@@ -836,11 +887,32 @@ pub(crate) fn run_update(
             None
         }
     };
-    let l4_outcome = compile_l4(
+    let l4_rule_outcome = compile_l4(
         baseline_graph.as_ref(),
         &l2_outcome.snapshot,
         &generated_at,
     );
+    let l4_outcome = if graph_mode == "llm" {
+        match enrich_graph_with_llm(
+            baseline_graph.as_ref(),
+            &l4_rule_outcome,
+            &l2_outcome.snapshot,
+            &llm_semantic_config,
+        ) {
+            Ok(enriched) => enriched,
+            Err(err) => {
+                progressive_issues.push(LayerIssue {
+                    layer: LAYER_L4_GRAPH,
+                    code: "W-L4-LLM-ENRICH-FAILED".to_string(),
+                    message: err,
+                    retryable: true,
+                });
+                l4_rule_outcome
+            }
+        }
+    } else {
+        l4_rule_outcome
+    };
     for issue in &l4_outcome.issues {
         progressive_issues.push(LayerIssue {
             layer: LAYER_L4_GRAPH,
@@ -872,12 +944,35 @@ pub(crate) fn run_update(
             None
         }
     };
-    let l5_outcome = compile_l5(
+    let l5_rule_outcome = compile_l5(
         baseline_wiki_manifest.as_ref(),
         &l2_outcome.snapshot,
         &l4_outcome.snapshot,
         &generated_at,
     );
+    let l5_outcome = if wiki_mode == "llm" {
+        match enrich_wiki_with_llm(
+            baseline_wiki_manifest.as_ref(),
+            &l5_rule_outcome,
+            &l2_outcome.snapshot,
+            &l4_outcome.snapshot,
+            &generated_at,
+            &llm_semantic_config,
+        ) {
+            Ok(enriched) => enriched,
+            Err(err) => {
+                progressive_issues.push(LayerIssue {
+                    layer: LAYER_L5_WIKI_VIEW,
+                    code: "W-L5-LLM-ENRICH-FAILED".to_string(),
+                    message: err,
+                    retryable: true,
+                });
+                l5_rule_outcome
+            }
+        }
+    } else {
+        l5_rule_outcome
+    };
     for issue in &l5_outcome.issues {
         progressive_issues.push(LayerIssue {
             layer: LAYER_L5_WIKI_VIEW,
@@ -994,8 +1089,17 @@ pub(crate) fn run_update(
         "l2_compilation": l2_compilation,
         "semantic_extractor": {
             "mode": semantic_mode,
+            "forced_by_cli": llm,
             "provider": if semantic_mode == "llm" { Some(format!("openai-compatible:{}@{}", llm_runtime.model, llm_runtime.base_url)) } else { None },
             "semantic_flow": llm_runtime.semantic_flow,
+            "agent_tools": {
+                "enabled": semantic_mode == "llm",
+                "tools": [
+                    "read_raw_file",
+                    "read_knowledge_graph",
+                    "read_file_summary"
+                ]
+            },
             "temperature": llm_runtime.temperature,
             "max_output_tokens": llm_runtime.max_output_tokens,
             "analysis_max_output_tokens": llm_runtime.analysis_max_output_tokens,
@@ -1007,6 +1111,30 @@ pub(crate) fn run_update(
             "agent_loop_max_rounds": llm_runtime.agent_loop_max_rounds,
             "agent_reflection_enabled": llm_runtime.agent_reflection_enabled,
             "agent_min_chunk_coverage": llm_runtime.agent_min_chunk_coverage
+        },
+        "graph_builder": {
+            "mode": graph_mode,
+            "provider": if graph_mode == "llm" { Some(format!("openai-compatible:{}@{}", llm_runtime.model, llm_runtime.base_url)) } else { None },
+            "agent_tools": {
+                "enabled": graph_mode == "llm",
+                "tools": [
+                    "read_file_summary",
+                    "read_knowledge_graph",
+                    "read_graph_neighbors"
+                ]
+            }
+        },
+        "wiki_builder": {
+            "mode": wiki_mode,
+            "provider": if wiki_mode == "llm" { Some(format!("openai-compatible:{}@{}", llm_runtime.model, llm_runtime.base_url)) } else { None },
+            "agent_tools": {
+                "enabled": wiki_mode == "llm",
+                "tools": [
+                    "read_file_summary",
+                    "read_knowledge_graph",
+                    "read_wiki_page"
+                ]
+            }
         },
         "warnings": warning_items,
         "errors": [],

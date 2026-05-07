@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::agent_tools::{SemanticAgentContext, SemanticAgentToolbox};
 use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
 use kb_core::{SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor};
 use serde::{Deserialize, Serialize};
@@ -12,6 +14,7 @@ pub struct LlmSemanticConfig {
     pub key: Option<String>,
     pub model: String,
     pub base_url: String,
+    pub workspace_root: Option<PathBuf>,
     pub semantic_flow: String,
     pub timeout_secs: u64,
     pub temperature: f64,
@@ -31,16 +34,19 @@ pub struct LlmSemanticExtractor {
     config: LlmSemanticConfig,
     endpoint: String,
     provider_name: String,
+    toolbox: SemanticAgentToolbox,
 }
 
 impl LlmSemanticExtractor {
     pub fn new(config: LlmSemanticConfig) -> Self {
         let endpoint = build_chat_completion_endpoint(&config.base_url);
         let provider_name = format!("openai-compatible:{}@{}", config.model, config.base_url);
+        let toolbox = SemanticAgentToolbox::new(config.workspace_root.clone());
         Self {
             config,
             endpoint,
             provider_name,
+            toolbox,
         }
     }
 
@@ -166,9 +172,14 @@ impl LlmSemanticExtractor {
         request: &SemanticExtractRequest,
         truncated_text: &str,
         planned_chunks: &[KnowledgeChunk],
+        agent_context: &SemanticAgentContext,
     ) -> Result<LlmSemanticExecution, String> {
-        let user_prompt =
-            build_semantic_prompt_single_step(request, truncated_text, planned_chunks);
+        let user_prompt = build_semantic_prompt_single_step(
+            request,
+            truncated_text,
+            planned_chunks,
+            agent_context,
+        );
         let response = self.call_openai_chat_with_retry(
             api_key,
             "You are a semantic compiler for a local knowledge base. Return JSON only.",
@@ -188,9 +199,10 @@ impl LlmSemanticExtractor {
         request: &SemanticExtractRequest,
         truncated_text: &str,
         planned_chunks: &[KnowledgeChunk],
+        agent_context: &SemanticAgentContext,
     ) -> Result<LlmSemanticExecution, String> {
         let analysis_prompt =
-            build_semantic_prompt_analysis(request, truncated_text, planned_chunks);
+            build_semantic_prompt_analysis(request, truncated_text, planned_chunks, agent_context);
         let analysis_response = self.call_openai_chat_with_retry(
             api_key,
             "You are an analysis engine for memory compilation. Return JSON only.",
@@ -204,8 +216,12 @@ impl LlmSemanticExtractor {
             serde_json::from_value::<LlmSemanticAnalysisPayload>(analysis_value.clone())
                 .map_err(|err| format!("invalid llm semantic analysis payload: {}", err))?;
 
-        let generation_prompt =
-            build_semantic_prompt_generation(request, planned_chunks, &analysis_value);
+        let generation_prompt = build_semantic_prompt_generation(
+            request,
+            planned_chunks,
+            &analysis_value,
+            agent_context,
+        );
         let generation_response = self.call_openai_chat_with_retry(
             api_key,
             "You are a semantic compiler for a local knowledge base. Return JSON only.",
@@ -225,6 +241,7 @@ impl LlmSemanticExtractor {
         api_key: &str,
         request: &SemanticExtractRequest,
         planned_chunks: &[KnowledgeChunk],
+        agent_context: &SemanticAgentContext,
         mut execution: LlmSemanticExecution,
     ) -> Result<LlmSemanticExecution, String> {
         let max_rounds = self.config.agent_loop_max_rounds.clamp(1, 4);
@@ -243,6 +260,7 @@ impl LlmSemanticExtractor {
             let user_prompt = build_semantic_prompt_reflection(
                 request,
                 planned_chunks,
+                agent_context,
                 &execution.payload,
                 execution.analysis.as_ref(),
                 coverage,
@@ -286,12 +304,15 @@ impl SemanticExtractor for LlmSemanticExtractor {
             });
         }
 
+        let agent_context = self.toolbox.build_context(request, &truncated_text);
+
         let execution = if self.config.semantic_flow == "single_step" {
-            self.extract_single_step(api_key, request, &truncated_text, &chunks)?
+            self.extract_single_step(api_key, request, &truncated_text, &chunks, &agent_context)?
         } else {
-            self.extract_two_step(api_key, request, &truncated_text, &chunks)?
+            self.extract_two_step(api_key, request, &truncated_text, &chunks, &agent_context)?
         };
-        let execution = self.run_reflection_loop(api_key, request, &chunks, execution)?;
+        let execution =
+            self.run_reflection_loop(api_key, request, &chunks, &agent_context, execution)?;
         let LlmSemanticExecution { payload, analysis } = execution;
         let LlmSemanticPayload {
             summary: payload_summary,
@@ -420,6 +441,7 @@ fn build_semantic_prompt_single_step(
     request: &SemanticExtractRequest,
     truncated_text: &str,
     planned_chunks: &[KnowledgeChunk],
+    agent_context: &SemanticAgentContext,
 ) -> String {
     let chunk_descriptors = planned_chunks
         .iter()
@@ -432,6 +454,8 @@ fn build_semantic_prompt_single_step(
         .collect::<Vec<_>>();
     let chunk_json =
         serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
+    let context_json =
+        serde_json::to_string_pretty(agent_context).unwrap_or_else(|_| "{}".to_string());
 
     format!(
         "Task: build semantic memory for one source file.\n\
@@ -444,6 +468,14 @@ SOURCE_TEXT:\n\
 CHUNKS:\n\
 {chunk_json}\n\
 \n\
+ATOMIC_TOOLS_AVAILABLE:\n\
+- read_raw_file(path)\n\
+- read_knowledge_graph(record_id)\n\
+- read_file_summary(record_id_or_path)\n\
+\n\
+ATOMIC_TOOL_CONTEXT:\n\
+{context_json}\n\
+\n\
 Return JSON with exact keys:\n\
 {{\n\
   \"summary\": \"one concise summary\",\n\
@@ -455,11 +487,13 @@ Rules:\n\
 - Output JSON only, no markdown.\n\
 - Keep tags lowercase.\n\
 - chunk_summaries must only reference chunk_id from CHUNKS.\n\
-- Keep each chunk summary short and factual.",
+- Keep each chunk summary short and factual.\n\
+- When ATOMIC_TOOL_CONTEXT has useful clues, align summary/tags/concepts with it.",
         record_id = request.record_id,
         path = request.path,
         source_text = truncated_text,
-        chunk_json = chunk_json
+        chunk_json = chunk_json,
+        context_json = context_json
     )
 }
 
@@ -467,6 +501,7 @@ fn build_semantic_prompt_analysis(
     request: &SemanticExtractRequest,
     truncated_text: &str,
     planned_chunks: &[KnowledgeChunk],
+    agent_context: &SemanticAgentContext,
 ) -> String {
     let chunk_descriptors = planned_chunks
         .iter()
@@ -479,6 +514,8 @@ fn build_semantic_prompt_analysis(
         .collect::<Vec<_>>();
     let chunk_json =
         serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
+    let context_json =
+        serde_json::to_string_pretty(agent_context).unwrap_or_else(|_| "{}".to_string());
 
     format!(
         "Step 1 of 2: analyze one source file for semantic memory compilation.\n\
@@ -491,6 +528,14 @@ SOURCE_TEXT:\n\
 CHUNKS:\n\
 {chunk_json}\n\
 \n\
+ATOMIC_TOOLS_AVAILABLE:\n\
+- read_raw_file(path)\n\
+- read_knowledge_graph(record_id)\n\
+- read_file_summary(record_id_or_path)\n\
+\n\
+ATOMIC_TOOL_CONTEXT:\n\
+{context_json}\n\
+\n\
 Return JSON with exact keys:\n\
 {{\n\
   \"summary\": \"one concise source summary\",\n\
@@ -502,11 +547,13 @@ Rules:\n\
 - Output JSON only.\n\
 - Keep tags lowercase.\n\
 - chunk_insights must only reference chunk_id from CHUNKS.\n\
-- Facts should be short and factual.",
+- Facts should be short and factual.\n\
+- If the graph or summaries indicate dependencies, include them in key_concepts/facts.",
         record_id = request.record_id,
         path = request.path,
         source_text = truncated_text,
-        chunk_json = chunk_json
+        chunk_json = chunk_json,
+        context_json = context_json
     )
 }
 
@@ -514,6 +561,7 @@ fn build_semantic_prompt_generation(
     request: &SemanticExtractRequest,
     planned_chunks: &[KnowledgeChunk],
     analysis_value: &Value,
+    agent_context: &SemanticAgentContext,
 ) -> String {
     let chunk_descriptors = planned_chunks
         .iter()
@@ -528,6 +576,8 @@ fn build_semantic_prompt_generation(
         serde_json::to_string_pretty(&chunk_descriptors).unwrap_or_else(|_| "[]".to_string());
     let analysis_json =
         serde_json::to_string_pretty(analysis_value).unwrap_or_else(|_| "{}".to_string());
+    let context_json =
+        serde_json::to_string_pretty(agent_context).unwrap_or_else(|_| "{}".to_string());
 
     format!(
         "Step 2 of 2: generate compile-ready semantic memory from analysis.\n\
@@ -540,6 +590,9 @@ CHUNKS:\n\
 ANALYSIS_JSON:\n\
 {analysis_json}\n\
 \n\
+ATOMIC_TOOL_CONTEXT:\n\
+{context_json}\n\
+\n\
 Return JSON with exact keys:\n\
 {{\n\
   \"summary\": \"one concise summary\",\n\
@@ -551,17 +604,20 @@ Rules:\n\
 - Output JSON only, no markdown.\n\
 - Keep tags lowercase.\n\
 - chunk_summaries must only reference chunk_id from CHUNKS.\n\
-- Keep each chunk summary short and factual.",
+- Keep each chunk summary short and factual.\n\
+- Reconcile the final summary with ANALYSIS_JSON and ATOMIC_TOOL_CONTEXT.",
         record_id = request.record_id,
         path = request.path,
         chunk_json = chunk_json,
-        analysis_json = analysis_json
+        analysis_json = analysis_json,
+        context_json = context_json
     )
 }
 
 fn build_semantic_prompt_reflection(
     request: &SemanticExtractRequest,
     planned_chunks: &[KnowledgeChunk],
+    agent_context: &SemanticAgentContext,
     prior_payload: &LlmSemanticPayload,
     analysis_payload: Option<&LlmSemanticAnalysisPayload>,
     current_coverage: f64,
@@ -587,6 +643,8 @@ fn build_semantic_prompt_reflection(
         .unwrap_or_else(|| "null".to_string());
     let missing_json =
         serde_json::to_string_pretty(missing_chunk_ids).unwrap_or_else(|_| "[]".to_string());
+    let context_json =
+        serde_json::to_string_pretty(agent_context).unwrap_or_else(|_| "{}".to_string());
 
     format!(
         "Agent reflection round {round}: verify and repair semantic memory output.\n\
@@ -604,6 +662,9 @@ PREVIOUS_OUTPUT:\n\
 ANALYSIS_JSON:\n\
 {analysis_json}\n\
 \n\
+ATOMIC_TOOL_CONTEXT:\n\
+{context_json}\n\
+\n\
 MISSING_CHUNK_IDS:\n\
 {missing_json}\n\
 \n\
@@ -619,7 +680,8 @@ Rules:\n\
 - Keep tags lowercase.\n\
 - chunk_summaries must only reference chunk_id from CHUNKS.\n\
 - Prioritize filling missing chunk coverage first.\n\
-- Keep each chunk summary short and factual.",
+- Keep each chunk summary short and factual.\n\
+- Use ATOMIC_TOOL_CONTEXT to repair weak or inconsistent points.",
         round = round,
         record_id = request.record_id,
         path = request.path,
@@ -628,6 +690,7 @@ Rules:\n\
         chunk_json = chunk_json,
         prior_payload_json = prior_payload_json,
         analysis_json = analysis_json,
+        context_json = context_json,
         missing_json = missing_json
     )
 }

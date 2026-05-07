@@ -8,6 +8,7 @@ pub(crate) fn handle(
     yes: bool,
     full: bool,
     strict: bool,
+    llm: bool,
 ) -> Result<Value, CliError> {
-    super::runtime::run_update(dry_run, prune, yes, full, strict)
+    super::runtime::run_update(dry_run, prune, yes, full, strict, llm)
 }

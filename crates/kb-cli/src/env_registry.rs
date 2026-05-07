@@ -143,6 +143,12 @@ fn ensure_global_config_shape(config: &mut Value) {
     if !llm.contains_key("enable_semantic") {
         llm.insert("enable_semantic".to_string(), Value::Bool(false));
     }
+    if !llm.contains_key("enable_graph") {
+        llm.insert("enable_graph".to_string(), Value::Bool(false));
+    }
+    if !llm.contains_key("enable_wiki") {
+        llm.insert("enable_wiki".to_string(), Value::Bool(false));
+    }
     if !llm.contains_key("model") {
         llm.insert(
             "model".to_string(),

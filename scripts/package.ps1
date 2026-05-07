@@ -33,7 +33,7 @@ function Get-WorkspaceVersion {
     if ($WorkspaceToml -match '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
         return $Matches[1]
     }
-    return "0.1.0"
+    return "0.1.4"
 }
 
 function Get-ArchLabel {
