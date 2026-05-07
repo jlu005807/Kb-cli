@@ -892,6 +892,7 @@ pub(crate) fn run_update(
         &l2_outcome.snapshot,
         &generated_at,
     );
+    let mut l4_metrics_json = Value::Null;
     let l4_outcome = if graph_mode == "llm" {
         match enrich_graph_with_llm(
             baseline_graph.as_ref(),
@@ -899,7 +900,25 @@ pub(crate) fn run_update(
             &l2_outcome.snapshot,
             &llm_semantic_config,
         ) {
-            Ok(enriched) => enriched,
+            Ok(enriched) => {
+                l4_metrics_json = json!({
+                    "map_reduce": {
+                        "batch_size": enriched.metrics.map_reduce.batch_size,
+                        "batches_total": enriched.metrics.map_reduce.batches_total,
+                        "calls_total": enriched.metrics.map_reduce.calls_total,
+                        "rounds_used": enriched.metrics.map_reduce.rounds_used,
+                        "rounds_max": enriched.metrics.map_reduce.rounds_max,
+                        "reflection_enabled": enriched.metrics.map_reduce.reflection_enabled,
+                    },
+                    "coverage": {
+                        "covered": enriched.metrics.coverage.covered,
+                        "total": enriched.metrics.coverage.total,
+                        "ratio": enriched.metrics.coverage.ratio,
+                        "target_ratio": enriched.metrics.coverage.target_ratio,
+                    }
+                });
+                enriched.outcome
+            }
             Err(err) => {
                 progressive_issues.push(LayerIssue {
                     layer: LAYER_L4_GRAPH,
@@ -950,6 +969,7 @@ pub(crate) fn run_update(
         &l4_outcome.snapshot,
         &generated_at,
     );
+    let mut l5_metrics_json = Value::Null;
     let l5_outcome = if wiki_mode == "llm" {
         match enrich_wiki_with_llm(
             baseline_wiki_manifest.as_ref(),
@@ -959,7 +979,25 @@ pub(crate) fn run_update(
             &generated_at,
             &llm_semantic_config,
         ) {
-            Ok(enriched) => enriched,
+            Ok(enriched) => {
+                l5_metrics_json = json!({
+                    "map_reduce": {
+                        "batch_size": enriched.metrics.map_reduce.batch_size,
+                        "batches_total": enriched.metrics.map_reduce.batches_total,
+                        "calls_total": enriched.metrics.map_reduce.calls_total,
+                        "rounds_used": enriched.metrics.map_reduce.rounds_used,
+                        "rounds_max": enriched.metrics.map_reduce.rounds_max,
+                        "reflection_enabled": enriched.metrics.map_reduce.reflection_enabled,
+                    },
+                    "coverage": {
+                        "covered": enriched.metrics.coverage.covered,
+                        "total": enriched.metrics.coverage.total,
+                        "ratio": enriched.metrics.coverage.ratio,
+                        "target_ratio": enriched.metrics.coverage.target_ratio,
+                    }
+                });
+                enriched.outcome
+            }
             Err(err) => {
                 progressive_issues.push(LayerIssue {
                     layer: LAYER_L5_WIKI_VIEW,
@@ -1122,7 +1160,8 @@ pub(crate) fn run_update(
                     "read_knowledge_graph",
                     "read_graph_neighbors"
                 ]
-            }
+            },
+            "llm_metrics": l4_metrics_json
         },
         "wiki_builder": {
             "mode": wiki_mode,
@@ -1134,7 +1173,8 @@ pub(crate) fn run_update(
                     "read_knowledge_graph",
                     "read_wiki_page"
                 ]
-            }
+            },
+            "llm_metrics": l5_metrics_json
         },
         "warnings": warning_items,
         "errors": [],
