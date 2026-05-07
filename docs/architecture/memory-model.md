@@ -165,20 +165,39 @@ Layer 5: Wiki Markdown View Layer
 优先级从高到低：
 
 1. **当前进程环境变量**（手动覆盖）
-2. **当前知识库** `<kb_root>/.kb/.env`
-3. **全局配置**（全局 config / 全局 `.env`）
+2. **当前知识库** `<kb_root>/.kb/config.json`
+3. **全局配置**（默认 `~/.kb-cli/config.json`，可被 `KB_GLOBAL_CONFIG` 覆盖）
 
 必需键：
 
 1. `KB_LLM_KEY`
 2. `KB_LLM_MODEL`
 3. `KB_LLM_BASE_URL`
+4. `KB_LLM_ENABLE_SEMANTIC`
+5. `KB_LLM_ENABLE_GRAPH`
+6. `KB_LLM_ENABLE_WIKI`
+
+项目/全局配置结构建议：
+
+```json
+{
+  "llm": {
+    "enable_semantic": false,
+    "enable_graph": false,
+    "enable_wiki": false,
+    "key": "",
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1"
+  }
+}
+```
 
 补充约束：
 
-1. 若进程环境已存在键值，不被 `.env` 覆盖。
+1. 若进程环境已存在键值，不被项目/全局 config 覆盖。
 2. 无有效 LLM 配置时，系统自动回退 deterministic 路径。
-3. `key/model/base_url` 之外的超时/重试可放在 `.kb/config.json` 或全局 config。
+3. `--llm` 会在本次 `kb update` 强制尝试 L2/L4/L5 的 LLM 路径；缺 key 时按层回退规则路径并给 warning。
+4. `key/model/base_url` 之外的超时/重试可放在 `.kb/config.json` 或全局 config。
 
 ## 7. `kb ask` 的上下文连接与检索路径
 

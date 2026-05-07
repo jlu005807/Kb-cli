@@ -20,7 +20,7 @@ crates/
   kb-core/         # 领域模型、端口、核心用例（L2-L5 编译等）
   kb-storage-fs/   # 文件系统存储实现
   kb-index-memory/ # 内存检索实现
-  kb-llm/          # LLM 配置解析与 OpenAI-compatible 语义提取
+  kb-llm/          # LLM 配置解析与 OpenAI-compatible L2/L4/L5 增强
 
 docs/cli/          # 命令与安装文档
 scripts/           # 打包脚本
@@ -59,7 +59,29 @@ cargo install --path crates/kb-cli --force
 cargo install --path crates/kb-cli --force --root C:\Users\<you>\.kb-cli
 ```
 
-## 6. 本地打包
+## 6. LLM 链路快速自检（开发者）
+
+配置优先级（高到低）：
+
+1. 环境变量
+2. 项目 `./.kb/config.json`
+3. 全局 `~/.kb-cli/config.json`（或 `KB_GLOBAL_CONFIG`）
+
+建议最小测试：
+
+```bash
+kb init demo
+kb add ./docs/a.md docs/a
+kb update --llm --output json
+```
+
+检查返回关键字段：
+
+- `data.semantic_extractor.mode`
+- `data.graph_builder.mode`
+- `data.wiki_builder.mode`
+
+## 7. 本地打包
 
 Windows：
 
@@ -73,7 +95,7 @@ Linux：
 bash ./scripts/package.sh --target x86_64-unknown-linux-gnu
 ```
 
-## 7. Release 发布（GitHub Actions）
+## 8. Release 发布（GitHub Actions）
 
 工作流：`.github/workflows/release.yml`
 

@@ -401,7 +401,7 @@ kb check --output=json
 }
 ```
 
-## 8. `kb update [--dry-run] [--prune] [--yes] [--full] [--strict]`
+## 8. `kb update [--dry-run] [--prune] [--yes] [--full] [--strict] [--llm]`
 
 > 实现说明（2026-04-18）：`update` 会把 `check` 差异写入 `./.kb/regs.json`，移除过期/已删除/不存在条目，并刷新后端索引文件。
 > 当 `check` 确认为 `to_remove` 时，`update` 也会清理匹配的陈旧索引记录，即使这些路径已不在 `regs.json` 中。
@@ -409,6 +409,7 @@ kb check --output=json
 > `update` 是 `kb rm`、`kb chmod` 等“声明优先变更”的持久化步骤。
 > 为保证 raw 与 `kb.md` 对齐，`update` 还会按路径去重 `kb.md` 中重复的 raw 引用行。
 > 分层策略：默认模式下 `L2-L5` 失败只记 `warnings` 并返回成功；`--strict` 下 `L2-L5` 任一失败即整体失败。
+> `--llm` 会在本次更新中强制尝试启用 L2/L4/L5 的 LLM 路径；若 `KB_LLM_KEY` 缺失则自动回退规则路径并给 warning。
 > 阶段键：`l0_declaration`、`l1_registry`、`l1_index`、`l2_semantic`、`l3_projection`、`l4_graph`、`l5_wiki_view`。
 
 
@@ -455,6 +456,68 @@ kb update --output=json
       }
     ],
     "errors": []
+  }
+}
+```
+
+### LLM 构建示例（`--llm`）
+**命令：**
+```bash
+kb update --llm --output=json
+```
+**输出（JSON，节选）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "layer_status": {
+      "l2_semantic": "ok",
+      "l4_graph": "ok",
+      "l5_wiki_view": "ok"
+    },
+    "semantic_extractor": {
+      "forced_by_cli": true,
+      "mode": "llm",
+      "provider": "openai-compatible:gpt-4o-mini@https://api.openai.com/v1"
+    },
+    "graph_builder": {
+      "mode": "llm",
+      "agent_tools": {
+        "enabled": true,
+        "tools": ["read_file_summary", "read_knowledge_graph", "read_graph_neighbors"]
+      }
+    },
+    "wiki_builder": {
+      "mode": "llm",
+      "agent_tools": {
+        "enabled": true,
+        "tools": ["read_file_summary", "read_knowledge_graph", "read_wiki_page"]
+      }
+    }
+  }
+}
+```
+
+### LLM 配置缺失回退示例（`--llm` + 无 key）
+**命令：**
+```bash
+kb update --llm --output=json
+```
+**输出（JSON，节选）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "semantic_extractor": { "mode": "rule" },
+    "graph_builder": { "mode": "rule" },
+    "wiki_builder": { "mode": "rule" },
+    "warnings": [
+      { "code": "W-L2-LLM-CONFIG-MISSING" },
+      { "code": "W-L4-LLM-CONFIG-MISSING" },
+      { "code": "W-L5-LLM-CONFIG-MISSING" }
+    ]
   }
 }
 ```

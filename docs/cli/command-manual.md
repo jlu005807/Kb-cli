@@ -190,7 +190,7 @@
 - `kb.md` 格式非法：`E3003`（退出码 3）
 - 指定分类不存在：`E2007`（退出码 2）
 
-### 4.9 `kb update [--dry-run] [--prune] [--yes] [--full] [--strict]`
+### 4.9 `kb update [--dry-run] [--prune] [--yes] [--full] [--strict] [--llm]`
 
 行为：
 - 把 `check` 差异应用到 `regs.json`。
@@ -206,6 +206,12 @@
 - `--yes`：保留兼容参数
 - `--full`：全量重建索引
 - `--strict`：L2-L5 任一失败时整体失败（非 0 退出）
+- `--llm`：本次更新强制尝试启用 L2/L4/L5 的 LLM 路径（若缺少 `KB_LLM_KEY` 会回退到规则路径并给 warning）
+
+LLM 配置优先级：
+- 环境变量
+- 项目配置 `./.kb/config.json`
+- 全局配置 `~/.kb-cli/config.json`（或 `KB_GLOBAL_CONFIG` 指向的 config）
 
 分层成功策略：
 - 基础层（L0->L1）失败：默认模式和严格模式都失败。
@@ -233,8 +239,23 @@
 - `strict`
 - `layer_status`
 - `l2_compilation`
+- `semantic_extractor`
+- `graph_builder`
+- `wiki_builder`
 - `warnings`
 - `errors`
+
+`semantic_extractor` / `graph_builder` / `wiki_builder` 关键字段：
+- `mode`：`llm` 或 `rule`
+- `provider`：LLM 模型与 base_url（仅 `mode=llm` 时有值）
+- `agent_tools.enabled`：该层 agent 原子工具上下文是否启用
+
+常见 LLM warning 码：
+- `W-L2-LLM-CONFIG-MISSING`
+- `W-L4-LLM-CONFIG-MISSING`
+- `W-L5-LLM-CONFIG-MISSING`
+- `W-L4-LLM-ENRICH-FAILED`
+- `W-L5-LLM-ENRICH-FAILED`
 
 错误与退出：
 - 索引快照读取或解析失败：`E3003`（退出码 3）

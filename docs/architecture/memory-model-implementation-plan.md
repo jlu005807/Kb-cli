@@ -18,8 +18,8 @@
    2. `--strict`：L2-L5 任一失败则命令失败（非 0）。
 3. LLM 配置优先级固定为：
    1. 进程环境变量
-   2. 当前知识库 `<kb_root>/.kb/.env`
-   3. 全局 config / 全局 `.env`
+   2. 当前知识库 `<kb_root>/.kb/config.json`
+   3. 全局 `config.json`（默认 `~/.kb-cli/config.json`，可被 `KB_GLOBAL_CONFIG` 覆盖）
 4. 必需配置键：`KB_LLM_KEY`、`KB_LLM_MODEL`、`KB_LLM_BASE_URL`。
 5. L5 视图层输出目录固定为 `.kb/wiki/`。
 
@@ -86,7 +86,7 @@
 - Modify: `crates/kb-cli/src/commands/runtime/core/guards.rs`
 - Test: `crates/kb-cli/tests/layered_update_contract.rs`
 
-- [ ] Step 1: 解析优先级链：`process env > .kb/.env > global config/.env`。
+- [ ] Step 1: 解析优先级链：`process env > .kb/config.json > global config.json`。
 - [ ] Step 2: 对 `KB_LLM_KEY/MODEL/BASE_URL` 做统一字段映射。
 - [ ] Step 3: 保证进程环境变量不被 `.env` 覆盖。
 - [ ] Step 4: 输出配置来源诊断信息（仅来源，不泄露密钥）。
@@ -186,7 +186,7 @@
 
 - [x] Step 1: 对齐阶段键命名（不再混用 `l3_l4_projection`）。
 - [x] Step 2: 对齐 `--strict` 与默认模式语义描述。
-- [x] Step 3: 对齐 LLM 配置优先级（进程 env > `.kb/.env` > 全局）。
+- [x] Step 3: 对齐 LLM 配置优先级（进程 env > `.kb/config.json` > 全局 `config.json`）。
 - [x] Step 4: 运行验证：
   1. `cargo test -p kb-cli root_help_matches_full_snapshot`
   2. `node tests/tools/validate-doc-fixture-diff.js`

@@ -92,19 +92,37 @@
 当接入外部 LLM（OpenAI / DeepSeek / Mimo / 其他 OpenAI-compatible 服务）时，配置读取顺序固定为：
 
 1. 当前进程环境变量（最高优先级）
-2. 当前知识库 `<kb_root>/.kb/.env`
-3. 全局配置（全局 config / 全局 `.env`）
+2. 当前知识库 `<kb_root>/.kb/config.json`
+3. 全局配置（默认 `~/.kb-cli/config.json`，可被 `KB_GLOBAL_CONFIG` 覆盖）
 
 关键配置键：
 
 1. `KB_LLM_KEY`
 2. `KB_LLM_MODEL`
 3. `KB_LLM_BASE_URL`
+4. `KB_LLM_ENABLE_SEMANTIC`
+5. `KB_LLM_ENABLE_GRAPH`
+6. `KB_LLM_ENABLE_WIKI`
+
+项目/全局 config 的推荐结构：
+
+```json
+{
+  "llm": {
+    "enable_semantic": false,
+    "enable_graph": false,
+    "enable_wiki": false,
+    "key": "",
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1"
+  }
+}
+```
 
 约束：
 
-1. 如果进程环境变量已存在键值，不允许被 `.env` 覆盖。
-2. 未解析到完整配置时，系统应回退到本地 deterministic 行为，而不是崩溃。
+1. 如果进程环境变量已存在键值，不允许被项目/全局 config 覆盖。
+2. 未解析到可用 key 时，系统会回退到规则路径并返回可诊断 warning（不会崩溃）。
 
 ## 7. 最简 Agent 参与边界
 

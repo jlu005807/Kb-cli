@@ -99,10 +99,26 @@ LLM 参与构建（`kb update`）：
 - `read_graph_neighbors`：读取指定文件节点邻接关系（L4）
 - `read_wiki_page`：读取 wiki 页面上下文（L5）
 
+推荐项目配置（`./.kb/config.json`）：
+
+```json
+{
+  "llm": {
+    "enable_semantic": true,
+    "enable_graph": true,
+    "enable_wiki": true,
+    "key": "YOUR_API_KEY",
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1",
+    "semantic_flow": "two_step"
+  }
+}
+```
+
 快速验证：
 
 ```bash
-kb update --output json
+kb update --llm --output json
 ```
 
 检查返回字段：
@@ -112,6 +128,14 @@ kb update --output json
 - `data.semantic_extractor.agent_tools.tools` 包含上述 3 个工具名
 - `data.graph_builder.mode`（`llm`/`rule`）
 - `data.wiki_builder.mode`（`llm`/`rule`）
+- `data.graph_builder.agent_tools.enabled`（L4 agent 原子工具上下文）
+- `data.wiki_builder.agent_tools.enabled`（L5 agent 原子工具上下文）
+
+如果未配置 `KB_LLM_KEY`，会自动回退规则路径，并在 `warnings` 中看到：
+
+- `W-L2-LLM-CONFIG-MISSING`
+- `W-L4-LLM-CONFIG-MISSING`
+- `W-L5-LLM-CONFIG-MISSING`
 
 ## 更多文档
 
