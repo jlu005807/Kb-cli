@@ -89,54 +89,42 @@ impl LlmSemanticExtractor {
         user_prompt: &str,
         max_output_tokens: u32,
     ) -> Result<Value, String> {
-        let body = json!({
-            "model": self.config.model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ],
-            "temperature": self.config.temperature,
-            "max_completion_tokens": max_output_tokens,
-            "response_format": { "type": "json_object" }
-        });
-        match self.send_openai_chat(api_key, &body) {
-            Ok(value) => Ok(value),
-            Err(err) => {
-                if supports_max_tokens_fallback(&err) {
-                    let fallback_body = json!({
-                        "model": self.config.model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": system_prompt
-                            },
-                            {
-                                "role": "user",
-                                "content": user_prompt
-                            }
-                        ],
-                        "temperature": self.config.temperature,
-                        "max_tokens": max_output_tokens,
-                        "response_format": { "type": "json_object" }
-                    });
-                    self.send_openai_chat(api_key, &fallback_body)
-                        .map_err(|fallback_err| {
-                            format!(
-                                "primary(max_completion_tokens) failed: {}; fallback(max_tokens) failed: {}",
-                                err, fallback_err
-                            )
-                        })
-                } else {
-                    Err(err)
+        let variants = [
+            (
+                "max_completion_tokens+response_format",
+                "max_completion_tokens",
+                true,
+            ),
+            ("max_tokens+response_format", "max_tokens", true),
+            ("max_completion_tokens", "max_completion_tokens", false),
+            ("max_tokens", "max_tokens", false),
+        ];
+        let mut errors = Vec::new();
+        for (label, max_tokens_key, include_response_format) in variants {
+            let body = build_chat_completion_body(
+                &self.config.model,
+                self.config.temperature,
+                max_output_tokens,
+                system_prompt,
+                user_prompt,
+                max_tokens_key,
+                include_response_format,
+            );
+            match self.send_openai_chat(api_key, &body) {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    let can_try_next = supports_max_tokens_fallback(&err);
+                    errors.push(format!("{} failed: {}", label, err));
+                    if !can_try_next {
+                        return Err(errors.join(" | "));
+                    }
                 }
             }
         }
+        Err(format!(
+            "llm request compatibility fallbacks failed; {}",
+            errors.join(" | ")
+        ))
     }
 
     fn send_openai_chat(&self, api_key: &str, body: &Value) -> Result<Value, String> {
@@ -435,6 +423,35 @@ fn build_chat_completion_endpoint(base_url: &str) -> String {
     } else {
         format!("{}/chat/completions", trimmed)
     }
+}
+
+fn build_chat_completion_body(
+    model: &str,
+    temperature: f64,
+    max_output_tokens: u32,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens_key: &str,
+    include_response_format: bool,
+) -> Value {
+    let mut body = json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": user_prompt }
+        ],
+        "temperature": temperature,
+    });
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
+        if include_response_format {
+            obj.insert(
+                "response_format".to_string(),
+                json!({ "type": "json_object" }),
+            );
+        }
+    }
+    body
 }
 
 fn build_semantic_prompt_single_step(
@@ -830,30 +847,70 @@ fn extract_chat_message_content(response: &Value) -> Option<String> {
 }
 
 fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
-    if let Ok(value) = serde_json::from_str::<Value>(text) {
-        return Ok(value);
+    let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.is_object() {
+            return Ok(value);
+        }
     }
 
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            if end > start {
-                let candidate = &text[start..=end];
-                if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-                    return Ok(value);
-                }
+    if let Some(candidate) = extract_first_json_object(trimmed) {
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            if value.is_object() {
+                return Ok(value);
             }
         }
     }
 
-    Err("llm content is not a valid json object".to_string())
+    Err(format!(
+        "llm content is not a valid json object; excerpt={:?}",
+        stable_truncate(trimmed, 320)
+    ))
+}
+
+fn extract_first_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in text[start..].char_indices() {
+        let absolute_idx = start + idx;
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&text[start..=absolute_idx]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn supports_max_tokens_fallback(error_text: &str) -> bool {
     let lowered = error_text.to_ascii_lowercase();
     lowered.contains("max_completion_tokens")
+        || lowered.contains("max_tokens")
+        || lowered.contains("response_format")
+        || lowered.contains("json_object")
         || lowered.contains("unknown field")
         || lowered.contains("unrecognized field")
         || lowered.contains("invalid request")
+        || lowered.contains("unsupported parameter")
+        || lowered.contains("unsupported field")
         || lowered.contains("unexpected field")
 }
 
@@ -985,4 +1042,24 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
     let mut out = text[..end_b].to_string();
     out.push_str("...");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_json_object_from_text, supports_max_tokens_fallback};
+
+    #[test]
+    fn response_format_errors_are_provider_compatibility_fallbacks() {
+        assert!(supports_max_tokens_fallback(
+            "http status 400 from llm provider: unsupported parameter: response_format"
+        ));
+    }
+
+    #[test]
+    fn json_parse_error_includes_safe_excerpt() {
+        let err =
+            parse_json_object_from_text("semantic not json").expect_err("expected parse error");
+        assert!(err.contains("semantic not json"));
+        assert!(err.contains("valid json object"));
+    }
 }

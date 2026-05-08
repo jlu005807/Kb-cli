@@ -25,6 +25,8 @@ pub struct LlmLayerMapReduce {
     pub batch_size: usize,
     pub batches_total: usize,
     pub calls_total: usize,
+    pub calls_succeeded: usize,
+    pub calls_failed: usize,
     pub rounds_used: usize,
     pub rounds_max: usize,
     pub reflection_enabled: bool,
@@ -87,8 +89,11 @@ pub fn enrich_graph_with_llm(
     let batch_size = normalize_batch_size(config.max_chunks, total_records);
     let batches_total = count_batches(total_records, batch_size);
     let mut calls_total = 0usize;
+    let mut calls_succeeded = 0usize;
+    let mut calls_failed = 0usize;
     let mut rounds_used = 0usize;
     let mut merged_payload = LlmGraphEnrichmentPayload::default();
+    let mut llm_issues = Vec::new();
 
     if total_records > 0 {
         let all_record_ids = file_summaries
@@ -111,6 +116,7 @@ pub fn enrich_graph_with_llm(
                 break;
             }
             rounds_used = round;
+            let round_successes_before = calls_succeeded;
             for batch in candidate.chunks(batch_size) {
                 let batch_ids = batch
                     .iter()
@@ -126,19 +132,40 @@ pub fn enrich_graph_with_llm(
                         .map(|item| item.record_id.clone())
                         .collect::<Vec<_>>(),
                 );
-                let response = call_openai_chat_with_retry(
+                calls_total += 1;
+                let payload_result = call_openai_chat_with_retry(
                     config,
                     api_key,
                     "You enrich a local knowledge graph using structured hints. Return JSON only.",
                     &prompt,
-                )?;
-                calls_total += 1;
-                let payload = decode_graph_enrichment_payload(&response)?;
-                merge_graph_payload(&mut merged_payload, &payload);
+                )
+                .and_then(|response| decode_graph_enrichment_payload(&response));
+                match payload_result {
+                    Ok(payload) => {
+                        calls_succeeded += 1;
+                        merge_graph_payload(&mut merged_payload, &payload);
+                    }
+                    Err(err) => {
+                        calls_failed += 1;
+                        llm_issues.push(CompileL4Issue {
+                            edge_id: format!("llm_graph_batch_round{}_call{}", round, calls_total),
+                            code: "W-L4-LLM-BATCH-FAILED".to_string(),
+                            message: format!(
+                                "llm graph batch failed for {} records: {}",
+                                batch.len(),
+                                stable_truncate(&err, 320)
+                            ),
+                            retryable: true,
+                        });
+                    }
+                }
             }
 
             covered_record_ids = collect_graph_covered_record_ids(&merged_payload, &all_record_ids);
             let coverage_ratio = ratio(covered_record_ids.len(), total_records);
+            if calls_succeeded == round_successes_before && calls_failed > 0 {
+                break;
+            }
             if !reflection_enabled || coverage_ratio >= target_ratio {
                 break;
             }
@@ -146,6 +173,16 @@ pub fn enrich_graph_with_llm(
     }
 
     let mut issues = rule_outcome.issues.clone();
+    issues.extend(llm_issues);
+    if total_records > 0 && calls_total > 0 && calls_succeeded == 0 {
+        issues.push(CompileL4Issue {
+            edge_id: "llm_graph_no_successful_batches".to_string(),
+            code: "W-L4-LLM-NO-SUCCESSFUL-BATCHES".to_string(),
+            message: "llm graph enrichment produced no successful batches; kept rule graph"
+                .to_string(),
+            retryable: true,
+        });
+    }
     let mut nodes_map = rule_outcome
         .snapshot
         .nodes
@@ -255,6 +292,8 @@ pub fn enrich_graph_with_llm(
                 batch_size,
                 batches_total,
                 calls_total,
+                calls_succeeded,
+                calls_failed,
                 rounds_used,
                 rounds_max,
                 reflection_enabled,
@@ -301,14 +340,18 @@ pub fn enrich_wiki_with_llm(
     let batch_size = normalize_batch_size(config.max_chunks, total_pages);
     let batches_total = count_batches(total_pages, batch_size);
     let mut calls_total = 0usize;
+    let mut calls_succeeded = 0usize;
+    let mut calls_failed = 0usize;
     let mut rounds_used = 0usize;
     let mut patch_map = BTreeMap::new();
+    let mut llm_issues = Vec::new();
+    let all_page_ids = page_summaries
+        .iter()
+        .map(|item| item.page_id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut unknown_page_ids = BTreeSet::new();
 
     if total_pages > 0 {
-        let all_page_ids = page_summaries
-            .iter()
-            .map(|item| item.page_id.clone())
-            .collect::<BTreeSet<_>>();
         for round in 1..=rounds_max {
             let candidate = if round == 1 {
                 page_summaries.clone()
@@ -323,6 +366,7 @@ pub fn enrich_wiki_with_llm(
                 break;
             }
             rounds_used = round;
+            let round_successes_before = calls_succeeded;
 
             for batch in candidate.chunks(batch_size) {
                 let batch_ids = batch
@@ -339,18 +383,53 @@ pub fn enrich_wiki_with_llm(
                         .map(|item| item.page_id.clone())
                         .collect::<Vec<_>>(),
                 );
-                let response = call_openai_chat_with_retry(
+                calls_total += 1;
+                let payload_result = call_openai_chat_with_retry(
                     config,
                     api_key,
                     "You enrich wiki pages from a local knowledge base. Return JSON only.",
                     &prompt,
-                )?;
-                calls_total += 1;
-                let payload = decode_wiki_enrichment_payload(&response)?;
-                merge_wiki_notes(&mut patch_map, payload.page_notes);
+                )
+                .and_then(|response| decode_wiki_enrichment_payload(&response));
+                match payload_result {
+                    Ok(payload) => {
+                        calls_succeeded += 1;
+                        let batch_unknown = merge_known_wiki_notes(
+                            &mut patch_map,
+                            payload.page_notes,
+                            &all_page_ids,
+                        );
+                        for page_id in batch_unknown {
+                            if unknown_page_ids.insert(page_id.clone()) {
+                                llm_issues.push(CompileL5Issue {
+                                    page_id,
+                                    code: "W-L5-LLM-UNKNOWN-PAGE".to_string(),
+                                    message: "llm wiki note references unknown page_id".to_string(),
+                                    retryable: true,
+                                });
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        calls_failed += 1;
+                        llm_issues.push(CompileL5Issue {
+                            page_id: format!("llm_wiki_batch_round{}_call{}", round, calls_total),
+                            code: "W-L5-LLM-BATCH-FAILED".to_string(),
+                            message: format!(
+                                "llm wiki batch failed for {} pages: {}",
+                                batch.len(),
+                                stable_truncate(&err, 320)
+                            ),
+                            retryable: true,
+                        });
+                    }
+                }
             }
 
             let coverage_ratio = ratio(patch_map.len(), total_pages);
+            if calls_succeeded == round_successes_before && calls_failed > 0 {
+                break;
+            }
             if !reflection_enabled || coverage_ratio >= target_ratio {
                 break;
             }
@@ -363,6 +442,16 @@ pub fn enrich_wiki_with_llm(
     let mut pages = Vec::new();
     let mut manifest_pages = Vec::new();
     let mut issues = rule_outcome.issues.clone();
+    issues.extend(llm_issues);
+    if total_pages > 0 && calls_total > 0 && calls_succeeded == 0 {
+        issues.push(CompileL5Issue {
+            page_id: "llm_wiki_no_successful_batches".to_string(),
+            code: "W-L5-LLM-NO-SUCCESSFUL-BATCHES".to_string(),
+            message: "llm wiki enrichment produced no successful batches; kept rule wiki"
+                .to_string(),
+            retryable: true,
+        });
+    }
     for page in &rule_outcome.snapshot.pages {
         let note = patch_map.get(&page.page_id);
         let markdown = render_page_with_llm_note(page, note);
@@ -430,6 +519,8 @@ pub fn enrich_wiki_with_llm(
                 batch_size,
                 batches_total,
                 calls_total,
+                calls_succeeded,
+                calls_failed,
                 rounds_used,
                 rounds_max,
                 reflection_enabled,
@@ -791,16 +882,37 @@ fn count_graph_covered_records(
     collect_graph_covered_record_ids(payload, known_record_ids).len()
 }
 
-fn merge_wiki_notes(target: &mut BTreeMap<String, LlmWikiPageNote>, notes: Vec<LlmWikiPageNote>) {
+#[cfg(test)]
+fn merge_wiki_notes(
+    target: &mut BTreeMap<String, LlmWikiPageNote>,
+    notes: Vec<LlmWikiPageNote>,
+) -> BTreeSet<String> {
+    let known_page_ids = target.keys().cloned().collect::<BTreeSet<_>>();
+    merge_known_wiki_notes(target, notes, &known_page_ids)
+}
+
+fn merge_known_wiki_notes(
+    target: &mut BTreeMap<String, LlmWikiPageNote>,
+    notes: Vec<LlmWikiPageNote>,
+    known_page_ids: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut unknown_page_ids = BTreeSet::new();
     for mut note in notes {
         let page_id = note.page_id.trim().to_string();
         if page_id.is_empty() {
+            continue;
+        }
+        if !known_page_ids.contains(&page_id) {
+            unknown_page_ids.insert(page_id);
             continue;
         }
         note.page_id = page_id.clone();
         note.summary = normalize_text_field(note.summary.take());
         note.key_points = normalize_list(&note.key_points, 8);
         note.see_also = normalize_list(&note.see_also, 8);
+        if note.summary.is_none() && note.key_points.is_empty() && note.see_also.is_empty() {
+            continue;
+        }
 
         if let Some(existing) = target.get_mut(&page_id) {
             if existing.summary.is_none() {
@@ -826,6 +938,7 @@ fn merge_wiki_notes(target: &mut BTreeMap<String, LlmWikiPageNote>, notes: Vec<L
         }
         target.insert(page_id, note);
     }
+    unknown_page_ids
 }
 
 fn ratio(covered: usize, total: usize) -> f64 {
@@ -1259,44 +1372,72 @@ fn call_openai_chat_once(
     system_prompt: &str,
     user_prompt: &str,
 ) -> Result<Value, String> {
-    let body = json!({
-        "model": config.model,
+    let endpoint = build_chat_completion_endpoint(&config.base_url);
+    let variants = [
+        (
+            "max_completion_tokens+response_format",
+            "max_completion_tokens",
+            true,
+        ),
+        ("max_tokens+response_format", "max_tokens", true),
+        ("max_completion_tokens", "max_completion_tokens", false),
+        ("max_tokens", "max_tokens", false),
+    ];
+    let mut errors = Vec::new();
+    for (label, max_tokens_key, include_response_format) in variants {
+        let body = build_chat_completion_body(
+            &config.model,
+            config.temperature,
+            config.max_output_tokens,
+            system_prompt,
+            user_prompt,
+            max_tokens_key,
+            include_response_format,
+        );
+        match send_openai_chat(api_key, &endpoint, config.timeout_secs, &body) {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                let can_try_next = supports_max_tokens_fallback(&err);
+                errors.push(format!("{} failed: {}", label, err));
+                if !can_try_next {
+                    return Err(errors.join(" | "));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "llm request compatibility fallbacks failed; {}",
+        errors.join(" | ")
+    ))
+}
+
+fn build_chat_completion_body(
+    model: &str,
+    temperature: f64,
+    max_output_tokens: u32,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens_key: &str,
+    include_response_format: bool,
+) -> Value {
+    let mut body = json!({
+        "model": model,
         "messages": [
             { "role": "system", "content": system_prompt },
             { "role": "user", "content": user_prompt }
         ],
-        "temperature": config.temperature,
-        "max_completion_tokens": config.max_output_tokens,
-        "response_format": { "type": "json_object" }
+        "temperature": temperature,
     });
-    let endpoint = build_chat_completion_endpoint(&config.base_url);
-    match send_openai_chat(api_key, &endpoint, config.timeout_secs, &body) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            if supports_max_tokens_fallback(&err) {
-                let fallback_body = json!({
-                    "model": config.model,
-                    "messages": [
-                        { "role": "system", "content": system_prompt },
-                        { "role": "user", "content": user_prompt }
-                    ],
-                    "temperature": config.temperature,
-                    "max_tokens": config.max_output_tokens,
-                    "response_format": { "type": "json_object" }
-                });
-                send_openai_chat(api_key, &endpoint, config.timeout_secs, &fallback_body).map_err(
-                    |fallback_err| {
-                        format!(
-                            "primary(max_completion_tokens) failed: {}; fallback(max_tokens) failed: {}",
-                            err, fallback_err
-                        )
-                    },
-                )
-            } else {
-                Err(err)
-            }
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
+        if include_response_format {
+            obj.insert(
+                "response_format".to_string(),
+                json!({ "type": "json_object" }),
+            );
         }
     }
+    body
 }
 
 fn send_openai_chat(
@@ -1359,30 +1500,70 @@ fn extract_chat_message_content(response: &Value) -> Option<String> {
 }
 
 fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
-    if let Ok(value) = serde_json::from_str::<Value>(text) {
-        return Ok(value);
+    let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.is_object() {
+            return Ok(value);
+        }
     }
 
-    if let Some(start) = text.find('{') {
-        if let Some(end) = text.rfind('}') {
-            if end > start {
-                let candidate = &text[start..=end];
-                if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-                    return Ok(value);
-                }
+    if let Some(candidate) = extract_first_json_object(trimmed) {
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            if value.is_object() {
+                return Ok(value);
             }
         }
     }
 
-    Err("llm content is not a valid json object".to_string())
+    Err(format!(
+        "llm content is not a valid json object; excerpt={:?}",
+        stable_truncate(trimmed, 320)
+    ))
+}
+
+fn extract_first_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in text[start..].char_indices() {
+        let absolute_idx = start + idx;
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&text[start..=absolute_idx]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn supports_max_tokens_fallback(error_text: &str) -> bool {
     let lowered = error_text.to_ascii_lowercase();
     lowered.contains("max_completion_tokens")
+        || lowered.contains("max_tokens")
+        || lowered.contains("response_format")
+        || lowered.contains("json_object")
         || lowered.contains("unknown field")
         || lowered.contains("unrecognized field")
         || lowered.contains("invalid request")
+        || lowered.contains("unsupported parameter")
+        || lowered.contains("unsupported field")
         || lowered.contains("unexpected field")
 }
 
@@ -1446,7 +1627,8 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
 mod tests {
     use super::{
         collect_graph_covered_record_ids, count_batches, merge_wiki_notes, normalize_batch_size,
-        normalize_token, recalc_graph_diff_counters, LlmFileConcept, LlmFileRelation, LlmFileTag,
+        normalize_token, parse_json_object_from_text, recalc_graph_diff_counters,
+        supports_max_tokens_fallback, LlmFileConcept, LlmFileRelation, LlmFileTag,
         LlmGraphEnrichmentPayload, LlmWikiPageNote,
     };
     use kb_core::domain::{GraphEdge, GraphEdgeType, GraphEvidence, GraphSnapshot};
@@ -1571,5 +1753,54 @@ mod tests {
                 "[[source:docs/c]]".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn merge_wiki_notes_ignores_unknown_page_ids_when_known_pages_exist() {
+        let mut notes = BTreeMap::new();
+        notes.insert(
+            "source:docs/a".to_string(),
+            LlmWikiPageNote {
+                page_id: "source:docs/a".to_string(),
+                summary: None,
+                key_points: vec![],
+                see_also: vec![],
+            },
+        );
+
+        merge_wiki_notes(
+            &mut notes,
+            vec![
+                LlmWikiPageNote {
+                    page_id: "source:docs/a".to_string(),
+                    summary: Some("known page".to_string()),
+                    key_points: vec![],
+                    see_also: vec![],
+                },
+                LlmWikiPageNote {
+                    page_id: "source:docs/z".to_string(),
+                    summary: Some("unknown page".to_string()),
+                    key_points: vec![],
+                    see_also: vec![],
+                },
+            ],
+        );
+
+        assert!(notes.contains_key("source:docs/a"));
+        assert!(!notes.contains_key("source:docs/z"));
+    }
+
+    #[test]
+    fn response_format_errors_are_provider_compatibility_fallbacks() {
+        assert!(supports_max_tokens_fallback(
+            "http status 400 from llm provider: unsupported parameter: response_format"
+        ));
+    }
+
+    #[test]
+    fn json_parse_error_includes_safe_excerpt() {
+        let err = parse_json_object_from_text("not json at all").expect_err("expected parse error");
+        assert!(err.contains("not json at all"));
+        assert!(err.contains("valid json object"));
     }
 }
