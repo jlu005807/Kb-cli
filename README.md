@@ -27,7 +27,7 @@ KB-CLI 是一个本地知识库命令行工具，用于把分散文件声明、�
 - `kb list`：列出当前登记项
 - `kb check`：检查声明与登记差异
 - `kb update [--llm]`：执行分层更新（可用 `--llm` 强制启用本次 LLM 语义/图谱/wiki 构建）
-- `kb ask <question>`：执行检索问答
+- `kb ask <question>`：默认返回检索包；加 `--answer` 启用最小 LLM agent 最终回答
 - `kb env --list`：列出已登记知识库
 - `kb completion <shell>`：生成补全脚本
 
@@ -78,7 +78,10 @@ kb ask "这个项目如何更新索引？"
 
 - 项目级配置：`./.kb/config.json`
 - 环境模板：`./.kb/.env.template`
+- 结构说明：`./.kb/README.md`
 - 全局配置：默认 `kb-cli` 可执行文件同目录 `config.json`（Windows 安装脚本默认对应 `%USERPROFILE%\.kb-cli\config.json`，可被 `KB_GLOBAL_CONFIG` 覆盖）
+
+`.kb/README.md` 会说明 `.kb/index.json`、`.kb/knowledge.json`、`.kb/search.json`、`.kb/graph.json`、`.kb/wiki/` 等文件的含义，方便用户把自定义 agent 接到知识库上，而不必只能使用内置最小 agent。
 
 LLM 生效优先级：
 
@@ -136,6 +139,36 @@ kb update --llm --output json
 - `W-L2-LLM-CONFIG-MISSING`
 - `W-L4-LLM-CONFIG-MISSING`
 - `W-L5-LLM-CONFIG-MISSING`
+
+## Ask 模式说明
+
+默认检索包模式：
+
+```bash
+kb ask "这个项目如何更新索引？" --output json
+```
+
+重点字段：
+
+- `data.mode = "retrieve"`
+- `data.retrieved_context`
+- `data.retrieval_trace`
+- `data.reasoning_context`
+
+显式最终回答模式：
+
+```bash
+kb ask "这个项目如何更新索引？" --answer --output json
+```
+
+重点字段：
+
+- `data.mode = "answer"`
+- `data.tool_trace`
+- `data.answer.text`
+- `data.answer.citations`
+
+当前 `--answer` 会最大化复用 `.kb/search.json`、`.kb/knowledge.json`、`.kb/graph.json`、`.kb/wiki/*` 以及命中的原文片段，走一个最小只读 agent loop；过程输出保持简短，最终答案是主输出。
 
 ## 更多文档
 

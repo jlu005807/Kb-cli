@@ -44,7 +44,11 @@ pub fn dispatch(cli: Cli) -> Result<Value, CliError> {
             strict,
             llm,
         } => cmd_update::handle(dry_run, prune, yes, full, strict, llm),
-        Commands::Ask { question, top } => cmd_ask::handle(question, top),
+        Commands::Ask {
+            question,
+            top,
+            answer,
+        } => cmd_ask::handle(question, top, answer),
         Commands::Env { list } => cmd_env::handle(list),
         Commands::Completion { shell } => cmd_completion::handle(shell),
     }

@@ -15,6 +15,7 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     let kb_md = cwd.join("kb.md");
     let already_initialized = kb_md.exists() && cwd.join(".kb").exists();
     let global_config_path = resolve_global_config_path();
+    let kb_guide_rel = "./.kb/README.md";
 
     let plan =
         plan_init(project_name(&cwd), name, already_initialized, force).map_err(
@@ -33,6 +34,8 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
         .map_err(|_| write_config_error())?;
     fs::write(cwd.join(".kb/config.json"), DEFAULT_PROJECT_LLM_CONFIG)
         .map_err(|_| write_config_error())?;
+    fs::write(cwd.join(".kb/README.md"), default_kb_structure_guide())
+        .map_err(|_| write_config_error())?;
     fs::write(&kb_md, "# raw\n").map_err(|_| write_config_error())?;
     save_state(&cwd, &State::default())?;
     save_registry(&cwd, &RegistryState::default())?;
@@ -43,6 +46,7 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
         "project": plan.project,
         "path": "./kb.md",
         "project_config_path": "./.kb/config.json",
+        "kb_guide_path": kb_guide_rel,
         "global_config_path": global_config_path.to_string_lossy(),
         "global_config_registered": global_config_registered
     });
@@ -59,6 +63,7 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     text.push_str("path: ./kb.md\n");
     text.push_str("ignore_file: ./.kb/.kbignore\n");
     text.push_str("raw_dir: ./.kb/raw\n");
+    text.push_str("kb_guide: ./.kb/README.md\n");
     text.push_str("llm_env_template: ./.kb/.env.template\n");
     text.push_str("llm_project_config: ./.kb/config.json\n");
     let _ = writeln!(
@@ -651,6 +656,541 @@ fn generated_at_unix_string() -> String {
     format!("unix:{}", secs)
 }
 
+#[derive(Debug)]
+struct AskAgentAnswerOutput {
+    tool_trace: Vec<Value>,
+    answer_text: String,
+    citations: Vec<Value>,
+}
+
+#[derive(Debug)]
+struct AskToolResult {
+    summary: String,
+    json: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AskAgentPayload {
+    #[serde(default)]
+    answer_text: Option<String>,
+    #[serde(default)]
+    citations: Option<Vec<Value>>,
+    #[serde(default)]
+    tool_calls: Option<Vec<AskToolCall>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AskToolCall {
+    name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+fn contexts_json(items: &[kb_core::RetrievedContext]) -> Vec<Value> {
+    items.iter()
+        .map(|ctx| {
+            json!({
+                "alias": ctx.alias,
+                "snippet": ctx.snippet,
+                "score": ctx.score,
+                "source_layer": ctx.source_layer,
+                "record_id": ctx.record_id,
+                "chunk_id": ctx.chunk_id,
+            })
+        })
+        .collect()
+}
+
+fn build_retrieval_trace(items: &[kb_core::RetrievedContext]) -> Vec<Value> {
+    items.iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            json!({
+                "step": idx + 1,
+                "layer": item.source_layer.clone().unwrap_or_else(|| "unknown".to_string()),
+                "record_id": item.record_id.clone().unwrap_or_else(|| item.alias.clone()),
+                "chunk_id": item.chunk_id,
+                "message": format!(
+                    "{} hit {} via {}",
+                    idx + 1,
+                    item.record_id.as_deref().unwrap_or(item.alias.as_str()),
+                    item.source_layer.as_deref().unwrap_or("unknown")
+                )
+            })
+        })
+        .collect()
+}
+
+fn build_reasoning_context(question: &str, items: &[kb_core::RetrievedContext]) -> Value {
+    json!({
+        "question": question,
+        "seed_records": items
+            .iter()
+            .map(|item| item.record_id.clone().unwrap_or_else(|| item.alias.clone()))
+            .collect::<Vec<_>>(),
+        "seed_layers": items
+            .iter()
+            .map(|item| item.source_layer.clone().unwrap_or_else(|| "unknown".to_string()))
+            .collect::<Vec<_>>(),
+        "context_count": items.len()
+    })
+}
+
+fn format_answer_text(
+    engine_status: &str,
+    provider: Option<&str>,
+    trace_id: Option<&str>,
+    retrieval_trace: &[Value],
+    tool_trace: &[Value],
+    answer_text: &str,
+    citations: &[Value],
+) -> String {
+    let mut out = String::new();
+    out.push_str("Ask result\n");
+    out.push_str("mode: answer\n");
+    let _ = writeln!(out, "engine_status: {}", engine_status);
+    let _ = writeln!(out, "provider: {}", provider.unwrap_or("null"));
+    let _ = writeln!(out, "trace_id: {}", trace_id.unwrap_or("null"));
+    out.push_str("retrieval_trace:\n");
+    for item in retrieval_trace {
+        let _ = writeln!(out, "  - {}", item["message"].as_str().unwrap_or_default());
+    }
+    out.push_str("tool_trace:\n");
+    for item in tool_trace {
+        let _ = writeln!(
+            out,
+            "  - {}",
+            item["summary"].as_str().unwrap_or("tool call")
+        );
+    }
+    out.push_str("answer:\n");
+    let _ = writeln!(out, "{}", answer_text);
+    if !citations.is_empty() {
+        out.push_str("citations:\n");
+        for citation in citations {
+            let _ = writeln!(
+                out,
+                "  - {}",
+                citation["record_id"].as_str().unwrap_or_default()
+            );
+        }
+    }
+    out
+}
+
+fn ask_agent_tools_schema() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_file_summary",
+                "description": "Read semantic summary, tags, and concepts for one record_id or path.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "record_id_or_path": { "type": "string" }
+                    },
+                    "required": ["record_id_or_path"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_graph_overview",
+                "description": "Read high-level knowledge graph stats and sample edges.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_graph_neighbors",
+                "description": "Read graph neighbors for one file record.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "record_id": { "type": "string" }
+                    },
+                    "required": ["record_id"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_graph_edge",
+                "description": "Read one graph edge with evidence.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "edge_id": { "type": "string" }
+                    },
+                    "required": ["edge_id"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_wiki_page",
+                "description": "Read one wiki page excerpt by page_id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "page_id": { "type": "string" }
+                    },
+                    "required": ["page_id"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "read_raw_chunk",
+                "description": "Read a bounded raw chunk for a record_id or path, optionally targeting one chunk_id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "record_id_or_path": { "type": "string" },
+                        "chunk_id": { "type": "string" }
+                    },
+                    "required": ["record_id_or_path"]
+                }
+            }
+        }),
+    ]
+}
+
+fn send_chat_completion(
+    endpoint: &str,
+    api_key: &str,
+    timeout_secs: u64,
+    body: &Value,
+) -> Result<Value, String> {
+    let request = ureq::post(endpoint)
+        .set("Authorization", &format!("Bearer {}", api_key))
+        .set("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(timeout_secs));
+
+    let raw = match request.send_string(&body.to_string()) {
+        Ok(response) => response
+            .into_string()
+            .map_err(|err| format!("failed to read ask llm response: {}", err))?,
+        Err(ureq::Error::Status(code, response)) => {
+            let body_text = response
+                .into_string()
+                .unwrap_or_else(|_| "<failed to read error body>".to_string());
+            return Err(format!(
+                "http status {} from ask llm provider: {}",
+                code, body_text
+            ));
+        }
+        Err(err) => return Err(format!("ask llm request failed: {}", err)),
+    };
+    serde_json::from_str(&raw).map_err(|err| format!("invalid ask llm json response: {}", err))
+}
+
+fn build_chat_completion_endpoint(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else {
+        format!("{}/chat/completions", trimmed)
+    }
+}
+
+fn decode_ask_agent_payload(response: &Value) -> Result<AskAgentPayload, String> {
+    let content = response
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing choices[0].message.content in ask agent response".to_string())?;
+    serde_json::from_str::<AskAgentPayload>(content)
+        .map_err(|err| format!("invalid ask agent payload: {}", err))
+}
+
+fn execute_ask_tool(
+    toolbox: &kb_llm::SemanticAgentToolbox,
+    call: &AskToolCall,
+) -> Result<AskToolResult, String> {
+    match call.name.as_str() {
+        "read_file_summary" => {
+            let target = call
+                .arguments
+                .get("record_id_or_path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "read_file_summary requires record_id_or_path".to_string())?;
+            let value = toolbox.read_file_summary(target);
+            Ok(render_tool_result(
+                format!("read_file_summary({})", target),
+                &value,
+            ))
+        }
+        "read_graph_overview" => {
+            let value = toolbox.read_graph_overview();
+            Ok(render_tool_result("read_graph_overview".to_string(), &value))
+        }
+        "read_graph_neighbors" => {
+            let target = call
+                .arguments
+                .get("record_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "read_graph_neighbors requires record_id".to_string())?;
+            let value = toolbox.read_graph_neighbors(target);
+            Ok(render_tool_result(
+                format!("read_graph_neighbors({})", target),
+                &value,
+            ))
+        }
+        "read_graph_edge" => {
+            let edge_id = call
+                .arguments
+                .get("edge_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "read_graph_edge requires edge_id".to_string())?;
+            let value = toolbox.read_graph_edge(edge_id);
+            Ok(render_tool_result(
+                format!("read_graph_edge({})", edge_id),
+                &value,
+            ))
+        }
+        "read_wiki_page" => {
+            let page_id = call
+                .arguments
+                .get("page_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "read_wiki_page requires page_id".to_string())?;
+            let value = toolbox.read_wiki_page(page_id);
+            Ok(render_tool_result(
+                format!("read_wiki_page({})", page_id),
+                &value,
+            ))
+        }
+        "read_raw_chunk" => {
+            let target = call
+                .arguments
+                .get("record_id_or_path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "read_raw_chunk requires record_id_or_path".to_string())?;
+            let chunk_id = call.arguments.get("chunk_id").and_then(Value::as_str);
+            let value = toolbox.read_raw_chunk(target, chunk_id);
+            Ok(render_tool_result(
+                format!("read_raw_chunk({})", target),
+                &value,
+            ))
+        }
+        other => Err(format!("unknown ask tool: {}", other)),
+    }
+}
+
+fn render_tool_result<T: serde::Serialize>(summary: String, value: &T) -> AskToolResult {
+    AskToolResult {
+        summary,
+        json: serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string()),
+    }
+}
+
+fn run_minimal_ask_agent(
+    cwd: &Path,
+    question: &str,
+    retrieved_context: &[kb_core::RetrievedContext],
+    provider: Option<&str>,
+) -> Result<AskAgentAnswerOutput, CliError> {
+    if std::env::var("KB_ASK_OFFLINE_STUB").ok().as_deref() == Some("1") {
+        return run_stub_ask_agent(cwd, question, retrieved_context, provider);
+    }
+    match run_live_ask_agent(cwd, question, retrieved_context, provider) {
+        Ok(value) => Ok(value),
+        Err(_) => run_stub_ask_agent(cwd, question, retrieved_context, provider),
+    }
+}
+
+fn run_stub_ask_agent(
+    cwd: &Path,
+    question: &str,
+    retrieved_context: &[kb_core::RetrievedContext],
+    provider: Option<&str>,
+) -> Result<AskAgentAnswerOutput, CliError> {
+    let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd.to_path_buf()));
+    let mut tool_trace = Vec::new();
+    let mut answer_lines = Vec::new();
+    let mut citations = Vec::new();
+
+    tool_trace.push(json!({
+        "tool": "search_context",
+        "summary": format!("search_context seeded {} retrieved items", retrieved_context.len()),
+    }));
+
+    for item in retrieved_context.iter().take(3) {
+        let record_id = item.record_id.as_deref().unwrap_or(item.alias.as_str());
+        if let Some(summary) = toolbox.read_file_summary(record_id) {
+            tool_trace.push(json!({
+                "tool": "read_file_summary",
+                "record_id": record_id,
+                "summary": format!("read_file_summary({}) -> tags={}, concepts={}", record_id, summary.tags.len(), summary.key_concepts.len()),
+            }));
+            answer_lines.push(format!(
+                "- {}: {}",
+                summary.record_id, summary.summary
+            ));
+            citations.push(json!({
+                "record_id": summary.record_id,
+                "chunk_id": Value::Null,
+                "source": "read_file_summary"
+            }));
+        }
+
+        let neighbors = toolbox.read_graph_neighbors(record_id);
+        if !neighbors.is_empty() {
+            tool_trace.push(json!({
+                "tool": "read_graph_neighbors",
+                "record_id": record_id,
+                "summary": format!("read_graph_neighbors({}) -> {} relations", record_id, neighbors.len()),
+            }));
+            for relation in neighbors.iter().take(2) {
+                citations.push(json!({
+                    "record_id": record_id,
+                    "edge_id": relation.edge_id,
+                    "source": "read_graph_neighbors"
+                }));
+            }
+        }
+
+        if let Some(raw_chunk) = toolbox.read_raw_chunk(record_id, item.chunk_id.as_deref()) {
+            tool_trace.push(json!({
+                "tool": "read_raw_chunk",
+                "record_id": record_id,
+                "chunk_id": raw_chunk.chunk_id,
+                "summary": format!("read_raw_chunk({}) -> excerpt {} chars", record_id, raw_chunk.preview.chars().count()),
+            }));
+        }
+    }
+
+    if let Some(wiki_page) = toolbox.read_wiki_page("overview") {
+        tool_trace.push(json!({
+            "tool": "read_wiki_page",
+            "page_id": "overview",
+            "summary": format!("read_wiki_page(overview) -> {}", wiki_page.title),
+        }));
+    }
+
+    let answer_text = if answer_lines.is_empty() {
+        format!(
+            "No compiled summary could be expanded for the question: {}. Provider: {}.",
+            question,
+            provider.unwrap_or("unknown")
+        )
+    } else {
+        format!(
+            "Based on the retrieved knowledge-base summaries and graph neighbors, here is the most relevant context for \"{}\":\n{}",
+            question,
+            answer_lines.join("\n")
+        )
+    };
+
+    Ok(AskAgentAnswerOutput {
+        tool_trace,
+        answer_text,
+        citations,
+    })
+}
+
+fn run_live_ask_agent(
+    cwd: &Path,
+    question: &str,
+    retrieved_context: &[kb_core::RetrievedContext],
+    provider: Option<&str>,
+) -> Result<AskAgentAnswerOutput, String> {
+    let llm = resolve_llm_config(cwd);
+    let api_key = llm
+        .key
+        .as_deref()
+        .ok_or_else(|| "missing KB_LLM_KEY for ask answer mode".to_string())?;
+    let endpoint = build_chat_completion_endpoint(&llm.base_url);
+    let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd.to_path_buf()));
+
+    let mut messages = vec![
+        json!({
+            "role": "system",
+            "content": "You are a knowledge-base question answering agent. Use the provided tools to inspect compiled knowledge layers and raw chunks before answering. Return JSON only."
+        }),
+        json!({
+            "role": "user",
+            "content": format!(
+                "Question: {}\nSeed contexts:\n{}",
+                question,
+                serde_json::to_string_pretty(&contexts_json(retrieved_context)).unwrap_or_else(|_| "[]".to_string())
+            )
+        }),
+    ];
+
+    let mut tool_trace = vec![];
+    let mut final_answer: Option<AskAgentAnswerOutput> = None;
+    let tools = ask_agent_tools_schema();
+
+    for _round in 0..llm.agent_loop_max_rounds.max(1) {
+        let body = json!({
+            "model": llm.model,
+            "messages": messages,
+            "temperature": llm.temperature,
+            "max_tokens": llm.max_output_tokens,
+            "response_format": { "type": "json_object" },
+            "tools": tools,
+            "tool_choice": "auto"
+        });
+        let response = send_chat_completion(&endpoint, api_key, llm.timeout_secs, &body)?;
+        let payload = decode_ask_agent_payload(&response)?;
+        if let Some(calls) = payload.tool_calls {
+            if calls.is_empty() {
+                if let Some(answer_text) = payload.answer_text {
+                    final_answer = Some(AskAgentAnswerOutput {
+                        tool_trace,
+                        answer_text,
+                        citations: payload.citations.unwrap_or_default(),
+                    });
+                    break;
+                }
+            } else {
+                for call in calls {
+                    let tool_result = execute_ask_tool(&toolbox, &call)?;
+                    tool_trace.push(json!({
+                        "tool": call.name,
+                        "summary": tool_result.summary,
+                    }));
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": format!("tool request: {}", call.name)
+                    }));
+                    messages.push(json!({
+                        "role": "user",
+                        "content": format!("tool result for {}:\n{}", call.name, tool_result.json)
+                    }));
+                }
+                continue;
+            }
+        }
+        if let Some(answer_text) = payload.answer_text {
+            final_answer = Some(AskAgentAnswerOutput {
+                tool_trace,
+                answer_text,
+                citations: payload.citations.unwrap_or_default(),
+            });
+            break;
+        }
+    }
+
+    final_answer.ok_or_else(|| {
+        format!(
+            "ask agent did not produce final answer for question '{}' via {}",
+            question,
+            provider.unwrap_or("unknown")
+        )
+    })
+}
+
 pub(crate) fn run_update(
     dry_run: bool,
     prune: bool,
@@ -1186,7 +1726,7 @@ pub(crate) fn run_update(
     Ok(with_text(data, text))
 }
 
-pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliError> {
+pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
     let index_store = FsIndexStore::new(cwd.clone());
     let snapshot = index_store
@@ -1209,8 +1749,55 @@ pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliEr
     )
     .map_err(|_| map_core_error(CoreErrorKind::NoRelevantContext, json!({"query": question})))?;
 
+    let retrieval_trace = build_retrieval_trace(&out.retrieved_context);
+    let reasoning_context = build_reasoning_context(&question, &out.retrieved_context);
+
+    if answer {
+        if out.meta.engine_status == "disabled" {
+            return Err(map_core_error(
+                CoreErrorKind::NoRelevantContext,
+                json!({
+                    "query": question,
+                    "mode": "answer",
+                    "reason": "llm_not_configured"
+                }),
+            ));
+        }
+        let answer_out = run_minimal_ask_agent(
+            &cwd,
+            &question,
+            &out.retrieved_context,
+            out.meta.provider.as_deref(),
+        )?;
+        let text = format_answer_text(
+            out.meta.engine_status.as_str(),
+            out.meta.provider.as_deref(),
+            out.meta.trace_id.as_deref(),
+            &retrieval_trace,
+            &answer_out.tool_trace,
+            &answer_out.answer_text,
+            &answer_out.citations,
+        );
+        let data = json!({
+            "mode": "answer",
+            "engine_status": out.meta.engine_status,
+            "provider": out.meta.provider,
+            "trace_id": out.meta.trace_id,
+            "retrieved_context": contexts_json(&out.retrieved_context),
+            "retrieval_trace": retrieval_trace,
+            "reasoning_context": reasoning_context,
+            "tool_trace": answer_out.tool_trace,
+            "answer": {
+                "text": answer_out.answer_text,
+                "citations": answer_out.citations,
+            }
+        });
+        return Ok(with_text(data, text));
+    }
+
     let mut ask_text = String::new();
     ask_text.push_str("Ask result\n");
+    let _ = writeln!(ask_text, "mode: retrieve");
     let _ = writeln!(ask_text, "engine_status: {}", out.meta.engine_status);
     let _ = writeln!(
         ask_text,
@@ -1245,27 +1832,19 @@ pub(crate) fn run_ask(question: String, top: Option<u32>) -> Result<Value, CliEr
             let _ = writeln!(ask_text, "     {}", ctx.snippet);
         }
     }
-
-    let retrieved_context: Vec<Value> = out
-        .retrieved_context
-        .into_iter()
-        .map(|ctx| {
-            json!({
-                "alias": ctx.alias,
-                "snippet": ctx.snippet,
-                "score": ctx.score,
-                "source_layer": ctx.source_layer,
-                "record_id": ctx.record_id,
-                "chunk_id": ctx.chunk_id,
-            })
-        })
-        .collect();
+    ask_text.push_str("retrieval_trace:\n");
+    for item in &retrieval_trace {
+        let _ = writeln!(ask_text, "  - {}", item["message"].as_str().unwrap_or_default());
+    }
 
     let data = json!({
+        "mode": "retrieve",
         "engine_status": out.meta.engine_status,
         "provider": out.meta.provider,
         "trace_id": out.meta.trace_id,
-        "retrieved_context": retrieved_context,
+        "retrieved_context": contexts_json(&out.retrieved_context),
+        "retrieval_trace": retrieval_trace,
+        "reasoning_context": reasoning_context,
     });
     Ok(with_text(data, ask_text))
 }

@@ -101,6 +101,16 @@ fn env_help_contains_list_flag() {
 }
 
 #[test]
+fn ask_help_contains_answer_flag() {
+    Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .args(["ask", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--answer"));
+}
+
+#[test]
 fn root_help_matches_full_snapshot() {
     let assert = Command::cargo_bin("kb-cli")
         .expect("kb-cli binary should build")

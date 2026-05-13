@@ -135,6 +135,19 @@ fn init_creates_kbignore() {
             .unwrap_or_default(),
         "./.kb/config.json"
     );
+    assert!(dir.join(".kb/README.md").exists());
+    let guide_raw = fs::read_to_string(dir.join(".kb/README.md")).expect("read kb guide");
+    assert!(guide_raw.contains(".kb/index.json"));
+    assert!(guide_raw.contains(".kb/knowledge.json"));
+    assert!(guide_raw.contains(".kb/search.json"));
+    assert!(guide_raw.contains(".kb/graph.json"));
+    assert!(guide_raw.contains(".kb/wiki/"));
+    assert!(guide_raw.contains(".kb/.env.template"));
+    assert!(guide_raw.contains(".kb/config.json"));
+    assert_eq!(
+        body["data"]["kb_guide_path"].as_str().unwrap_or_default(),
+        "./.kb/README.md"
+    );
 }
 
 #[test]
@@ -1381,6 +1394,9 @@ fn ask_returns_disabled_engine_and_retrieval_structure() {
     assert_eq!(body["data"]["engine_status"], "disabled");
     assert!(body["data"]["provider"].is_null());
     assert!(body["data"]["trace_id"].is_null());
+    assert_eq!(body["data"]["mode"], "retrieve");
+    assert!(body["data"]["retrieval_trace"].is_array());
+    assert!(body["data"]["reasoning_context"].is_object());
 
     let retrieved = body["data"]["retrieved_context"]
         .as_array()
@@ -1396,6 +1412,35 @@ fn ask_returns_disabled_engine_and_retrieval_structure() {
     assert!(retrieved[0]["chunk_id"].is_string() || retrieved[0]["chunk_id"].is_null());
     let score = retrieved[0]["score"].as_f64().unwrap_or_default();
     assert!(score > 0.0 && score <= 1.0);
+}
+
+#[test]
+fn ask_answer_requires_llm_credentials() {
+    let dir = unique_temp_dir("ask-answer-needs-llm");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/config.md",
+        "Use kb config to change settings.\nMore details",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/config.md",
+            "docs/config",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["ask", "hello", "--top", "1", "--answer"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E5003");
 }
 
 #[test]
@@ -1428,6 +1473,7 @@ fn ask_reports_configured_engine_when_llm_env_is_present() {
         .env("KB_LLM_KEY", "demo-key")
         .env("KB_LLM_MODEL", "demo-model")
         .env("KB_LLM_BASE_URL", "https://api.example/v1")
+        .env("KB_ASK_OFFLINE_STUB", "1")
         .arg("ask")
         .arg("hello")
         .arg("--top")
@@ -1443,10 +1489,61 @@ fn ask_reports_configured_engine_when_llm_env_is_present() {
         serde_json::from_slice(&output.stdout).expect("json stdout for configured ask success");
     assert_eq!(body["status"], "success");
     assert_eq!(body["data"]["engine_status"], "configured");
+    assert_eq!(body["data"]["mode"], "retrieve");
     assert_eq!(
         body["data"]["provider"],
         Value::String("openai-compatible:demo-model@https://api.example/v1".to_string())
     );
+}
+
+#[test]
+fn ask_answer_reports_tool_trace_when_llm_env_is_present() {
+    let dir = unique_temp_dir("ask-answer-configured-llm");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/config.md",
+        "Use kb config to change settings.\nMore details",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/config.md",
+            "docs/config",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(&dir)
+        .env("KB_LLM_KEY", "demo-key")
+        .env("KB_LLM_MODEL", "demo-model")
+        .env("KB_LLM_BASE_URL", "https://api.example/v1")
+        .arg("ask")
+        .arg("hello")
+        .arg("--top")
+        .arg("1")
+        .arg("--answer")
+        .arg("--output")
+        .arg("json")
+        .assert();
+    let output = assert.get_output();
+    assert!(output.status.success());
+
+    let body: Value =
+        serde_json::from_slice(&output.stdout).expect("json stdout for configured answer");
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["mode"], "answer");
+    assert_eq!(body["data"]["engine_status"], "configured");
+    assert!(body["data"]["tool_trace"].is_array());
+    assert!(body["data"]["answer"].is_object());
 }
 
 #[test]

@@ -499,6 +499,78 @@ kb update --llm --output=json
 }
 ```
 
+## 8.1 `kb ask <QUESTION> [--top <N>] [--answer]`
+
+### 检索包示例（默认）
+**命令：**
+```bash
+kb ask "这个项目如何更新索引？" --output=json
+```
+
+**输出（JSON，节选）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "mode": "retrieve",
+    "engine_status": "configured",
+    "retrieved_context": [
+      {
+        "alias": "docs/config",
+        "source_layer": "l3_projection",
+        "record_id": "docs/config"
+      }
+    ],
+    "retrieval_trace": [
+      {
+        "message": "1 hit docs/config via l3_projection"
+      }
+    ],
+    "reasoning_context": {
+      "question": "这个项目如何更新索引？",
+      "context_count": 1
+    }
+  }
+}
+```
+
+### 最终回答示例（`--answer`）
+**命令：**
+```bash
+kb ask "这个项目如何更新索引？" --answer --output=json
+```
+
+**输出（JSON，节选）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "mode": "answer",
+    "engine_status": "configured",
+    "tool_trace": [
+      {
+        "tool": "search_context",
+        "summary": "search_context seeded 1 retrieved items"
+      },
+      {
+        "tool": "read_file_summary",
+        "record_id": "docs/config"
+      }
+    ],
+    "answer": {
+      "text": "Based on the retrieved knowledge-base summaries...",
+      "citations": [
+        {
+          "record_id": "docs/config"
+        }
+      ]
+    }
+  }
+}
+```
+
 ### LLM 配置缺失回退示例（`--llm` + 无 key）
 **命令：**
 ```bash

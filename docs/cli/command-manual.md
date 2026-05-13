@@ -262,21 +262,40 @@ LLM 配置优先级：
 - 索引持久化失败：`E1003`（退出码 1）
 - 严格模式下渐进层失败：`E1011`（退出码 1）
 
-### 4.10 `kb ask <QUESTION> [--top <N>]`
+### 4.10 `kb ask <QUESTION> [--top <N>] [--answer]`
 
 行为：
 - 按分层顺序检索：`L3 -> L2 -> L4 -> L1 fallback`。
 - 当 `L2-L4` 产物缺失或不可读时，自动回退到 `L1`，保持 `ask` 可用。
-- 未配置 LLM 凭据时 `engine_status=disabled`；配置后为 `engine_status=configured`。
+- 默认返回检索包：`mode=retrieve`，包含 `retrieved_context`、`retrieval_trace`、`reasoning_context`。
+- 显式传入 `--answer` 时进入最小只读 ask-agent：先检索，再按需调用知识库工具，最后输出答案。
+- 未配置 LLM 凭据时：
+  - 默认 `ask` 仍可用
+  - `ask --answer` 失败并返回 `E5003`
+- 配置 LLM 凭据后 `engine_status=configured`。
 
 主要输出字段：
+- `mode`
 - `engine_status`
 - `provider`
 - `trace_id`
 - `retrieved_context[]`
+- `retrieval_trace[]`
+- `reasoning_context`
 - `retrieved_context[].source_layer`（`l3_projection|l2_semantic|l4_graph|l1_index`）
 - `retrieved_context[].record_id`
 - `retrieved_context[].chunk_id`（`l1_index` 回退命中时可为 `null`）
+- `tool_trace[]`（仅 `--answer`）
+- `answer.text`（仅 `--answer`）
+- `answer.citations[]`（仅 `--answer`）
+
+`--answer` 模式下的只读原子工具：
+- `search_context`
+- `read_file_summary`
+- `read_graph_neighbors`
+- `read_graph_edge`
+- `read_wiki_page`
+- `read_raw_chunk`
 
 错误与退出：
 - 无可用上下文：`E5003`（退出码 5）

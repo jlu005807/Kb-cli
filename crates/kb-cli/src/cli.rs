@@ -123,6 +123,8 @@ pub enum Commands {
         question: String,
         #[arg(long)]
         top: Option<u32>,
+        #[arg(long, action = ArgAction::SetTrue)]
+        answer: bool,
     },
     Env {
         #[arg(long, action = ArgAction::SetTrue)]

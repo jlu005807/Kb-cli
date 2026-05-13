@@ -1,5 +1,6 @@
 use kb_core::domain::{
-    GraphSnapshot, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, WikiPageDocument,
+    GraphEdge, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus,
+    WikiPageDocument, WikiManifestSnapshot,
 };
 use kb_core::SemanticExtractRequest;
 use serde::Serialize;
@@ -154,6 +155,95 @@ impl SemanticAgentToolbox {
                 "edge_count": graph.edges.len(),
             },
             "read_wiki_page": page_tools,
+        })
+    }
+
+    pub fn read_file_summary(&self, record_id_or_path: &str) -> Option<AgentSummaryItem> {
+        let knowledge = self.load_knowledge_snapshot()?;
+        self.find_summary_by_record_id(&knowledge, record_id_or_path)
+            .or_else(|| self.find_summary_by_path(&knowledge, record_id_or_path))
+    }
+
+    pub fn read_graph_overview(&self) -> AgentGraphOverview {
+        match self.load_graph_snapshot() {
+            Some(graph) => AgentGraphOverview {
+                node_count: graph.nodes.len(),
+                edge_count: graph.edges.len(),
+                sample_edges: graph
+                    .edges
+                    .iter()
+                    .take(self.graph_relation_limit)
+                    .map(graph_edge_item)
+                    .collect(),
+            },
+            None => AgentGraphOverview {
+                node_count: 0,
+                edge_count: 0,
+                sample_edges: vec![],
+            },
+        }
+    }
+
+    pub fn read_graph_neighbors(&self, record_id: &str) -> Vec<AgentGraphRelation> {
+        let graph = self.load_graph_snapshot();
+        self.tool_read_graph_neighbors_by_record_id(record_id, graph.as_ref())
+    }
+
+    pub fn read_graph_edge(&self, edge_id: &str) -> Option<AgentGraphEdgeDetail> {
+        let graph = self.load_graph_snapshot()?;
+        let edge = graph.edges.iter().find(|item| item.edge_id == edge_id)?;
+        Some(AgentGraphEdgeDetail {
+            edge_id: edge.edge_id.clone(),
+            edge_type: format!("{:?}", edge.edge_type).to_ascii_lowercase(),
+            from_node_id: edge.from_node_id.clone(),
+            to_node_id: edge.to_node_id.clone(),
+            evidence: edge
+                .evidence
+                .iter()
+                .map(|item| AgentGraphEdgeEvidence {
+                    record_id: item.record_id.clone(),
+                    chunk_id: item.chunk_id.clone(),
+                    reason: item.reason.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    pub fn read_wiki_page(&self, page_id: &str) -> Option<AgentWikiPageItem> {
+        let wiki = self.load_wiki_snapshot()?;
+        let page = wiki.pages.iter().find(|item| item.page_id == page_id)?;
+        Some(AgentWikiPageItem {
+            page_id: page.page_id.clone(),
+            title: page.title.clone(),
+            relative_path: page.relative_path.clone(),
+            page_type: format!("{:?}", page.page_type).to_ascii_lowercase(),
+            source_records: page.source_records.clone(),
+            markdown_excerpt: stable_truncate(
+                page.markdown.trim(),
+                self.wiki_markdown_excerpt_max_chars,
+            ),
+        })
+    }
+
+    pub fn read_raw_chunk(
+        &self,
+        record_id_or_path: &str,
+        chunk_id: Option<&str>,
+    ) -> Option<AgentRawChunkItem> {
+        let knowledge = self.load_knowledge_snapshot()?;
+        let entry = knowledge.entries.iter().find(|item| {
+            item.record_id == record_id_or_path || item.path == record_id_or_path
+        })?;
+        let root = self.workspace_root.as_ref()?;
+        let source_path = resolve_source_path(root, &entry.path);
+        let raw = fs::read_to_string(source_path).ok()?;
+        let chunk = selected_chunk(entry, chunk_id)?;
+        let excerpt = excerpt_for_chunk(&raw, chunk, self.raw_excerpt_max_chars);
+        Some(AgentRawChunkItem {
+            record_id: entry.record_id.clone(),
+            path: entry.path.clone(),
+            chunk_id: chunk.chunk_id.clone(),
+            preview: excerpt,
         })
     }
 
@@ -332,6 +422,29 @@ impl SemanticAgentToolbox {
         let raw = fs::read_to_string(path).ok()?;
         serde_json::from_str(&raw).ok()
     }
+
+    fn load_wiki_snapshot(&self) -> Option<AgentWikiSnapshot> {
+        let root = self.workspace_root.as_ref()?;
+        let manifest_raw = fs::read_to_string(root.join(".kb").join("wiki").join("manifest.json"))
+            .ok()?;
+        let manifest = serde_json::from_str::<WikiManifestSnapshot>(&manifest_raw).ok()?;
+        let mut pages = Vec::new();
+        for entry in &manifest.pages {
+            let page_raw = fs::read_to_string(root.join(".kb").join("wiki").join(&entry.relative_path))
+                .ok()?;
+            pages.push(WikiPageDocument {
+                page_id: entry.page_id.clone(),
+                page_type: entry.page_type.clone(),
+                title: entry.title.clone(),
+                relative_path: entry.relative_path.clone(),
+                input_signature: entry.input_signature.clone(),
+                source_records: entry.source_records.clone(),
+                source_chunks: entry.source_chunks.clone(),
+                markdown: page_raw,
+            });
+        }
+        Some(AgentWikiSnapshot { pages })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -358,6 +471,86 @@ pub struct AgentGraphRelation {
     pub edge_type: String,
     pub related_node_id: String,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentGraphOverview {
+    pub node_count: usize,
+    pub edge_count: usize,
+    pub sample_edges: Vec<AgentGraphEdgeItem>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentGraphEdgeItem {
+    pub edge_id: String,
+    pub edge_type: String,
+    pub from_node_id: String,
+    pub to_node_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentGraphEdgeDetail {
+    pub edge_id: String,
+    pub edge_type: String,
+    pub from_node_id: String,
+    pub to_node_id: String,
+    pub evidence: Vec<AgentGraphEdgeEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentGraphEdgeEvidence {
+    pub record_id: String,
+    pub chunk_id: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentWikiPageItem {
+    pub page_id: String,
+    pub title: String,
+    pub relative_path: String,
+    pub page_type: String,
+    pub source_records: Vec<String>,
+    pub markdown_excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentRawChunkItem {
+    pub record_id: String,
+    pub path: String,
+    pub chunk_id: String,
+    pub preview: String,
+}
+
+#[derive(Debug, Clone)]
+struct AgentWikiSnapshot {
+    pages: Vec<WikiPageDocument>,
+}
+
+fn graph_edge_item(edge: &GraphEdge) -> AgentGraphEdgeItem {
+    AgentGraphEdgeItem {
+        edge_id: edge.edge_id.clone(),
+        edge_type: format!("{:?}", edge.edge_type).to_ascii_lowercase(),
+        from_node_id: edge.from_node_id.clone(),
+        to_node_id: edge.to_node_id.clone(),
+    }
+}
+
+fn selected_chunk<'a>(entry: &'a KnowledgeEntry, chunk_id: Option<&str>) -> Option<&'a KnowledgeChunk> {
+    if let Some(chunk_id) = chunk_id {
+        return entry.chunks.iter().find(|item| item.chunk_id == chunk_id);
+    }
+    entry.chunks.first()
+}
+
+fn excerpt_for_chunk(raw: &str, chunk: &KnowledgeChunk, max_chars: usize) -> String {
+    let raw_len_u64 = raw.len() as u64;
+    let start = chunk.byte_range[0].min(raw_len_u64) as usize;
+    let end = chunk.byte_range[1].min(raw_len_u64) as usize;
+    if start >= end {
+        return stable_truncate(raw.trim(), max_chars);
+    }
+    stable_truncate(raw[start..end].trim(), max_chars)
 }
 
 fn summary_item_from_entry(entry: &KnowledgeEntry, score: f64) -> Option<AgentSummaryItem> {
