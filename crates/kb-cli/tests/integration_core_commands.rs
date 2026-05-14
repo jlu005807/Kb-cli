@@ -1543,7 +1543,67 @@ fn ask_answer_reports_tool_trace_when_llm_env_is_present() {
     assert_eq!(body["data"]["mode"], "answer");
     assert_eq!(body["data"]["engine_status"], "configured");
     assert!(body["data"]["tool_trace"].is_array());
+    assert!(body["data"]["agent_trace"].is_array());
     assert!(body["data"]["answer"].is_object());
+}
+
+#[test]
+fn ask_answer_stub_emits_agent_trace_and_stderr_progress() {
+    let dir = unique_temp_dir("ask-answer-agent-progress");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/config.md",
+        "Use kb config to change settings.\nMore details",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/config.md",
+            "docs/config",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let assert = Command::cargo_bin("kb-cli")
+        .expect("kb-cli binary should build")
+        .current_dir(&dir)
+        .env("KB_LLM_KEY", "demo-key")
+        .env("KB_LLM_MODEL", "demo-model")
+        .env("KB_LLM_BASE_URL", "https://api.example/v1")
+        .env("KB_ASK_OFFLINE_STUB", "1")
+        .arg("ask")
+        .arg("hello")
+        .arg("--top")
+        .arg("1")
+        .arg("--answer")
+        .arg("--output")
+        .arg("json")
+        .assert();
+    let output = assert.get_output();
+    assert!(output.status.success());
+
+    let body: Value =
+        serde_json::from_slice(&output.stdout).expect("json stdout for configured answer");
+    assert_eq!(body["status"], "success");
+    assert_eq!(body["data"]["mode"], "answer");
+    assert_eq!(body["data"]["agent_backend"], "offline_stub");
+    let agent_trace = body["data"]["agent_trace"]
+        .as_array()
+        .expect("agent_trace should be array");
+    assert!(!agent_trace.is_empty());
+    assert!(agent_trace.iter().any(|item| item["kind"] == "thought"));
+    assert!(agent_trace.iter().any(|item| item["kind"] == "tool_call"));
+
+    let stderr = String::from_utf8(output.stderr.clone()).expect("stderr should be utf8");
+    assert!(stderr.contains("[ask-agent]"));
+    assert!(stderr.contains("read_file_summary"));
 }
 
 #[test]

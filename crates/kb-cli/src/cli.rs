@@ -123,7 +123,7 @@ pub enum Commands {
         question: String,
         #[arg(long)]
         top: Option<u32>,
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, alias = "llm", action = ArgAction::SetTrue)]
         answer: bool,
     },
     Env {
@@ -201,5 +201,20 @@ mod tests {
         assert!(help.contains("manage references"));
         assert!(help.contains("maintain index state"));
         assert!(help.contains("retrieve and environment"));
+    }
+
+    #[test]
+    fn ask_accepts_llm_alias_for_answer_mode() {
+        let cli = Cli::parse_from(["kb", "ask", "hello", "--llm"]);
+
+        match cli.command {
+            Commands::Ask {
+                question, answer, ..
+            } => {
+                assert_eq!(question, "hello");
+                assert!(answer);
+            }
+            _ => panic!("expected ask command"),
+        }
     }
 }

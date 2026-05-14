@@ -658,6 +658,9 @@ fn generated_at_unix_string() -> String {
 
 #[derive(Debug)]
 struct AskAgentAnswerOutput {
+    agent_backend: String,
+    agent_warning: Option<String>,
+    agent_trace: Vec<Value>,
     tool_trace: Vec<Value>,
     answer_text: String,
     citations: Vec<Value>,
@@ -669,20 +672,25 @@ struct AskToolResult {
     json: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct AskAgentPayload {
-    #[serde(default)]
-    answer_text: Option<String>,
-    #[serde(default)]
-    citations: Option<Vec<Value>>,
-    #[serde(default)]
-    tool_calls: Option<Vec<AskToolCall>>,
+#[derive(Debug)]
+struct AskAgentFinalPayload {
+    reasoning_summary: Option<String>,
+    answer_text: String,
+    citations: Vec<Value>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug)]
+struct AskAgentTurn {
+    raw_message: Value,
+    reasoning_summary: Option<String>,
+    tool_calls: Vec<AskToolCall>,
+    final_payload: Option<AskAgentFinalPayload>,
+}
+
+#[derive(Debug)]
 struct AskToolCall {
+    id: String,
     name: String,
-    #[serde(default)]
     arguments: Value,
 }
 
@@ -740,7 +748,10 @@ fn format_answer_text(
     engine_status: &str,
     provider: Option<&str>,
     trace_id: Option<&str>,
+    agent_backend: &str,
+    agent_warning: Option<&str>,
     retrieval_trace: &[Value],
+    agent_trace: &[Value],
     tool_trace: &[Value],
     answer_text: &str,
     citations: &[Value],
@@ -751,9 +762,19 @@ fn format_answer_text(
     let _ = writeln!(out, "engine_status: {}", engine_status);
     let _ = writeln!(out, "provider: {}", provider.unwrap_or("null"));
     let _ = writeln!(out, "trace_id: {}", trace_id.unwrap_or("null"));
+    let _ = writeln!(out, "agent_backend: {}", agent_backend);
+    if let Some(warning) = agent_warning {
+        let _ = writeln!(out, "agent_warning: {}", warning);
+    }
     out.push_str("retrieval_trace:\n");
     for item in retrieval_trace {
         let _ = writeln!(out, "  - {}", item["message"].as_str().unwrap_or_default());
+    }
+    if !agent_trace.is_empty() {
+        out.push_str("agent_trace:\n");
+        for item in agent_trace {
+            let _ = writeln!(out, "  - {}", item["message"].as_str().unwrap_or_default());
+        }
     }
     out.push_str("tool_trace:\n");
     for item in tool_trace {
@@ -903,13 +924,352 @@ fn build_chat_completion_endpoint(base_url: &str) -> String {
     }
 }
 
-fn decode_ask_agent_payload(response: &Value) -> Result<AskAgentPayload, String> {
-    let content = response
-        .pointer("/choices/0/message/content")
+fn emit_runtime_trace(prefix: &str, message: &str) {
+    eprintln!("[{}] {}", prefix, message);
+}
+
+fn emit_ask_trace(message: &str) {
+    emit_runtime_trace("ask-agent", message);
+}
+
+fn truncate_trace_text(input: &str, max_chars: usize) -> String {
+    let count = input.chars().count();
+    if count <= max_chars {
+        return input.to_string();
+    }
+    let mut out = input.chars().take(max_chars).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn push_agent_trace(
+    trace: &mut Vec<Value>,
+    round: Option<usize>,
+    kind: &str,
+    message: impl Into<String>,
+    tool: Option<&str>,
+) {
+    let message = message.into();
+    let mut item = json!({
+        "kind": kind,
+        "message": message,
+    });
+    if let Some(obj) = item.as_object_mut() {
+        obj.insert(
+            "round".to_string(),
+            round.map(Value::from).unwrap_or(Value::Null),
+        );
+        obj.insert(
+            "tool".to_string(),
+            tool.map(Value::from).unwrap_or(Value::Null),
+        );
+    }
+    trace.push(item);
+}
+
+fn extract_chat_message_content(message: &Value) -> Option<String> {
+    let message_content = message.get("content")?;
+    if let Some(text) = message_content.as_str() {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(parts) = message_content.as_array() {
+        let joined = parts
+            .iter()
+            .filter_map(|item| item.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+        let trimmed = joined.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+fn extract_first_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in text[start..].char_indices() {
+        let absolute_idx = start + idx;
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&text[start..=absolute_idx]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
+    let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.is_object() {
+            return Ok(value);
+        }
+    }
+
+    if let Some(candidate) = extract_first_json_object(trimmed) {
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            if value.is_object() {
+                return Ok(value);
+            }
+        }
+    }
+
+    Err(format!(
+        "ask agent content is not a valid json object; excerpt={:?}",
+        truncate_trace_text(trimmed, 320)
+    ))
+}
+
+fn supports_ask_provider_fallback(error_text: &str) -> bool {
+    let lowered = error_text.to_ascii_lowercase();
+    lowered.contains("max_completion_tokens")
+        || lowered.contains("max_tokens")
+        || lowered.contains("response_format")
+        || lowered.contains("json_object")
+        || lowered.contains("unknown field")
+        || lowered.contains("unrecognized field")
+        || lowered.contains("invalid request")
+        || lowered.contains("unsupported parameter")
+        || lowered.contains("unsupported field")
+        || lowered.contains("unexpected field")
+}
+
+fn build_ask_chat_completion_body(
+    model: &str,
+    temperature: f64,
+    max_output_tokens: u32,
+    messages: &[Value],
+    tools: &[Value],
+    max_tokens_key: &str,
+    include_response_format: bool,
+) -> Value {
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "tools": tools,
+        "tool_choice": "auto",
+    });
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
+        if include_response_format {
+            obj.insert(
+                "response_format".to_string(),
+                json!({ "type": "json_object" }),
+            );
+        }
+    }
+    body
+}
+
+fn send_ask_chat_completion_once(
+    endpoint: &str,
+    api_key: &str,
+    timeout_secs: u64,
+    model: &str,
+    temperature: f64,
+    max_output_tokens: u32,
+    messages: &[Value],
+    tools: &[Value],
+) -> Result<Value, String> {
+    let variants = [
+        (
+            "max_completion_tokens+response_format",
+            "max_completion_tokens",
+            true,
+        ),
+        ("max_tokens+response_format", "max_tokens", true),
+        ("max_completion_tokens", "max_completion_tokens", false),
+        ("max_tokens", "max_tokens", false),
+    ];
+    let mut errors = Vec::new();
+    for (label, max_tokens_key, include_response_format) in variants {
+        let body = build_ask_chat_completion_body(
+            model,
+            temperature,
+            max_output_tokens,
+            messages,
+            tools,
+            max_tokens_key,
+            include_response_format,
+        );
+        match send_chat_completion(endpoint, api_key, timeout_secs, &body) {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                let can_try_next = supports_ask_provider_fallback(&err);
+                errors.push(format!("{} failed: {}", label, err));
+                if !can_try_next {
+                    return Err(errors.join(" | "));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "ask agent compatibility fallbacks failed; {}",
+        errors.join(" | ")
+    ))
+}
+
+fn send_ask_chat_completion_with_retry(
+    endpoint: &str,
+    api_key: &str,
+    llm: &kb_llm::LlmRuntimeConfig,
+    messages: &[Value],
+    tools: &[Value],
+) -> Result<Value, String> {
+    let max_attempts = llm.retry_max_attempts.max(1);
+    let mut errors = Vec::new();
+    for attempt in 1..=max_attempts {
+        match send_ask_chat_completion_once(
+            endpoint,
+            api_key,
+            llm.timeout_secs,
+            &llm.model,
+            llm.temperature,
+            llm.max_output_tokens,
+            messages,
+            tools,
+        ) {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                errors.push(format!("attempt {}: {}", attempt, err));
+                if attempt < max_attempts {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        llm.retry_backoff_ms,
+                    ));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "ask agent request failed after {} attempts; {}",
+        max_attempts,
+        errors.join(" | ")
+    ))
+}
+
+fn decode_ask_agent_final_payload(content: &str) -> Result<AskAgentFinalPayload, String> {
+    let value = parse_json_object_from_text(content)?;
+    let answer_text = value
+        .get("answer_text")
+        .or_else(|| value.get("text"))
         .and_then(Value::as_str)
-        .ok_or_else(|| "missing choices[0].message.content in ask agent response".to_string())?;
-    serde_json::from_str::<AskAgentPayload>(content)
-        .map_err(|err| format!("invalid ask agent payload: {}", err))
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .ok_or_else(|| "ask agent final payload is missing answer_text".to_string())?;
+    let reasoning_summary = value
+        .get("reasoning_summary")
+        .or_else(|| value.get("thought"))
+        .and_then(Value::as_str)
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty());
+    let citations = value
+        .get("citations")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok(AskAgentFinalPayload {
+        reasoning_summary,
+        answer_text,
+        citations,
+    })
+}
+
+fn decode_ask_agent_turn(response: &Value) -> Result<AskAgentTurn, String> {
+    let raw_message = response
+        .pointer("/choices/0/message")
+        .cloned()
+        .ok_or_else(|| "missing choices[0].message in ask agent response".to_string())?;
+    let content = extract_chat_message_content(&raw_message);
+    let tool_calls = raw_message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    let id = item
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("tool_call")
+                        .to_string();
+                    let function = item
+                        .get("function")
+                        .ok_or_else(|| "tool_call missing function".to_string())?;
+                    let name = function
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "tool_call missing function.name".to_string())?
+                        .to_string();
+                    let arguments = match function.get("arguments") {
+                        Some(Value::String(raw)) => serde_json::from_str::<Value>(raw)
+                            .map_err(|err| format!("invalid tool_call arguments json: {}", err))?,
+                        Some(value) => value.clone(),
+                        None => json!({}),
+                    };
+                    Ok(AskToolCall {
+                        id,
+                        name,
+                        arguments,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    let final_payload = if tool_calls.is_empty() {
+        match content.as_deref() {
+            Some(text) => match decode_ask_agent_final_payload(text) {
+                Ok(payload) => Some(payload),
+                Err(_) => Some(AskAgentFinalPayload {
+                    reasoning_summary: None,
+                    answer_text: text.trim().to_string(),
+                    citations: vec![],
+                }),
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let reasoning_summary = if !tool_calls.is_empty() {
+        content
+    } else {
+        final_payload
+            .as_ref()
+            .and_then(|payload| payload.reasoning_summary.clone())
+    };
+
+    Ok(AskAgentTurn {
+        raw_message,
+        reasoning_summary,
+        tool_calls,
+        final_payload,
+    })
 }
 
 fn execute_ask_tool(
@@ -1004,7 +1364,26 @@ fn run_minimal_ask_agent(
     }
     match run_live_ask_agent(cwd, question, retrieved_context, provider) {
         Ok(value) => Ok(value),
-        Err(_) => run_stub_ask_agent(cwd, question, retrieved_context, provider),
+        Err(err) => {
+            emit_ask_trace(&format!(
+                "live agent failed, falling back to offline stub: {}",
+                truncate_trace_text(&err, 240)
+            ));
+            let mut fallback = run_stub_ask_agent(cwd, question, retrieved_context, provider)?;
+            fallback.agent_backend = "fallback_stub".to_string();
+            fallback.agent_warning = Some(err.clone());
+            push_agent_trace(
+                &mut fallback.agent_trace,
+                None,
+                "fallback",
+                format!(
+                    "Live ask agent was unavailable, so a deterministic offline stub answered instead: {}",
+                    truncate_trace_text(&err, 180)
+                ),
+                None,
+            );
+            Ok(fallback)
+        }
     }
 }
 
@@ -1015,9 +1394,25 @@ fn run_stub_ask_agent(
     provider: Option<&str>,
 ) -> Result<AskAgentAnswerOutput, CliError> {
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd.to_path_buf()));
+    let mut agent_trace = Vec::new();
     let mut tool_trace = Vec::new();
     let mut answer_lines = Vec::new();
     let mut citations = Vec::new();
+
+    push_agent_trace(
+        &mut agent_trace,
+        Some(1),
+        "thought",
+        format!(
+            "Seeded {} retrieved records; inspect summaries, graph neighbors, and raw chunks for the best answer.",
+            retrieved_context.len()
+        ),
+        None,
+    );
+    emit_ask_trace(&format!(
+        "round 1 thought: seeded {} retrieved records",
+        retrieved_context.len()
+    ));
 
     tool_trace.push(json!({
         "tool": "search_context",
@@ -1027,11 +1422,32 @@ fn run_stub_ask_agent(
     for item in retrieved_context.iter().take(3) {
         let record_id = item.record_id.as_deref().unwrap_or(item.alias.as_str());
         if let Some(summary) = toolbox.read_file_summary(record_id) {
+            let tool_summary = format!(
+                "read_file_summary({}) -> tags={}, concepts={}",
+                record_id,
+                summary.tags.len(),
+                summary.key_concepts.len()
+            );
+            push_agent_trace(
+                &mut agent_trace,
+                Some(1),
+                "tool_call",
+                format!("Inspect semantic summary for {}", record_id),
+                Some("read_file_summary"),
+            );
+            emit_ask_trace(&format!("round 1 tool read_file_summary({})", record_id));
             tool_trace.push(json!({
                 "tool": "read_file_summary",
                 "record_id": record_id,
-                "summary": format!("read_file_summary({}) -> tags={}, concepts={}", record_id, summary.tags.len(), summary.key_concepts.len()),
+                "summary": tool_summary,
             }));
+            push_agent_trace(
+                &mut agent_trace,
+                Some(1),
+                "tool_result",
+                format!("Loaded summary for {}", record_id),
+                Some("read_file_summary"),
+            );
             answer_lines.push(format!(
                 "- {}: {}",
                 summary.record_id, summary.summary
@@ -1045,11 +1461,26 @@ fn run_stub_ask_agent(
 
         let neighbors = toolbox.read_graph_neighbors(record_id);
         if !neighbors.is_empty() {
+            push_agent_trace(
+                &mut agent_trace,
+                Some(1),
+                "tool_call",
+                format!("Expand {} through graph neighbors", record_id),
+                Some("read_graph_neighbors"),
+            );
+            emit_ask_trace(&format!("round 1 tool read_graph_neighbors({})", record_id));
             tool_trace.push(json!({
                 "tool": "read_graph_neighbors",
                 "record_id": record_id,
                 "summary": format!("read_graph_neighbors({}) -> {} relations", record_id, neighbors.len()),
             }));
+            push_agent_trace(
+                &mut agent_trace,
+                Some(1),
+                "tool_result",
+                format!("Graph expansion for {} found {} relations", record_id, neighbors.len()),
+                Some("read_graph_neighbors"),
+            );
             for relation in neighbors.iter().take(2) {
                 citations.push(json!({
                     "record_id": record_id,
@@ -1060,21 +1491,51 @@ fn run_stub_ask_agent(
         }
 
         if let Some(raw_chunk) = toolbox.read_raw_chunk(record_id, item.chunk_id.as_deref()) {
+            push_agent_trace(
+                &mut agent_trace,
+                Some(1),
+                "tool_call",
+                format!("Read raw evidence for {}", record_id),
+                Some("read_raw_chunk"),
+            );
+            emit_ask_trace(&format!("round 1 tool read_raw_chunk({})", record_id));
             tool_trace.push(json!({
                 "tool": "read_raw_chunk",
                 "record_id": record_id,
                 "chunk_id": raw_chunk.chunk_id,
                 "summary": format!("read_raw_chunk({}) -> excerpt {} chars", record_id, raw_chunk.preview.chars().count()),
             }));
+            push_agent_trace(
+                &mut agent_trace,
+                Some(1),
+                "tool_result",
+                format!("Read raw chunk {} for {}", raw_chunk.chunk_id, record_id),
+                Some("read_raw_chunk"),
+            );
         }
     }
 
     if let Some(wiki_page) = toolbox.read_wiki_page("overview") {
+        push_agent_trace(
+            &mut agent_trace,
+            Some(1),
+            "tool_call",
+            "Check wiki overview for broader project context".to_string(),
+            Some("read_wiki_page"),
+        );
+        emit_ask_trace("round 1 tool read_wiki_page(overview)");
         tool_trace.push(json!({
             "tool": "read_wiki_page",
             "page_id": "overview",
             "summary": format!("read_wiki_page(overview) -> {}", wiki_page.title),
         }));
+        push_agent_trace(
+            &mut agent_trace,
+            Some(1),
+            "tool_result",
+            format!("Loaded wiki overview page {}", wiki_page.title),
+            Some("read_wiki_page"),
+        );
     }
 
     let answer_text = if answer_lines.is_empty() {
@@ -1090,8 +1551,19 @@ fn run_stub_ask_agent(
             answer_lines.join("\n")
         )
     };
+    push_agent_trace(
+        &mut agent_trace,
+        Some(1),
+        "final",
+        "Compose the final answer from retrieved summaries and graph evidence.".to_string(),
+        None,
+    );
+    emit_ask_trace("final answer composed from offline stub context");
 
     Ok(AskAgentAnswerOutput {
+        agent_backend: "offline_stub".to_string(),
+        agent_warning: None,
+        agent_trace,
         tool_trace,
         answer_text,
         citations,
@@ -1115,80 +1587,115 @@ fn run_live_ask_agent(
     let mut messages = vec![
         json!({
             "role": "system",
-            "content": "You are a knowledge-base question answering agent. Use the provided tools to inspect compiled knowledge layers and raw chunks before answering. Return JSON only."
+            "content": "You are a read-only knowledge-base question answering agent. Use the available tools to inspect compiled summaries, graph relations, wiki pages, and raw chunks before answering. Prefer graph-backed evidence when it helps connect related files. When you are ready to answer, stop calling tools and return a JSON object with keys reasoning_summary, answer_text, and citations. Keep reasoning_summary brief and high-level."
         }),
         json!({
             "role": "user",
             "content": format!(
-                "Question: {}\nSeed contexts:\n{}",
+                "Question: {}\nSeed contexts:\n{}\nYou may inspect graph neighbors and edge evidence to expand from the retrieved records before answering.",
                 question,
                 serde_json::to_string_pretty(&contexts_json(retrieved_context)).unwrap_or_else(|_| "[]".to_string())
             )
         }),
     ];
 
+    let mut agent_trace = vec![];
     let mut tool_trace = vec![];
-    let mut final_answer: Option<AskAgentAnswerOutput> = None;
     let tools = ask_agent_tools_schema();
+    emit_ask_trace(&format!(
+        "start provider={} seed_records={}",
+        provider.unwrap_or("unknown"),
+        retrieved_context.len()
+    ));
 
-    for _round in 0..llm.agent_loop_max_rounds.max(1) {
-        let body = json!({
-            "model": llm.model,
-            "messages": messages,
-            "temperature": llm.temperature,
-            "max_tokens": llm.max_output_tokens,
-            "response_format": { "type": "json_object" },
-            "tools": tools,
-            "tool_choice": "auto"
-        });
-        let response = send_chat_completion(&endpoint, api_key, llm.timeout_secs, &body)?;
-        let payload = decode_ask_agent_payload(&response)?;
-        if let Some(calls) = payload.tool_calls {
-            if calls.is_empty() {
-                if let Some(answer_text) = payload.answer_text {
-                    final_answer = Some(AskAgentAnswerOutput {
-                        tool_trace,
-                        answer_text,
-                        citations: payload.citations.unwrap_or_default(),
-                    });
-                    break;
-                }
-            } else {
-                for call in calls {
-                    let tool_result = execute_ask_tool(&toolbox, &call)?;
-                    tool_trace.push(json!({
-                        "tool": call.name,
-                        "summary": tool_result.summary,
-                    }));
-                    messages.push(json!({
-                        "role": "assistant",
-                        "content": format!("tool request: {}", call.name)
-                    }));
-                    messages.push(json!({
-                        "role": "user",
-                        "content": format!("tool result for {}:\n{}", call.name, tool_result.json)
-                    }));
-                }
-                continue;
-            }
+    for round in 1..=llm.agent_loop_max_rounds.max(1) {
+        emit_ask_trace(&format!("round {} request", round));
+        let response =
+            send_ask_chat_completion_with_retry(&endpoint, api_key, &llm, &messages, &tools)?;
+        let turn = decode_ask_agent_turn(&response)?;
+
+        if let Some(reasoning) = turn.reasoning_summary.clone() {
+            push_agent_trace(
+                &mut agent_trace,
+                Some(round),
+                "thought",
+                reasoning.clone(),
+                None,
+            );
+            emit_ask_trace(&format!(
+                "round {} thought: {}",
+                round,
+                truncate_trace_text(&reasoning, 180)
+            ));
         }
-        if let Some(answer_text) = payload.answer_text {
-            final_answer = Some(AskAgentAnswerOutput {
+
+        if !turn.tool_calls.is_empty() {
+            messages.push(turn.raw_message);
+            for call in turn.tool_calls {
+                let tool_result = execute_ask_tool(&toolbox, &call)?;
+                push_agent_trace(
+                    &mut agent_trace,
+                    Some(round),
+                    "tool_call",
+                    format!("Invoke {}", tool_result.summary),
+                    Some(call.name.as_str()),
+                );
+                emit_ask_trace(&format!("round {} tool {}", round, tool_result.summary));
+                tool_trace.push(json!({
+                    "tool": call.name,
+                    "summary": tool_result.summary,
+                }));
+                push_agent_trace(
+                    &mut agent_trace,
+                    Some(round),
+                    "tool_result",
+                    format!("Loaded {}", truncate_trace_text(&tool_result.summary, 180)),
+                    Some(call.name.as_str()),
+                );
+                messages.push(json!({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": tool_result.json,
+                }));
+            }
+            continue;
+        }
+
+        if let Some(payload) = turn.final_payload {
+            if let Some(reasoning) = payload.reasoning_summary.clone() {
+                push_agent_trace(
+                    &mut agent_trace,
+                    Some(round),
+                    "final",
+                    reasoning,
+                    None,
+                );
+            } else {
+                push_agent_trace(
+                    &mut agent_trace,
+                    Some(round),
+                    "final",
+                    "Final answer returned after agent inspection.".to_string(),
+                    None,
+                );
+            }
+            emit_ask_trace(&format!("final answer returned in round {}", round));
+            return Ok(AskAgentAnswerOutput {
+                agent_backend: "live".to_string(),
+                agent_warning: None,
+                agent_trace,
                 tool_trace,
-                answer_text,
-                citations: payload.citations.unwrap_or_default(),
+                answer_text: payload.answer_text,
+                citations: payload.citations,
             });
-            break;
         }
     }
 
-    final_answer.ok_or_else(|| {
-        format!(
-            "ask agent did not produce final answer for question '{}' via {}",
-            question,
-            provider.unwrap_or("unknown")
-        )
-    })
+    Err(format!(
+        "ask agent did not produce final answer for question '{}' via {}",
+        question,
+        provider.unwrap_or("unknown")
+    ))
 }
 
 pub(crate) fn run_update(
@@ -1434,11 +1941,13 @@ pub(crate) fn run_update(
     );
     let mut l4_metrics_json = Value::Null;
     let l4_outcome = if graph_mode == "llm" {
+        let mut graph_trace = |line: &str| emit_runtime_trace("kb-llm", line);
         match enrich_graph_with_llm(
             baseline_graph.as_ref(),
             &l4_rule_outcome,
             &l2_outcome.snapshot,
             &llm_semantic_config,
+            Some(&mut graph_trace),
         ) {
             Ok(enriched) => {
                 l4_metrics_json = json!({
@@ -1513,6 +2022,7 @@ pub(crate) fn run_update(
     );
     let mut l5_metrics_json = Value::Null;
     let l5_outcome = if wiki_mode == "llm" {
+        let mut wiki_trace = |line: &str| emit_runtime_trace("kb-llm", line);
         match enrich_wiki_with_llm(
             baseline_wiki_manifest.as_ref(),
             &l5_rule_outcome,
@@ -1520,6 +2030,7 @@ pub(crate) fn run_update(
             &l4_outcome.snapshot,
             &generated_at,
             &llm_semantic_config,
+            Some(&mut wiki_trace),
         ) {
             Ok(enriched) => {
                 l5_metrics_json = json!({
@@ -1773,7 +2284,10 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
             out.meta.engine_status.as_str(),
             out.meta.provider.as_deref(),
             out.meta.trace_id.as_deref(),
+            &answer_out.agent_backend,
+            answer_out.agent_warning.as_deref(),
             &retrieval_trace,
+            &answer_out.agent_trace,
             &answer_out.tool_trace,
             &answer_out.answer_text,
             &answer_out.citations,
@@ -1783,9 +2297,12 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
             "engine_status": out.meta.engine_status,
             "provider": out.meta.provider,
             "trace_id": out.meta.trace_id,
+            "agent_backend": answer_out.agent_backend,
+            "agent_warning": answer_out.agent_warning,
             "retrieved_context": contexts_json(&out.retrieved_context),
             "retrieval_trace": retrieval_trace,
             "reasoning_context": reasoning_context,
+            "agent_trace": answer_out.agent_trace,
             "tool_trace": answer_out.tool_trace,
             "answer": {
                 "text": answer_out.answer_text,
@@ -1847,5 +2364,42 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
         "reasoning_context": reasoning_context,
     });
     Ok(with_text(data, ask_text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_ask_agent_turn;
+    use serde_json::json;
+
+    #[test]
+    fn decode_ask_agent_turn_reads_openai_tool_calls() {
+        let response = json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Need to inspect the graph before answering.",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_graph_neighbors",
+                                    "arguments": "{\"record_id\":\"docs/config\"}"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let turn = decode_ask_agent_turn(&response).expect("turn should decode");
+        assert_eq!(turn.reasoning_summary.as_deref(), Some("Need to inspect the graph before answering."));
+        assert_eq!(turn.tool_calls.len(), 1);
+        assert_eq!(turn.tool_calls[0].id, "call_1");
+        assert_eq!(turn.tool_calls[0].name, "read_graph_neighbors");
+        assert_eq!(turn.tool_calls[0].arguments["record_id"], "docs/config");
+    }
 }
 

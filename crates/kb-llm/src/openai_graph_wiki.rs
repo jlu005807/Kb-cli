@@ -68,11 +68,46 @@ struct WikiPageSummary {
     source_chunks: Vec<String>,
 }
 
+fn emit_llm_progress(trace: &mut Option<&mut dyn FnMut(&str)>, message: String) {
+    if let Some(callback) = trace.as_deref_mut() {
+        callback(&message);
+    }
+}
+
+fn format_llm_stage_progress(
+    layer: &str,
+    stage: &str,
+    round: Option<usize>,
+    batch: Option<usize>,
+    batch_total: Option<usize>,
+    focus_ids: &[String],
+    detail: Option<String>,
+) -> String {
+    let mut parts = vec![format!("layer={}", layer), format!("stage={}", stage)];
+    if let Some(round) = round {
+        parts.push(format!("round {}", round));
+    }
+    if let (Some(batch), Some(batch_total)) = (batch, batch_total) {
+        parts.push(format!("batch {}/{}", batch, batch_total));
+    }
+    if !focus_ids.is_empty() {
+        parts.push(format!("focus={}", focus_ids.join(", ")));
+    }
+    if let Some(detail) = detail {
+        let trimmed = detail.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+    parts.join(" | ")
+}
+
 pub fn enrich_graph_with_llm(
     baseline: Option<&GraphSnapshot>,
     rule_outcome: &CompileL4Outcome,
     knowledge_snapshot: &KnowledgeSnapshot,
     config: &LlmSemanticConfig,
+    mut trace: Option<&mut dyn FnMut(&str)>,
 ) -> Result<LlmGraphEnrichmentResult, String> {
     let Some(api_key) = config.key.as_deref() else {
         return Err("llm graph enrichment requires KB_LLM_KEY".to_string());
@@ -94,6 +129,21 @@ pub fn enrich_graph_with_llm(
     let mut rounds_used = 0usize;
     let mut merged_payload = LlmGraphEnrichmentPayload::default();
     let mut llm_issues = Vec::new();
+    emit_llm_progress(
+        &mut trace,
+        format_llm_stage_progress(
+            "graph",
+            "start",
+            None,
+            None,
+            None,
+            &[],
+            Some(format!(
+                "records={} batches={} target_coverage={:.3}",
+                total_records, batches_total, target_ratio
+            )),
+        ),
+    );
 
     if total_records > 0 {
         let all_record_ids = file_summaries
@@ -117,7 +167,24 @@ pub fn enrich_graph_with_llm(
             }
             rounds_used = round;
             let round_successes_before = calls_succeeded;
-            for batch in candidate.chunks(batch_size) {
+            let round_batch_total = count_batches(candidate.len(), batch_size);
+            for (batch_idx, batch) in candidate.chunks(batch_size).enumerate() {
+                let focus_ids = batch
+                    .iter()
+                    .map(|item| item.record_id.clone())
+                    .collect::<Vec<_>>();
+                emit_llm_progress(
+                    &mut trace,
+                    format_llm_stage_progress(
+                        "graph",
+                        "batch-start",
+                        Some(round),
+                        Some(batch_idx + 1),
+                        Some(round_batch_total),
+                        &focus_ids,
+                        Some("calling provider".to_string()),
+                    ),
+                );
                 let batch_ids = batch
                     .iter()
                     .map(|item| item.record_id.as_str())
@@ -143,10 +210,40 @@ pub fn enrich_graph_with_llm(
                 match payload_result {
                     Ok(payload) => {
                         calls_succeeded += 1;
+                        emit_llm_progress(
+                            &mut trace,
+                            format_llm_stage_progress(
+                                "graph",
+                                "batch-ok",
+                                Some(round),
+                                Some(batch_idx + 1),
+                                Some(round_batch_total),
+                                &focus_ids,
+                                Some(format!(
+                                    "relations={} concepts={} concept_relations={} tags={}",
+                                    payload.file_relations.len(),
+                                    payload.file_concepts.len(),
+                                    payload.concept_relations.len(),
+                                    payload.file_tags.len()
+                                )),
+                            ),
+                        );
                         merge_graph_payload(&mut merged_payload, &payload);
                     }
                     Err(err) => {
                         calls_failed += 1;
+                        emit_llm_progress(
+                            &mut trace,
+                            format_llm_stage_progress(
+                                "graph",
+                                "batch-failed",
+                                Some(round),
+                                Some(batch_idx + 1),
+                                Some(round_batch_total),
+                                &focus_ids,
+                                Some(stable_truncate(&err, 220)),
+                            ),
+                        );
                         llm_issues.push(CompileL4Issue {
                             edge_id: format!("llm_graph_batch_round{}_call{}", round, calls_total),
                             code: "W-L4-LLM-BATCH-FAILED".to_string(),
@@ -163,6 +260,21 @@ pub fn enrich_graph_with_llm(
 
             covered_record_ids = collect_graph_covered_record_ids(&merged_payload, &all_record_ids);
             let coverage_ratio = ratio(covered_record_ids.len(), total_records);
+            emit_llm_progress(
+                &mut trace,
+                format_llm_stage_progress(
+                    "graph",
+                    "round-finish",
+                    Some(round),
+                    None,
+                    None,
+                    &[],
+                    Some(format!(
+                        "coverage={:.3} succeeded={} failed={}",
+                        coverage_ratio, calls_succeeded, calls_failed
+                    )),
+                ),
+            );
             if calls_succeeded == round_successes_before && calls_failed > 0 {
                 break;
             }
@@ -278,6 +390,21 @@ pub fn enrich_graph_with_llm(
             retryable: true,
         });
     }
+    emit_llm_progress(
+        &mut trace,
+        format_llm_stage_progress(
+            "graph",
+            "done",
+            Some(rounds_used),
+            None,
+            None,
+            &[],
+            Some(format!(
+                "coverage={:.3} processed={} reused={}",
+                coverage, processed, reused
+            )),
+        ),
+    );
 
     Ok(LlmGraphEnrichmentResult {
         outcome: CompileL4Outcome {
@@ -321,6 +448,7 @@ pub fn enrich_wiki_with_llm(
     graph_snapshot: &GraphSnapshot,
     generated_at: &str,
     config: &LlmSemanticConfig,
+    mut trace: Option<&mut dyn FnMut(&str)>,
 ) -> Result<LlmWikiEnrichmentResult, String> {
     let Some(api_key) = config.key.as_deref() else {
         return Err("llm wiki enrichment requires KB_LLM_KEY".to_string());
@@ -350,6 +478,21 @@ pub fn enrich_wiki_with_llm(
         .map(|item| item.page_id.clone())
         .collect::<BTreeSet<_>>();
     let mut unknown_page_ids = BTreeSet::new();
+    emit_llm_progress(
+        &mut trace,
+        format_llm_stage_progress(
+            "wiki",
+            "start",
+            None,
+            None,
+            None,
+            &[],
+            Some(format!(
+                "pages={} batches={} target_coverage={:.3}",
+                total_pages, batches_total, target_ratio
+            )),
+        ),
+    );
 
     if total_pages > 0 {
         for round in 1..=rounds_max {
@@ -367,8 +510,25 @@ pub fn enrich_wiki_with_llm(
             }
             rounds_used = round;
             let round_successes_before = calls_succeeded;
+            let round_batch_total = count_batches(candidate.len(), batch_size);
 
-            for batch in candidate.chunks(batch_size) {
+            for (batch_idx, batch) in candidate.chunks(batch_size).enumerate() {
+                let focus_ids = batch
+                    .iter()
+                    .map(|item| item.page_id.clone())
+                    .collect::<Vec<_>>();
+                emit_llm_progress(
+                    &mut trace,
+                    format_llm_stage_progress(
+                        "wiki",
+                        "batch-start",
+                        Some(round),
+                        Some(batch_idx + 1),
+                        Some(round_batch_total),
+                        &focus_ids,
+                        Some("calling provider".to_string()),
+                    ),
+                );
                 let batch_ids = batch
                     .iter()
                     .map(|item| item.page_id.as_str())
@@ -394,6 +554,18 @@ pub fn enrich_wiki_with_llm(
                 match payload_result {
                     Ok(payload) => {
                         calls_succeeded += 1;
+                        emit_llm_progress(
+                            &mut trace,
+                            format_llm_stage_progress(
+                                "wiki",
+                                "batch-ok",
+                                Some(round),
+                                Some(batch_idx + 1),
+                                Some(round_batch_total),
+                                &focus_ids,
+                                Some(format!("page_notes={}", payload.page_notes.len())),
+                            ),
+                        );
                         let batch_unknown = merge_known_wiki_notes(
                             &mut patch_map,
                             payload.page_notes,
@@ -412,6 +584,18 @@ pub fn enrich_wiki_with_llm(
                     }
                     Err(err) => {
                         calls_failed += 1;
+                        emit_llm_progress(
+                            &mut trace,
+                            format_llm_stage_progress(
+                                "wiki",
+                                "batch-failed",
+                                Some(round),
+                                Some(batch_idx + 1),
+                                Some(round_batch_total),
+                                &focus_ids,
+                                Some(stable_truncate(&err, 220)),
+                            ),
+                        );
                         llm_issues.push(CompileL5Issue {
                             page_id: format!("llm_wiki_batch_round{}_call{}", round, calls_total),
                             code: "W-L5-LLM-BATCH-FAILED".to_string(),
@@ -427,6 +611,21 @@ pub fn enrich_wiki_with_llm(
             }
 
             let coverage_ratio = ratio(patch_map.len(), total_pages);
+            emit_llm_progress(
+                &mut trace,
+                format_llm_stage_progress(
+                    "wiki",
+                    "round-finish",
+                    Some(round),
+                    None,
+                    None,
+                    &[],
+                    Some(format!(
+                        "coverage={:.3} succeeded={} failed={}",
+                        coverage_ratio, calls_succeeded, calls_failed
+                    )),
+                ),
+            );
             if calls_succeeded == round_successes_before && calls_failed > 0 {
                 break;
             }
@@ -505,6 +704,21 @@ pub fn enrich_wiki_with_llm(
             retryable: true,
         });
     }
+    emit_llm_progress(
+        &mut trace,
+        format_llm_stage_progress(
+            "wiki",
+            "done",
+            Some(rounds_used),
+            None,
+            None,
+            &[],
+            Some(format!(
+                "coverage={:.3} processed={} reused={}",
+                coverage_ratio, processed, reused
+            )),
+        ),
+    );
 
     Ok(LlmWikiEnrichmentResult {
         outcome: CompileL5Outcome {
@@ -1626,10 +1840,10 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_graph_covered_record_ids, count_batches, merge_wiki_notes, normalize_batch_size,
-        normalize_token, parse_json_object_from_text, recalc_graph_diff_counters,
-        supports_max_tokens_fallback, LlmFileConcept, LlmFileRelation, LlmFileTag,
-        LlmGraphEnrichmentPayload, LlmWikiPageNote,
+        collect_graph_covered_record_ids, count_batches, format_llm_stage_progress,
+        merge_wiki_notes, normalize_batch_size, normalize_token, parse_json_object_from_text,
+        recalc_graph_diff_counters, supports_max_tokens_fallback, LlmFileConcept, LlmFileRelation,
+        LlmFileTag, LlmGraphEnrichmentPayload, LlmWikiPageNote,
     };
     use kb_core::domain::{GraphEdge, GraphEdgeType, GraphEvidence, GraphSnapshot};
     use std::collections::{BTreeMap, BTreeSet};
@@ -1802,5 +2016,25 @@ mod tests {
         let err = parse_json_object_from_text("not json at all").expect_err("expected parse error");
         assert!(err.contains("not json at all"));
         assert!(err.contains("valid json object"));
+    }
+
+    #[test]
+    fn llm_stage_progress_includes_round_batch_and_focus() {
+        let message = format_llm_stage_progress(
+            "graph",
+            "batch-start",
+            Some(2),
+            Some(3),
+            Some(5),
+            &["docs/a".to_string(), "docs/b".to_string()],
+            Some("calling provider".to_string()),
+        );
+        assert!(message.contains("graph"));
+        assert!(message.contains("batch-start"));
+        assert!(message.contains("round 2"));
+        assert!(message.contains("batch 3/5"));
+        assert!(message.contains("docs/a"));
+        assert!(message.contains("docs/b"));
+        assert!(message.contains("calling provider"));
     }
 }

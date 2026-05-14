@@ -1,6 +1,6 @@
 use kb_core::domain::{
     GraphEdge, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus,
-    WikiPageDocument, WikiManifestSnapshot,
+    WikiManifestSnapshot, WikiPageDocument,
 };
 use kb_core::SemanticExtractRequest;
 use serde::Serialize;
@@ -231,9 +231,10 @@ impl SemanticAgentToolbox {
         chunk_id: Option<&str>,
     ) -> Option<AgentRawChunkItem> {
         let knowledge = self.load_knowledge_snapshot()?;
-        let entry = knowledge.entries.iter().find(|item| {
-            item.record_id == record_id_or_path || item.path == record_id_or_path
-        })?;
+        let entry = knowledge
+            .entries
+            .iter()
+            .find(|item| item.record_id == record_id_or_path || item.path == record_id_or_path)?;
         let root = self.workspace_root.as_ref()?;
         let source_path = resolve_source_path(root, &entry.path);
         let raw = fs::read_to_string(source_path).ok()?;
@@ -425,13 +426,14 @@ impl SemanticAgentToolbox {
 
     fn load_wiki_snapshot(&self) -> Option<AgentWikiSnapshot> {
         let root = self.workspace_root.as_ref()?;
-        let manifest_raw = fs::read_to_string(root.join(".kb").join("wiki").join("manifest.json"))
-            .ok()?;
+        let manifest_raw =
+            fs::read_to_string(root.join(".kb").join("wiki").join("manifest.json")).ok()?;
         let manifest = serde_json::from_str::<WikiManifestSnapshot>(&manifest_raw).ok()?;
         let mut pages = Vec::new();
         for entry in &manifest.pages {
-            let page_raw = fs::read_to_string(root.join(".kb").join("wiki").join(&entry.relative_path))
-                .ok()?;
+            let page_raw =
+                fs::read_to_string(root.join(".kb").join("wiki").join(&entry.relative_path))
+                    .ok()?;
             pages.push(WikiPageDocument {
                 page_id: entry.page_id.clone(),
                 page_type: entry.page_type.clone(),
@@ -536,7 +538,10 @@ fn graph_edge_item(edge: &GraphEdge) -> AgentGraphEdgeItem {
     }
 }
 
-fn selected_chunk<'a>(entry: &'a KnowledgeEntry, chunk_id: Option<&str>) -> Option<&'a KnowledgeChunk> {
+fn selected_chunk<'a>(
+    entry: &'a KnowledgeEntry,
+    chunk_id: Option<&str>,
+) -> Option<&'a KnowledgeChunk> {
     if let Some(chunk_id) = chunk_id {
         return entry.chunks.iter().find(|item| item.chunk_id == chunk_id);
     }
