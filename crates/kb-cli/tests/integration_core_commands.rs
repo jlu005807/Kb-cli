@@ -1594,6 +1594,20 @@ fn ask_answer_stub_emits_agent_trace_and_stderr_progress() {
     assert_eq!(body["status"], "success");
     assert_eq!(body["data"]["mode"], "answer");
     assert_eq!(body["data"]["agent_backend"], "offline_stub");
+    assert!(
+        body["data"]["tool_trace"]
+            .as_array()
+            .expect("tool_trace should be array")
+            .iter()
+            .any(|item| item["tool"] == "search_context")
+    );
+    assert!(
+        body["data"]["retrieved_context"]
+            .as_array()
+            .expect("retrieved_context should be array")
+            .len()
+            >= 1
+    );
     let agent_trace = body["data"]["agent_trace"]
         .as_array()
         .expect("agent_trace should be array");

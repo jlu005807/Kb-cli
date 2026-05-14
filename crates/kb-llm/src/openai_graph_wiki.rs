@@ -478,6 +478,7 @@ pub fn enrich_wiki_with_llm(
         .map(|item| item.page_id.clone())
         .collect::<BTreeSet<_>>();
     let mut unknown_page_ids = BTreeSet::new();
+    let mut overview_markdown_override: Option<String> = None;
     emit_llm_progress(
         &mut trace,
         format_llm_stage_progress(
@@ -638,6 +639,67 @@ pub fn enrich_wiki_with_llm(
         }
     }
 
+    emit_llm_progress(
+        &mut trace,
+        format_llm_stage_progress(
+            "wiki",
+            "overview-start",
+            None,
+            None,
+            None,
+            &["overview".to_string()],
+            Some("calling provider".to_string()),
+        ),
+    );
+    calls_total += 1;
+    match synthesize_overview_markdown_with_llm(
+        api_key,
+        generated_at,
+        knowledge_snapshot,
+        graph_snapshot,
+        &rule_outcome.snapshot.pages,
+        &patch_map,
+        config,
+    ) {
+        Ok(markdown) => {
+            calls_succeeded += 1;
+            overview_markdown_override = Some(markdown);
+            emit_llm_progress(
+                &mut trace,
+                format_llm_stage_progress(
+                    "wiki",
+                    "overview-ok",
+                    None,
+                    None,
+                    None,
+                    &["overview".to_string()],
+                    Some("overview markdown synthesized".to_string()),
+                ),
+            );
+        }
+        Err(err) => {
+            calls_failed += 1;
+            emit_llm_progress(
+                &mut trace,
+                format_llm_stage_progress(
+                    "wiki",
+                    "overview-failed",
+                    None,
+                    None,
+                    None,
+                    &["overview".to_string()],
+                    Some(stable_truncate(&err, 220)),
+                ),
+            );
+            llm_issues.push(CompileL5Issue {
+                page_id: "overview".to_string(),
+                code: "W-L5-LLM-OVERVIEW-FAILED".to_string(),
+                message: err,
+                retryable: true,
+            });
+        }
+    }
+
     let mut pages = Vec::new();
     let mut manifest_pages = Vec::new();
     let mut issues = rule_outcome.issues.clone();
@@ -653,7 +715,21 @@ pub fn enrich_wiki_with_llm(
     }
     for page in &rule_outcome.snapshot.pages {
         let note = patch_map.get(&page.page_id);
-        let markdown = render_page_with_llm_note(page, note);
+        let mut markdown = render_page_with_llm_note(page, note);
+        let mut source_records = page.source_records.clone();
+        if page.page_id == "overview" {
+            if let Some(override_markdown) = overview_markdown_override.as_ref() {
+                markdown = override_markdown.clone();
+            }
+            if source_records.is_empty() {
+                source_records = knowledge_snapshot
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.status == KnowledgeStatus::Active)
+                    .map(|entry| entry.record_id.clone())
+                    .collect();
+            }
+        }
         if note.is_none() {
             issues.push(CompileL5Issue {
                 page_id: page.page_id.clone(),
@@ -669,7 +745,7 @@ pub fn enrich_wiki_with_llm(
             title: page.title.clone(),
             relative_path: page.relative_path.clone(),
             input_signature: input_signature.clone(),
-            source_records: page.source_records.clone(),
+            source_records: source_records.clone(),
             source_chunks: page.source_chunks.clone(),
             markdown,
         });
@@ -679,7 +755,7 @@ pub fn enrich_wiki_with_llm(
             title: page.title.clone(),
             relative_path: page.relative_path.clone(),
             input_signature,
-            source_records: page.source_records.clone(),
+            source_records,
             source_chunks: page.source_chunks.clone(),
         });
     }
@@ -805,6 +881,20 @@ struct LlmWikiPageNote {
     see_also: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct LlmOverviewPayload {
+    markdown: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct OverviewSourceSummary {
+    record_id: String,
+    summary: String,
+    tags: Vec<String>,
+    key_concepts: Vec<String>,
+    related_records: Vec<String>,
+}
+
 fn collect_graph_file_summaries(knowledge_snapshot: &KnowledgeSnapshot) -> Vec<GraphFileSummary> {
     knowledge_snapshot
         .entries
@@ -847,6 +937,60 @@ fn collect_wiki_page_summaries(pages: &[WikiPageDocument]) -> Vec<WikiPageSummar
             source_chunks: page.source_chunks.clone(),
         })
         .collect()
+}
+
+fn collect_overview_source_summaries(
+    knowledge_snapshot: &KnowledgeSnapshot,
+    graph_snapshot: &GraphSnapshot,
+) -> Vec<OverviewSourceSummary> {
+    knowledge_snapshot
+        .entries
+        .iter()
+        .filter(|entry| entry.status == KnowledgeStatus::Active)
+        .map(|entry| OverviewSourceSummary {
+            record_id: entry.record_id.clone(),
+            summary: stable_truncate(entry.summary.trim(), 220),
+            tags: entry.tags.iter().take(8).cloned().collect(),
+            key_concepts: entry.key_concepts.iter().take(8).cloned().collect(),
+            related_records: collect_related_records_for_overview(
+                entry.record_id.as_str(),
+                graph_snapshot,
+            ),
+        })
+        .collect()
+}
+
+fn collect_related_records_for_overview(
+    record_id: &str,
+    graph_snapshot: &GraphSnapshot,
+) -> Vec<String> {
+    let current = format!("file:{}", record_id);
+    let mut out = BTreeSet::new();
+    for edge in &graph_snapshot.edges {
+        let mut matched = edge.evidence.iter().any(|item| item.record_id == record_id);
+        if !matched {
+            matched = edge.from_node_id == current || edge.to_node_id == current;
+        }
+        if !matched {
+            continue;
+        }
+        if let Some(other) = edge.from_node_id.strip_prefix("file:") {
+            if other != record_id {
+                out.insert(other.to_string());
+            }
+        }
+        if let Some(other) = edge.to_node_id.strip_prefix("file:") {
+            if other != record_id {
+                out.insert(other.to_string());
+            }
+        }
+        for evidence in &edge.evidence {
+            if evidence.record_id != record_id {
+                out.insert(evidence.record_id.clone());
+            }
+        }
+    }
+    out.into_iter().take(6).collect()
 }
 
 fn normalize_batch_size(configured: usize, total: usize) -> usize {
@@ -1035,6 +1179,111 @@ Rules:\n\
         page_json = page_json,
         ctx_json = ctx_json
     )
+}
+
+fn build_overview_synthesis_prompt(
+    generated_at: &str,
+    source_summaries: &[OverviewSourceSummary],
+    graph_snapshot: &GraphSnapshot,
+    source_page_notes: &[LlmWikiPageNote],
+    current_overview_markdown: &str,
+) -> String {
+    let source_json =
+        serde_json::to_string_pretty(source_summaries).unwrap_or_else(|_| "[]".to_string());
+    let notes_json =
+        serde_json::to_string_pretty(source_page_notes).unwrap_or_else(|_| "[]".to_string());
+    let graph_json = serde_json::to_string_pretty(&json!({
+        "generated_at": generated_at,
+        "node_count": graph_snapshot.nodes.len(),
+        "edge_count": graph_snapshot.edges.len(),
+        "top_labels": graph_snapshot
+            .nodes
+            .iter()
+            .take(20)
+            .map(|node| json!({
+                "node_id": node.node_id,
+                "node_type": format!("{:?}", node.node_type).to_ascii_lowercase(),
+                "label": node.label,
+            }))
+            .collect::<Vec<_>>()
+    }))
+    .unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "Task: synthesize the repository overview wiki page from semantic summaries and graph structure.\n\
+Return JSON with exact keys:\n\
+{{\n\
+  \"markdown\": \"# Overview\\n...\"\n\
+}}\n\
+Rules:\n\
+- Output JSON only.\n\
+- Markdown must start with `# Overview`.\n\
+- Include sections `## Summary`, `## Key Points`, `## Evidence`, and `## See Also`.\n\
+- The overview should summarize themes across files, not just restate counts.\n\
+- Mention important connected files when the graph shows meaningful relations.\n\
+- Keep it concise but specific and grounded in the provided summaries.\n\
+\n\
+CURRENT_OVERVIEW_MARKDOWN:\n\
+{current_overview_markdown}\n\
+\n\
+SOURCE_SUMMARIES:\n\
+{source_json}\n\
+\n\
+SOURCE_PAGE_NOTES:\n\
+{notes_json}\n\
+\n\
+GRAPH_CONTEXT:\n\
+{graph_json}\n",
+        current_overview_markdown = current_overview_markdown,
+        source_json = source_json,
+        notes_json = notes_json,
+        graph_json = graph_json
+    )
+}
+
+fn synthesize_overview_markdown_with_llm(
+    api_key: &str,
+    generated_at: &str,
+    knowledge_snapshot: &KnowledgeSnapshot,
+    graph_snapshot: &GraphSnapshot,
+    pages: &[WikiPageDocument],
+    patch_map: &BTreeMap<String, LlmWikiPageNote>,
+    config: &LlmSemanticConfig,
+) -> Result<String, String> {
+    let current_overview = pages
+        .iter()
+        .find(|page| page.page_id == "overview")
+        .map(|page| page.markdown.as_str())
+        .unwrap_or("# Overview\n");
+    let source_summaries = collect_overview_source_summaries(knowledge_snapshot, graph_snapshot);
+    let source_page_notes = patch_map
+        .values()
+        .filter(|note| note.page_id.starts_with("source:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let prompt = build_overview_synthesis_prompt(
+        generated_at,
+        &source_summaries,
+        graph_snapshot,
+        &source_page_notes,
+        current_overview,
+    );
+    let response = call_openai_chat_with_retry(
+        config,
+        api_key,
+        "You synthesize a knowledge-base overview page from semantic summaries and graph structure. Return JSON only.",
+        &prompt,
+    )?;
+    let content = extract_chat_message_content(&response).ok_or_else(|| {
+        "missing choices[0].message.content in overview synthesis response".to_string()
+    })?;
+    let value = parse_json_object_from_text(&content)?;
+    let payload = serde_json::from_value::<LlmOverviewPayload>(value)
+        .map_err(|err| format!("invalid llm overview payload: {}", err))?;
+    let markdown = payload.markdown.trim();
+    if markdown.is_empty() {
+        return Err("llm overview payload markdown is empty".to_string());
+    }
+    Ok(markdown.to_string())
 }
 
 fn merge_graph_payload(

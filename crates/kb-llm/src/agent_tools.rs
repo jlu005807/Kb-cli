@@ -10,17 +10,21 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_RAW_EXCERPT_MAX_CHARS: usize = 6_000;
+const DEFAULT_RAW_DOCUMENT_MAX_CHARS: usize = 12_000;
 const DEFAULT_RELATED_SUMMARY_LIMIT: usize = 6;
 const DEFAULT_GRAPH_RELATION_LIMIT: usize = 10;
 const DEFAULT_WIKI_MARKDOWN_EXCERPT_MAX_CHARS: usize = 500;
+const DEFAULT_WIKI_MARKDOWN_FULL_MAX_CHARS: usize = 10_000;
 
 #[derive(Debug, Clone)]
 pub struct SemanticAgentToolbox {
     workspace_root: Option<PathBuf>,
     raw_excerpt_max_chars: usize,
+    raw_document_max_chars: usize,
     related_summary_limit: usize,
     graph_relation_limit: usize,
     wiki_markdown_excerpt_max_chars: usize,
+    wiki_markdown_full_max_chars: usize,
 }
 
 impl SemanticAgentToolbox {
@@ -28,9 +32,11 @@ impl SemanticAgentToolbox {
         Self {
             workspace_root,
             raw_excerpt_max_chars: DEFAULT_RAW_EXCERPT_MAX_CHARS,
+            raw_document_max_chars: DEFAULT_RAW_DOCUMENT_MAX_CHARS,
             related_summary_limit: DEFAULT_RELATED_SUMMARY_LIMIT,
             graph_relation_limit: DEFAULT_GRAPH_RELATION_LIMIT,
             wiki_markdown_excerpt_max_chars: DEFAULT_WIKI_MARKDOWN_EXCERPT_MAX_CHARS,
+            wiki_markdown_full_max_chars: DEFAULT_WIKI_MARKDOWN_FULL_MAX_CHARS,
         }
     }
 
@@ -189,6 +195,24 @@ impl SemanticAgentToolbox {
         self.tool_read_graph_neighbors_by_record_id(record_id, graph.as_ref())
     }
 
+    pub fn read_related_file_summaries(&self, record_id: &str) -> Vec<AgentSummaryItem> {
+        let Some(knowledge) = self.load_knowledge_snapshot() else {
+            return vec![];
+        };
+        let graph = self.load_graph_snapshot();
+        let related_ids =
+            collect_related_record_ids_from_graph_record_id(record_id, graph.as_ref());
+        let mut out = knowledge
+            .entries
+            .iter()
+            .filter(|entry| related_ids.contains(entry.record_id.as_str()))
+            .filter_map(|entry| summary_item_from_entry(entry, 1.0))
+            .collect::<Vec<_>>();
+        out.sort_by(|a, b| a.record_id.cmp(&b.record_id));
+        out.truncate(self.related_summary_limit);
+        out
+    }
+
     pub fn read_graph_edge(&self, edge_id: &str) -> Option<AgentGraphEdgeDetail> {
         let graph = self.load_graph_snapshot()?;
         let edge = graph.edges.iter().find(|item| item.edge_id == edge_id)?;
@@ -225,6 +249,19 @@ impl SemanticAgentToolbox {
         })
     }
 
+    pub fn read_wiki_page_markdown(&self, page_id: &str) -> Option<AgentWikiPageMarkdownItem> {
+        let wiki = self.load_wiki_snapshot()?;
+        let page = wiki.pages.iter().find(|item| item.page_id == page_id)?;
+        Some(AgentWikiPageMarkdownItem {
+            page_id: page.page_id.clone(),
+            title: page.title.clone(),
+            relative_path: page.relative_path.clone(),
+            page_type: format!("{:?}", page.page_type).to_ascii_lowercase(),
+            source_records: page.source_records.clone(),
+            markdown: stable_truncate(page.markdown.trim(), self.wiki_markdown_full_max_chars),
+        })
+    }
+
     pub fn read_raw_chunk(
         &self,
         record_id_or_path: &str,
@@ -245,6 +282,27 @@ impl SemanticAgentToolbox {
             path: entry.path.clone(),
             chunk_id: chunk.chunk_id.clone(),
             preview: excerpt,
+        })
+    }
+
+    pub fn read_raw_document(&self, record_id_or_path: &str) -> Option<AgentRawDocumentItem> {
+        let knowledge = self.load_knowledge_snapshot()?;
+        let entry = knowledge
+            .entries
+            .iter()
+            .find(|item| item.record_id == record_id_or_path || item.path == record_id_or_path)?;
+        let root = self.workspace_root.as_ref()?;
+        let source_path = resolve_source_path(root, &entry.path);
+        let raw = fs::read_to_string(source_path).ok()?;
+        Some(AgentRawDocumentItem {
+            record_id: entry.record_id.clone(),
+            path: entry.path.clone(),
+            chunk_ids: entry
+                .chunks
+                .iter()
+                .map(|item| item.chunk_id.clone())
+                .collect(),
+            content: stable_truncate(raw.trim(), self.raw_document_max_chars),
         })
     }
 
@@ -524,6 +582,24 @@ pub struct AgentRawChunkItem {
     pub preview: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentRawDocumentItem {
+    pub record_id: String,
+    pub path: String,
+    pub chunk_ids: Vec<String>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentWikiPageMarkdownItem {
+    pub page_id: String,
+    pub title: String,
+    pub relative_path: String,
+    pub page_type: String,
+    pub source_records: Vec<String>,
+    pub markdown: String,
+}
+
 #[derive(Debug, Clone)]
 struct AgentWikiSnapshot {
     pages: Vec<WikiPageDocument>,
@@ -609,6 +685,43 @@ fn collect_related_record_ids_from_graph(
     out
 }
 
+fn collect_related_record_ids_from_graph_record_id(
+    record_id: &str,
+    graph: Option<&GraphSnapshot>,
+) -> BTreeSet<String> {
+    let Some(graph) = graph else {
+        return BTreeSet::new();
+    };
+    let current_file_node = format!("file:{}", record_id);
+    let mut out = BTreeSet::new();
+    for edge in &graph.edges {
+        let mut matched = edge.evidence.iter().any(|item| item.record_id == record_id);
+        if !matched {
+            matched =
+                edge.from_node_id == current_file_node || edge.to_node_id == current_file_node;
+        }
+        if !matched {
+            continue;
+        }
+        if let Some(other) = edge.from_node_id.strip_prefix("file:") {
+            if other != record_id {
+                out.insert(other.to_string());
+            }
+        }
+        if let Some(other) = edge.to_node_id.strip_prefix("file:") {
+            if other != record_id {
+                out.insert(other.to_string());
+            }
+        }
+        for evidence in &edge.evidence {
+            if evidence.record_id != record_id {
+                out.insert(evidence.record_id.clone());
+            }
+        }
+    }
+    out
+}
+
 fn resolve_source_path(root: &Path, raw_path: &str) -> PathBuf {
     let candidate = PathBuf::from(raw_path);
     if candidate.is_absolute() {
@@ -633,7 +746,7 @@ mod tests {
     use kb_core::domain::{
         GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot,
         KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SemanticProviderInfo,
-        WikiPageDocument, WikiPageType,
+        WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument, WikiPageType,
     };
     use kb_core::SemanticExtractRequest;
     use std::fs;
@@ -794,6 +907,31 @@ mod tests {
             source_chunks: vec!["docs/a:0001".to_string()],
             markdown: "# docs/a\n\nsummary-a".to_string(),
         }];
+        fs::create_dir_all(root.join(".kb/wiki/pages/source")).expect("create wiki pages dir");
+        fs::write(
+            root.join(".kb/wiki/pages/source/docs_a.md"),
+            &pages[0].markdown,
+        )
+        .expect("write wiki page");
+        let manifest = WikiManifestSnapshot {
+            schema_version: 1,
+            generated_at: "now".to_string(),
+            base_graph_signature: "g".to_string(),
+            pages: vec![WikiManifestEntry {
+                page_id: pages[0].page_id.clone(),
+                page_type: pages[0].page_type.clone(),
+                title: pages[0].title.clone(),
+                relative_path: pages[0].relative_path.clone(),
+                input_signature: pages[0].input_signature.clone(),
+                source_records: pages[0].source_records.clone(),
+                source_chunks: pages[0].source_chunks.clone(),
+            }],
+        };
+        fs::write(
+            root.join(".kb/wiki/manifest.json"),
+            serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write wiki manifest");
         let wiki_ctx = toolbox.build_wiki_context(&knowledge, &graph, &pages);
         assert_eq!(
             wiki_ctx["read_wiki_page"][0]["page_id"]
@@ -801,5 +939,19 @@ mod tests {
                 .unwrap_or_default(),
             "source:docs/a"
         );
+
+        let related = toolbox.read_related_file_summaries("docs/a");
+        assert!(related.iter().any(|item| item.record_id == "docs/b"));
+
+        let raw_document = toolbox
+            .read_raw_document("docs/a")
+            .expect("raw document should load");
+        assert_eq!(raw_document.record_id, "docs/a");
+        assert!(raw_document.content.contains("A raw source line"));
+
+        let wiki_markdown = toolbox
+            .read_wiki_page_markdown("source:docs/a")
+            .expect("wiki markdown should load");
+        assert!(wiki_markdown.markdown.contains("# docs/a"));
     }
 }

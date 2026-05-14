@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::agent_tools::{SemanticAgentContext, SemanticAgentToolbox};
@@ -9,12 +10,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LlmSemanticConfig {
     pub key: Option<String>,
     pub model: String,
     pub base_url: String,
     pub workspace_root: Option<PathBuf>,
+    pub progress: Option<Arc<dyn Fn(String) + Send + Sync>>,
     pub semantic_flow: String,
     pub timeout_secs: u64,
     pub temperature: f64,
@@ -29,7 +31,7 @@ pub struct LlmSemanticConfig {
     pub agent_min_chunk_coverage: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LlmSemanticExtractor {
     config: LlmSemanticConfig,
     endpoint: String,
@@ -80,6 +82,17 @@ impl LlmSemanticExtractor {
             self.config.retry_max_attempts,
             errors.join(" | ")
         ))
+    }
+
+    fn emit_progress(&self, stage: &str, request: &SemanticExtractRequest, detail: Option<String>) {
+        if let Some(callback) = &self.config.progress {
+            callback(format_semantic_progress(
+                stage,
+                &request.record_id,
+                &request.path,
+                detail,
+            ));
+        }
     }
 
     fn call_openai_chat_once(
@@ -162,6 +175,11 @@ impl LlmSemanticExtractor {
         planned_chunks: &[KnowledgeChunk],
         agent_context: &SemanticAgentContext,
     ) -> Result<LlmSemanticExecution, String> {
+        self.emit_progress(
+            "single-step-start",
+            request,
+            Some(format!("chunks={}", planned_chunks.len())),
+        );
         let user_prompt = build_semantic_prompt_single_step(
             request,
             truncated_text,
@@ -175,6 +193,11 @@ impl LlmSemanticExtractor {
             self.config.max_output_tokens,
         )?;
         let payload = decode_semantic_payload(&response, "llm response")?;
+        self.emit_progress(
+            "single-step-ok",
+            request,
+            Some(format!("chunk_summaries={}", payload.chunk_summaries.len())),
+        );
         Ok(LlmSemanticExecution {
             payload,
             analysis: None,
@@ -189,6 +212,11 @@ impl LlmSemanticExtractor {
         planned_chunks: &[KnowledgeChunk],
         agent_context: &SemanticAgentContext,
     ) -> Result<LlmSemanticExecution, String> {
+        self.emit_progress(
+            "analysis-start",
+            request,
+            Some(format!("chunks={}", planned_chunks.len())),
+        );
         let analysis_prompt =
             build_semantic_prompt_analysis(request, truncated_text, planned_chunks, agent_context);
         let analysis_response = self.call_openai_chat_with_retry(
@@ -203,6 +231,16 @@ impl LlmSemanticExtractor {
         let analysis_payload =
             serde_json::from_value::<LlmSemanticAnalysisPayload>(analysis_value.clone())
                 .map_err(|err| format!("invalid llm semantic analysis payload: {}", err))?;
+        self.emit_progress(
+            "analysis-ok",
+            request,
+            Some(format!(
+                "chunk_insights={} tags={} concepts={}",
+                analysis_payload.chunk_insights.len(),
+                analysis_payload.tags.len(),
+                analysis_payload.key_concepts.len()
+            )),
+        );
 
         let generation_prompt = build_semantic_prompt_generation(
             request,
@@ -210,6 +248,7 @@ impl LlmSemanticExtractor {
             &analysis_value,
             agent_context,
         );
+        self.emit_progress("generation-start", request, None);
         let generation_response = self.call_openai_chat_with_retry(
             api_key,
             "You are a semantic compiler for a local knowledge base. Return JSON only.",
@@ -217,6 +256,11 @@ impl LlmSemanticExtractor {
             self.config.max_output_tokens,
         )?;
         let payload = decode_semantic_payload(&generation_response, "generation response")?;
+        self.emit_progress(
+            "generation-ok",
+            request,
+            Some(format!("chunk_summaries={}", payload.chunk_summaries.len())),
+        );
 
         Ok(LlmSemanticExecution {
             payload,
@@ -241,10 +285,29 @@ impl LlmSemanticExtractor {
         for round in 2..=max_rounds {
             let coverage = calculate_chunk_coverage(&execution.payload, planned_chunks);
             if is_payload_good_enough(&execution.payload, coverage, min_coverage) {
+                self.emit_progress(
+                    "reflection-skip",
+                    request,
+                    Some(format!("round={} coverage={:.3}", round, coverage)),
+                );
                 break;
             }
 
             let missing_chunk_ids = collect_missing_chunk_ids(&execution.payload, planned_chunks);
+            self.emit_progress(
+                "reflection-start",
+                request,
+                Some(format!(
+                    "round={} coverage={:.3} missing={}",
+                    round,
+                    coverage,
+                    if missing_chunk_ids.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        missing_chunk_ids.join(",")
+                    }
+                )),
+            );
             let user_prompt = build_semantic_prompt_reflection(
                 request,
                 planned_chunks,
@@ -264,6 +327,12 @@ impl LlmSemanticExtractor {
             )?;
             let reflected = decode_semantic_payload(&reflection_response, "reflection response")?;
             execution.payload = merge_semantic_payloads(&execution.payload, &reflected);
+            let next_coverage = calculate_chunk_coverage(&execution.payload, planned_chunks);
+            self.emit_progress(
+                "reflection-ok",
+                request,
+                Some(format!("round={} coverage={:.3}", round, next_coverage)),
+            );
         }
 
         Ok(execution)
@@ -275,6 +344,7 @@ impl SemanticExtractor for LlmSemanticExtractor {
         let Some(api_key) = self.config.key.as_deref() else {
             return Err("llm semantic extraction requires KB_LLM_KEY".to_string());
         };
+        self.emit_progress("record-start", request, None);
 
         let truncated_text = truncate_by_chars(&request.text, self.config.max_input_chars);
         let mut chunks =
@@ -371,6 +441,19 @@ impl SemanticExtractor for LlmSemanticExtractor {
                 kind: "llm".to_string(),
                 name: format!("{};flow={}", self.provider_name, self.config.semantic_flow),
             },
+        })
+        .map(|response| {
+            self.emit_progress(
+                "record-done",
+                request,
+                Some(format!(
+                    "tags={} concepts={} chunks={}",
+                    response.tags.len(),
+                    response.key_concepts.len(),
+                    response.chunks.len()
+                )),
+            );
+            response
         })
     }
 }
@@ -1012,6 +1095,27 @@ fn normalize_semantic_list(values: Vec<String>, limit: usize, lowercase: bool) -
     out
 }
 
+fn format_semantic_progress(
+    stage: &str,
+    record_id: &str,
+    path: &str,
+    detail: Option<String>,
+) -> String {
+    let mut parts = vec![
+        "layer=semantic".to_string(),
+        format!("stage={}", stage),
+        format!("record={}", record_id),
+        format!("path={}", path),
+    ];
+    if let Some(detail) = detail {
+        let trimmed = detail.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+    parts.join(" | ")
+}
+
 fn first_non_empty_line_local(text: &str) -> Option<String> {
     text.lines()
         .map(str::trim)
@@ -1046,7 +1150,9 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_json_object_from_text, supports_max_tokens_fallback};
+    use super::{
+        format_semantic_progress, parse_json_object_from_text, supports_max_tokens_fallback,
+    };
 
     #[test]
     fn response_format_errors_are_provider_compatibility_fallbacks() {
@@ -1061,5 +1167,19 @@ mod tests {
             parse_json_object_from_text("semantic not json").expect_err("expected parse error");
         assert!(err.contains("semantic not json"));
         assert!(err.contains("valid json object"));
+    }
+
+    #[test]
+    fn semantic_progress_mentions_record_and_stage() {
+        let line = format_semantic_progress(
+            "analysis-start",
+            "docs/config",
+            "./docs/config.md",
+            Some("chunks=3".to_string()),
+        );
+        assert!(line.contains("analysis-start"));
+        assert!(line.contains("docs/config"));
+        assert!(line.contains("./docs/config.md"));
+        assert!(line.contains("chunks=3"));
     }
 }
