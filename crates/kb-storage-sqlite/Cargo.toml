@@ -1,0 +1,15 @@
+[package]
+name = "kb-storage-sqlite"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kb-core = { path = "../kb-core" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { workspace = true }
+# `bundled` ships SQLite as part of the binary — no system libsqlite dep,
+# important on Windows installs.
+rusqlite = { version = "0.32.1", features = ["bundled", "blob"] }
+
+[dev-dependencies]
+tempfile = "3.13.0"
