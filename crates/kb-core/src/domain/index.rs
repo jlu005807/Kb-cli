@@ -274,7 +274,7 @@ impl IndexEngine {
         &self,
         snapshot: Option<&IndexSnapshot>,
         filter: Option<&str>,
-    ) -> Result<ListView, String> {
+    ) -> Result<ListView, crate::error::DomainError> {
         let mut items = snapshot
             .map(|x| x.records.clone())
             .unwrap_or_default()
@@ -292,7 +292,9 @@ impl IndexEngine {
 
         if let Some(pattern) = filter {
             if pattern.is_empty() || pattern.contains('[') || pattern.contains(']') {
-                return Err("invalid glob pattern".to_string());
+                return Err(crate::error::DomainError::validation(
+                    "invalid glob pattern",
+                ));
             }
             items.retain(|item| {
                 glob_like_match(pattern, &item.alias) || glob_like_match(pattern, &item.path)
@@ -439,7 +441,7 @@ mod tests {
     #[test]
     fn list_invalid_filter_rejected() {
         let engine = IndexEngine;
-        let out: Result<ListView, String> = engine.render_list(None, Some(""));
+        let out: Result<ListView, crate::error::DomainError> = engine.render_list(None, Some(""));
         assert!(out.is_err());
     }
 }

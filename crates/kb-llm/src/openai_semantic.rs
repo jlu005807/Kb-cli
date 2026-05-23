@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crate::agent_tools::{SemanticAgentContext, SemanticAgentToolbox};
 use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
+use kb_core::error::DomainError;
 use kb_core::{SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -340,9 +341,14 @@ impl LlmSemanticExtractor {
 }
 
 impl SemanticExtractor for LlmSemanticExtractor {
-    fn extract(&self, request: &SemanticExtractRequest) -> Result<SemanticExtractResponse, String> {
+    fn extract(
+        &self,
+        request: &SemanticExtractRequest,
+    ) -> Result<SemanticExtractResponse, DomainError> {
         let Some(api_key) = self.config.key.as_deref() else {
-            return Err("llm semantic extraction requires KB_LLM_KEY".to_string());
+            return Err(DomainError::config(
+                "llm semantic extraction requires KB_LLM_KEY",
+            ));
         };
         self.emit_progress("record-start", request, None);
 
@@ -365,12 +371,15 @@ impl SemanticExtractor for LlmSemanticExtractor {
         let agent_context = self.toolbox.build_context(request, &truncated_text);
 
         let execution = if self.config.semantic_flow == "single_step" {
-            self.extract_single_step(api_key, request, &truncated_text, &chunks, &agent_context)?
+            self.extract_single_step(api_key, request, &truncated_text, &chunks, &agent_context)
+                .map_err(DomainError::external)?
         } else {
-            self.extract_two_step(api_key, request, &truncated_text, &chunks, &agent_context)?
+            self.extract_two_step(api_key, request, &truncated_text, &chunks, &agent_context)
+                .map_err(DomainError::external)?
         };
-        let execution =
-            self.run_reflection_loop(api_key, request, &chunks, &agent_context, execution)?;
+        let execution = self
+            .run_reflection_loop(api_key, request, &chunks, &agent_context, execution)
+            .map_err(DomainError::external)?;
         let LlmSemanticExecution { payload, analysis } = execution;
         let LlmSemanticPayload {
             summary: payload_summary,

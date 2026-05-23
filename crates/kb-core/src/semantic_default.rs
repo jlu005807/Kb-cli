@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::domain::{KnowledgeChunk, SemanticProviderInfo};
+use crate::error::DomainError;
 use crate::ports::{SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor};
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -13,7 +14,10 @@ impl RuleBasedSemanticExtractor {
 }
 
 impl SemanticExtractor for RuleBasedSemanticExtractor {
-    fn extract(&self, request: &SemanticExtractRequest) -> Result<SemanticExtractResponse, String> {
+    fn extract(
+        &self,
+        request: &SemanticExtractRequest,
+    ) -> Result<SemanticExtractResponse, DomainError> {
         let summary = request
             .text
             .lines()

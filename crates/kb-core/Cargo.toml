@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "1.0.69"
 
 [dev-dependencies]
 anyhow = "1.0.100"

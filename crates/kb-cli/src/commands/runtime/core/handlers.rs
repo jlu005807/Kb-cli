@@ -2709,7 +2709,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L2_SEMANTIC,
                 code: "W-L2-READ-SNAPSHOT-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
             None
@@ -2738,7 +2738,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L2_SEMANTIC,
                 code: "W-L2-WRITE-SNAPSHOT-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
         }
@@ -2750,7 +2750,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L3_PROJECTION,
                 code: "W-L3-READ-SNAPSHOT-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
             None
@@ -2767,7 +2767,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L3_PROJECTION,
                 code: "W-L3-WRITE-SNAPSHOT-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
         }
@@ -2779,7 +2779,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L4_GRAPH,
                 code: "W-L4-READ-SNAPSHOT-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
             None
@@ -2825,7 +2825,7 @@ pub(crate) fn run_update(
                 progressive_issues.push(LayerIssue {
                     layer: LAYER_L4_GRAPH,
                     code: "W-L4-LLM-ENRICH-FAILED".to_string(),
-                    message: err,
+                    message: err.to_string(),
                     retryable: true,
                 });
                 l4_rule_outcome
@@ -2847,7 +2847,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L4_GRAPH,
                 code: "W-L4-WRITE-SNAPSHOT-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
         }
@@ -2859,7 +2859,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L5_WIKI_VIEW,
                 code: "W-L5-READ-MANIFEST-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
             None
@@ -2908,7 +2908,7 @@ pub(crate) fn run_update(
                 progressive_issues.push(LayerIssue {
                     layer: LAYER_L5_WIKI_VIEW,
                     code: "W-L5-LLM-ENRICH-FAILED".to_string(),
-                    message: err,
+                    message: err.to_string(),
                     retryable: true,
                 });
                 l5_rule_outcome
@@ -2931,7 +2931,7 @@ pub(crate) fn run_update(
             progressive_issues.push(LayerIssue {
                 layer: LAYER_L5_WIKI_VIEW,
                 code: "W-L5-WRITE-VIEW-FAILED".to_string(),
-                message: err,
+                message: err.to_string(),
                 retryable: true,
             });
         }

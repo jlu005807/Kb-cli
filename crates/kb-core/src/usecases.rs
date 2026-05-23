@@ -494,7 +494,7 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                     record_id: record_id.clone(),
                     path: path.clone(),
                     code: "W-L2-SOURCE-MISSING".to_string(),
-                    message: err,
+                    message: err.to_string(),
                     retryable: true,
                 });
                 entries.push(KnowledgeEntry {
@@ -542,7 +542,7 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                     record_id: record_id.clone(),
                     path: path.clone(),
                     code: "W-L2-EXTRACT-FAILED".to_string(),
-                    message: err,
+                    message: err.to_string(),
                     retryable: true,
                 });
                 entries.push(KnowledgeEntry {
@@ -1513,6 +1513,7 @@ mod tests {
         AskPlanError, InitPlanError, MovePlanError,
     };
     use crate::domain::{IndexMeta, IndexRecord, IndexSnapshot};
+    use crate::error::DomainError;
     use crate::ports::{
         AnswerEngine, AnswerMeta, RetrievedContext, Retriever, StateRef, StateSnapshot,
     };
@@ -1525,7 +1526,7 @@ mod tests {
             _question: &str,
             top: usize,
             _snapshot: &IndexSnapshot,
-        ) -> Result<Vec<RetrievedContext>, String> {
+        ) -> Result<Vec<RetrievedContext>, DomainError> {
             Ok(vec![RetrievedContext {
                 alias: "docs/config".to_string(),
                 snippet: "Use kb config to change settings.".to_string(),
@@ -1547,7 +1548,7 @@ mod tests {
             &self,
             _question: &str,
             _contexts: &[RetrievedContext],
-        ) -> Result<AnswerMeta, String> {
+        ) -> Result<AnswerMeta, DomainError> {
             Ok(AnswerMeta {
                 engine_status: "disabled".to_string(),
                 provider: None,

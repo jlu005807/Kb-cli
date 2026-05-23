@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use kb_core::error::DomainError;
 use kb_core::{AnswerEngine, AnswerMeta, RetrievedContext, StateRef, StateSnapshot, StateStore};
 
 use crate::state::{load_state, save_state, RefEntry, State};
@@ -15,8 +16,8 @@ impl FsStateStore {
 }
 
 impl StateStore for FsStateStore {
-    fn load_state(&self) -> Result<StateSnapshot, String> {
-        let cli_state = load_state(&self.cwd).map_err(|err| err.message.to_string())?;
+    fn load_state(&self) -> Result<StateSnapshot, DomainError> {
+        let cli_state = load_state(&self.cwd).map_err(|err| DomainError::io(err.message))?;
         Ok(StateSnapshot {
             refs: cli_state
                 .refs
@@ -31,7 +32,7 @@ impl StateStore for FsStateStore {
         })
     }
 
-    fn save_state(&self, state: &StateSnapshot) -> Result<(), String> {
+    fn save_state(&self, state: &StateSnapshot) -> Result<(), DomainError> {
         let cli_state = State {
             refs: state
                 .refs
@@ -44,14 +45,18 @@ impl StateStore for FsStateStore {
                 })
                 .collect(),
         };
-        save_state(&self.cwd, &cli_state).map_err(|err| err.message.to_string())
+        save_state(&self.cwd, &cli_state).map_err(|err| DomainError::io(err.message))
     }
 }
 
 pub struct DisabledAnswerEngine;
 
 impl AnswerEngine for DisabledAnswerEngine {
-    fn meta(&self, _question: &str, _contexts: &[RetrievedContext]) -> Result<AnswerMeta, String> {
+    fn meta(
+        &self,
+        _question: &str,
+        _contexts: &[RetrievedContext],
+    ) -> Result<AnswerMeta, DomainError> {
         Ok(AnswerMeta {
             engine_status: "disabled".to_string(),
             provider: None,
@@ -71,7 +76,11 @@ impl ConfiguredAnswerEngine {
 }
 
 impl AnswerEngine for ConfiguredAnswerEngine {
-    fn meta(&self, _question: &str, _contexts: &[RetrievedContext]) -> Result<AnswerMeta, String> {
+    fn meta(
+        &self,
+        _question: &str,
+        _contexts: &[RetrievedContext],
+    ) -> Result<AnswerMeta, DomainError> {
         Ok(AnswerMeta {
             engine_status: "configured".to_string(),
             provider: Some(self.provider.clone()),

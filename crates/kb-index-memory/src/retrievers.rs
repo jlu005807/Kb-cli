@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use kb_core::domain::{
     GraphSnapshot, IndexRecord, IndexSnapshot, KnowledgeEntry, KnowledgeSnapshot,
 };
+use kb_core::error::DomainError;
 use kb_core::{RetrievedContext, Retriever, SearchProjectionSnapshot};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -16,7 +17,7 @@ impl Retriever for DefaultRetriever {
         question: &str,
         top: usize,
         snapshot: &IndexSnapshot,
-    ) -> Result<Vec<RetrievedContext>, String> {
+    ) -> Result<Vec<RetrievedContext>, DomainError> {
         let normalized_question = question.to_ascii_lowercase();
         let question_tokens = normalized_tokens(question);
 
@@ -102,7 +103,7 @@ impl Retriever for LayeredRetriever {
         question: &str,
         top: usize,
         snapshot: &IndexSnapshot,
-    ) -> Result<Vec<RetrievedContext>, String> {
+    ) -> Result<Vec<RetrievedContext>, DomainError> {
         let limit = top.max(1);
         let normalized_question = question.to_ascii_lowercase();
         let question_tokens = normalized_tokens(question);
