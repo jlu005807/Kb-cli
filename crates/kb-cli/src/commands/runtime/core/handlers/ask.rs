@@ -408,36 +408,20 @@ fn send_chat_completion(
     timeout_secs: u64,
     body: &Value,
 ) -> Result<Value, String> {
-    let request = ureq::post(endpoint)
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .set("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(timeout_secs));
-
-    let raw = match request.send_string(&body.to_string()) {
-        Ok(response) => response
-            .into_string()
-            .map_err(|err| format!("failed to read ask llm response: {}", err))?,
-        Err(ureq::Error::Status(code, response)) => {
-            let body_text = response
-                .into_string()
-                .unwrap_or_else(|_| "<failed to read error body>".to_string());
-            return Err(format!(
-                "http status {} from ask llm provider: {}",
-                code, body_text
-            ));
-        }
-        Err(err) => return Err(format!("ask llm request failed: {}", err)),
-    };
-    serde_json::from_str(&raw).map_err(|err| format!("invalid ask llm json response: {}", err))
+    // 同步 facade：HTTP/2 + 连接池在 kb-llm::http 里复用，避免 ureq 每次重连开销。
+    let client = kb_llm::HttpClient::new(timeout_secs);
+    let endpoint = endpoint.to_string();
+    let api_key = api_key.to_string();
+    let body = body.clone();
+    let timeout = std::time::Duration::from_secs(timeout_secs.saturating_mul(2).max(timeout_secs));
+    kb_llm::block_on_with_timeout(timeout, async move {
+        client.post_json(&endpoint, &api_key, &body).await
+    })
+    .map_err(|err| err.to_string())
 }
 
 fn build_chat_completion_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/chat/completions") {
-        trimmed.to_string()
-    } else {
-        format!("{}/chat/completions", trimmed)
-    }
+    kb_llm::ask_chat_completion_endpoint(base_url)
 }
 
 fn emit_runtime_trace(prefix: &str, message: &str) {
@@ -560,17 +544,7 @@ fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
 }
 
 fn supports_ask_provider_fallback(error_text: &str) -> bool {
-    let lowered = error_text.to_ascii_lowercase();
-    lowered.contains("max_completion_tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("response_format")
-        || lowered.contains("json_object")
-        || lowered.contains("unknown field")
-        || lowered.contains("unrecognized field")
-        || lowered.contains("invalid request")
-        || lowered.contains("unsupported parameter")
-        || lowered.contains("unsupported field")
-        || lowered.contains("unexpected field")
+    kb_llm::supports_ask_provider_fallback(error_text)
 }
 
 fn build_ask_chat_completion_body(

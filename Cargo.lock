@@ -721,7 +721,6 @@ dependencies = [
  "serde",
  "serde_json",
  "similar",
- "ureq",
 ]
 
 [[package]]
