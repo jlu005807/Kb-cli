@@ -42,6 +42,9 @@ const DEFAULT_AGENT_MIN_CHUNK_COVERAGE: f64 = 0.6;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlmConfigSource {
     ProcessEnv,
+    /// 系统密钥环（Windows Credential Manager / macOS Keychain / freedesktop Secret
+    /// Service）。仅用于敏感字段（当前只有 `key`）；其他字段不会走 keyring。
+    Keyring,
     ProjectConfig,
     GlobalConfig,
     Defaults,
@@ -51,6 +54,7 @@ impl LlmConfigSource {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProcessEnv => "process_env",
+            Self::Keyring => "keyring",
             Self::ProjectConfig => "project_config",
             Self::GlobalConfig => "global_config",
             Self::Defaults => "defaults",
@@ -113,18 +117,101 @@ struct LlmConfigPartial {
 
 pub fn resolve_llm_config(project_root: &Path, global_config_path: &Path) -> LlmRuntimeConfig {
     let process_env = read_process_env();
+    let keyring_key = load_key_from_keyring();
     let project_config = load_json_config(&project_root.join(".kb/config.json"));
     let global_config = load_json_config(global_config_path);
-    resolve_from_layers(process_env, project_config, global_config)
+    resolve_from_layers(process_env, keyring_key, project_config, global_config)
+}
+
+/// 默认 keyring service 名（可被 `KB_LLM_KEYRING_SERVICE` 覆盖，便于多环境隔离）。
+const DEFAULT_KEYRING_SERVICE: &str = "kb-cli";
+/// 默认 keyring username — 单用户场景下保持稳定即可。
+const DEFAULT_KEYRING_USER: &str = "default";
+
+const KB_LLM_KEYRING_SERVICE_ENV: &str = "KB_LLM_KEYRING_SERVICE";
+const KB_LLM_KEYRING_USER_ENV: &str = "KB_LLM_KEYRING_USER";
+const KB_LLM_DISABLE_KEYRING_ENV: &str = "KB_LLM_DISABLE_KEYRING";
+
+/// 从系统密钥环读取 LLM API key。返回 `Some` 仅当：
+/// 1. `KB_LLM_DISABLE_KEYRING=1` 未设置（运维 / 测试可关）
+/// 2. 平台后端可用
+/// 3. 对应 service/user 存在条目且非空
+///
+/// 任何失败都被吞掉——keyring 只是 best-effort 升级层，缺失时降级到配置文件 / env。
+/// 这样在 CI / 容器 / 无 keyring 后端的服务器上不会破坏正常启动。
+fn load_key_from_keyring() -> Option<String> {
+    if std::env::var(KB_LLM_DISABLE_KEYRING_ENV)
+        .ok()
+        .map(|v| parse_bool(&v).unwrap_or(false))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let service = std::env::var(KB_LLM_KEYRING_SERVICE_ENV)
+        .ok()
+        .and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .unwrap_or_else(|| DEFAULT_KEYRING_SERVICE.to_string());
+    let user = std::env::var(KB_LLM_KEYRING_USER_ENV)
+        .ok()
+        .and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .unwrap_or_else(|| DEFAULT_KEYRING_USER.to_string());
+
+    match keyring::Entry::new(&service, &user) {
+        Ok(entry) => match entry.get_password() {
+            Ok(value) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Err(_) => None,
+        },
+        Err(_) => None,
+    }
+}
+
+/// 写入 LLM API key 到系统密钥环。供 CLI 配置子命令调用（例如未来的
+/// `kb config set-key`）。该函数不在 hot path 上。
+pub fn save_key_to_keyring(key: &str) -> Result<(), kb_core::DomainError> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err(kb_core::DomainError::validation(
+            "refusing to store an empty key in keyring",
+        ));
+    }
+    let service = std::env::var(KB_LLM_KEYRING_SERVICE_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_KEYRING_SERVICE.to_string());
+    let user = std::env::var(KB_LLM_KEYRING_USER_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_KEYRING_USER.to_string());
+    let entry = keyring::Entry::new(&service, &user)
+        .map_err(|err| kb_core::DomainError::io(format!("keyring entry init failed: {err}")))?;
+    entry
+        .set_password(trimmed)
+        .map_err(|err| kb_core::DomainError::io(format!("keyring set_password failed: {err}")))
 }
 
 fn resolve_from_layers(
     process_env: LlmConfigPartial,
+    keyring_key: Option<String>,
     project_config: LlmConfigPartial,
     global_config: LlmConfigPartial,
 ) -> LlmRuntimeConfig {
     let (key, key_source) = pick_optional(&[
         (&process_env.key, LlmConfigSource::ProcessEnv),
+        (&keyring_key, LlmConfigSource::Keyring),
         (&project_config.key, LlmConfigSource::ProjectConfig),
         (&global_config.key, LlmConfigSource::GlobalConfig),
     ]);
@@ -743,12 +830,15 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-    const ENV_KEYS: [&str; 5] = [
+    const ENV_KEYS: [&str; 6] = [
         "KB_LLM_MODEL",
         "KB_LLM_BASE_URL",
         "KB_LLM_ENABLE_SEMANTIC",
         "KB_LLM_ENABLE_GRAPH",
         "KB_LLM_ENABLE_WIKI",
+        // 在测试中强制关闭 keyring，避免开发机上真实存在的 kb-cli/default 条目
+        // 影响 precedence 断言。`EnvGuard::capture` 会保存 + 恢复原值。
+        "KB_LLM_DISABLE_KEYRING",
     ];
 
     struct EnvGuard {
@@ -805,6 +895,7 @@ mod tests {
         std::env::set_var("KB_LLM_ENABLE_SEMANTIC", "1");
         std::env::set_var("KB_LLM_ENABLE_GRAPH", "1");
         std::env::set_var("KB_LLM_ENABLE_WIKI", "0");
+        std::env::set_var("KB_LLM_DISABLE_KEYRING", "1");
 
         let cfg = resolve_llm_config(&dir, &global_config);
         assert_eq!(cfg.model, "env-model");
@@ -823,6 +914,7 @@ mod tests {
         for key in ENV_KEYS {
             std::env::remove_var(key);
         }
+        std::env::set_var("KB_LLM_DISABLE_KEYRING", "1");
         let dir = unique_temp_dir("llm-config-project-global");
         let project_config = dir.join(".kb").join("config.json");
         let global_config = dir.join(".global").join("config.json");

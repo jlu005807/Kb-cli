@@ -27,6 +27,9 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     fs::write(&kb_md, "# raw\n").map_err(|_| write_config_error())?;
     save_state(&cwd, &State::default())?;
     save_registry(&cwd, &RegistryState::default())?;
+    // 维护 .gitignore：把派生层 + LLM key 配置文件加入忽略列表。
+    // 失败不阻塞 init（用户的 git 工作区不一定可写、也可能根本不是 git 仓库）。
+    let gitignore_updated = ensure_kb_gitignore_entries(&cwd).ok();
     let global_register_error = register_kb_root(&cwd).err();
     let global_config_registered = global_register_error.is_none();
 
@@ -36,7 +39,8 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
         "project_config_path": "./.kb/config.json",
         "kb_guide_path": kb_guide_rel,
         "global_config_path": global_config_path.to_string_lossy(),
-        "global_config_registered": global_config_registered
+        "global_config_registered": global_config_registered,
+        "gitignore_updated": gitignore_updated
     });
     if let Some(message) = global_register_error.as_ref() {
         data["global_config_error"] = Value::String(message.clone());
@@ -66,6 +70,15 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
     );
     if let Some(message) = global_register_error {
         let _ = writeln!(text, "llm_global_config_error: {}", message);
+    }
+    if let Some(updated) = gitignore_updated {
+        let _ = writeln!(
+            text,
+            "gitignore_updated: {}",
+            if updated { "true (entries appended)" } else { "true (already up to date)" }
+        );
+    } else {
+        text.push_str("gitignore_updated: false (write failed, ignored)\n");
     }
     if force {
         let _ = writeln!(
