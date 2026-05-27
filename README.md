@@ -16,6 +16,39 @@ KB-CLI 是一个本地知识库命令行工具，用于把分散文件声明、�
 - 本地问答：`ask` 基于分层检索返回上下文结果
 - 环境管理：`env --list` 查看系统已登记知识库
 
+## 架构概览
+
+KB-CLI 是一个 Rust workspace，遵循六边形架构（ports/adapters）：
+
+- `kb-core`：领域模型 + use cases + ports；不依赖具体存储或网络。
+- `kb-storage-fs`：JSON 文件后端的 Index / Knowledge / Search / Graph / Wiki / State store。
+- `kb-storage-sqlite`：等价的 SQLite 后端（schema 版本化、原子写入），通过相同 trait 与 core 对接。
+- `kb-llm`：OpenAI-compatible HTTP 适配器 + keyring 集成 + 共享 tokio runtime（reqwest HTTP/2 池）。
+- `kb-index-memory`：内存中的分层检索器实现。
+- `kb-cli`：唯一的二进制 crate，负责 CLI 表层、命令编排、装配适配器。
+
+### 存储后端切换
+
+项目级 `./.kb/config.json` 支持：
+
+```json
+{
+  "storage": { "backend": "json" }
+}
+```
+
+或：
+
+```json
+{
+  "storage": { "backend": "sqlite" }
+}
+```
+
+- `json`（默认）：所有 `.kb/*.json` 与 `.kb/wiki/*.md` 直接落盘，便于人工查看与 diff。
+- `sqlite`：所有快照写入 `./.kb/kb.sqlite`，适合需要更稳定原子性、并发读取或大仓库场景。
+- 两个后端共用同一组 `*Store` trait，CLI 通过 `StorageHandles::open(cwd)` 路由，runtime 行为完全等价。
+
 ## 命令速览
 
 - `kb init [name]`：初始化知识库目录与配置
@@ -85,7 +118,11 @@ kb ask "这个项目如何更新索引？"
 
 LLM 生效优先级：
 
-`环境变量 > 项目 .kb/config.json > 全局 config.json`
+`环境变量 KB_LLM_KEY > 系统 keyring > 项目 .kb/config.json > 全局 config.json`
+
+> 推荐使用系统 keyring 存储密钥（默认 service=`kb-cli`、user=`default`，可通过 `KB_LLM_KEYRING_SERVICE` / `KB_LLM_KEYRING_USER` 覆盖；设置 `KB_LLM_DISABLE_KEYRING=1` 可完全停用 keyring 路径）。`kb env --doctor` 会打印当前生效的 key 来源以及 keyring 探测结果。
+>
+> 从 #15 起，`kb init` 生成的 `./.kb/config.json` 默认不再写入 `key` 字段，并将该文件加入 `.gitignore`，避免误把明文密钥提交进仓库。
 
 LLM 参与构建（`kb update`）：
 
@@ -102,7 +139,7 @@ LLM 参与构建（`kb update`）：
 - `read_graph_neighbors`：读取指定文件节点邻接关系（L4）
 - `read_wiki_page`：读取 wiki 页面上下文（L5）
 
-推荐项目配置（`./.kb/config.json`）：
+推荐项目配置（`./.kb/config.json`，不写 `key`，密钥走环境变量或 keyring）：
 
 ```json
 {
@@ -110,13 +147,14 @@ LLM 参与构建（`kb update`）：
     "enable_semantic": true,
     "enable_graph": true,
     "enable_wiki": true,
-    "key": "YOUR_API_KEY",
     "model": "gpt-4o-mini",
     "base_url": "https://api.openai.com/v1",
     "semantic_flow": "two_step"
   }
 }
 ```
+
+并行编译调优：`KB_LLM_MAX_PARALLEL`（默认 4，钳制 `[1, 32]`）控制 L2 语义编译时的并发 LLM 请求数；大仓库且 provider 容忍度高时可以适当上调。底层使用共享 tokio runtime + Semaphore 限流，HTTP/2 连接由 reqwest 池复用。
 
 快速验证：
 
