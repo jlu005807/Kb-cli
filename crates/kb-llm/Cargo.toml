@@ -9,6 +9,17 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { workspace = true }
 ureq = { version = "2.10.1", features = ["json"] }
 unicode-segmentation = "1.11.0"
+# Async runtime + HTTP client for #2 LLM consolidation.
+# `rt-multi-thread` enables `Runtime::new()`; `macros` enables `#[tokio::main]`
+# for tests; `sync` is used by the cross-thread oneshot bridge in `http`.
+tokio = { version = "1.41.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+# rustls-tls keeps us off the system OpenSSL on Windows / minimal Linux.
+reqwest = { version = "0.12.9", default-features = false, features = ["json", "rustls-tls"] }
+once_cell = "1.20.2"
+# OS-native secret store for LLM keys (Windows Credential Manager, macOS Keychain,
+# Linux Secret Service). The crate is best-effort here: backend failures fall
+# back silently to env vars / config files. See #15.
+keyring = { version = "3.6.2", features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

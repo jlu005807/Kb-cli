@@ -8,11 +8,13 @@
 
 pub mod config;
 pub mod domain;
+pub mod error;
 pub mod ports;
 pub mod semantic_default;
 pub mod usecases;
 
 pub use config::{ConfigLayers, ConfigMergeTrace, ConfigSource, MergeResult};
+pub use error::{DomainError, DomainResult};
 pub use domain::{
     Alias, AliasError, AliasErrorKind, GraphEdge, GraphEdgeType, GraphEvidence, GraphNode,
     GraphNodeType, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot,

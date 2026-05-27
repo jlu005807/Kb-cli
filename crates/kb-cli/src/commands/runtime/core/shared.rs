@@ -39,8 +39,61 @@ use kb_storage_fs::{
 };
 
 const DEFAULT_KBIGNORE_CONTENT: &str = "# KB internal files (auto-generated)\n./kb.md\n./.kb/.kbignore\n./.kb/refs.json\n./.kb/regs.json\n./.kb/index.json\n./.kb/index.errors.json\n./.kb/index.meta.json\n./.kb/schema.version\n./.kb/*.lock\n";
-const DEFAULT_LLM_ENV_TEMPLATE: &str = "# KB LLM runtime template\n# Effective precedence: process env > project .kb/config.json > global config.json\n# This template is for exporting env vars in your shell/session.\n\n# Enable LLM-based semantic/graph/wiki compilation during `kb update`\nKB_LLM_ENABLE_SEMANTIC=0\nKB_LLM_ENABLE_GRAPH=0\nKB_LLM_ENABLE_WIKI=0\n\n# OpenAI-compatible endpoint settings\nKB_LLM_KEY=\nKB_LLM_MODEL=gpt-4o-mini\nKB_LLM_BASE_URL=https://api.openai.com/v1\n\n# LLM compile flow:\n#   two_step   -> analysis then memory generation (recommended)\n#   single_step -> direct generation in one request\nKB_LLM_SEMANTIC_FLOW=two_step\n\n# Tuning for multi-file semantic compilation\nKB_LLM_TIMEOUT_SECS=60\nKB_LLM_TEMPERATURE=0.1\nKB_LLM_MAX_OUTPUT_TOKENS=900\nKB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS=700\nKB_LLM_MAX_INPUT_CHARS=12000\nKB_LLM_MAX_CHUNKS=12\n\n# Lightweight agent-style refinement loop (GenericAgent-inspired)\nKB_LLM_AGENT_LOOP_MAX_ROUNDS=6\nKB_LLM_AGENT_REFLECTION_ENABLED=1\nKB_LLM_AGENT_MIN_CHUNK_COVERAGE=0.6\n\n# Retry strategy for transient provider/network failures\nKB_LLM_RETRY_MAX_ATTEMPTS=3\nKB_LLM_RETRY_BACKOFF_MS=600\n";
-const DEFAULT_PROJECT_LLM_CONFIG: &str = "{\n  \"llm\": {\n    \"enable_semantic\": false,\n    \"enable_graph\": false,\n    \"enable_wiki\": false,\n    \"key\": \"\",\n    \"model\": \"gpt-4o-mini\",\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"semantic_flow\": \"two_step\",\n    \"timeout_secs\": 60,\n    \"temperature\": 0.1,\n    \"max_output_tokens\": 900,\n    \"analysis_max_output_tokens\": 700,\n    \"max_input_chars\": 12000,\n    \"max_chunks\": 12,\n    \"retry_max_attempts\": 3,\n    \"retry_backoff_ms\": 600,\n    \"agent_loop_max_rounds\": 6,\n    \"agent_reflection_enabled\": true,\n    \"agent_min_chunk_coverage\": 0.6\n  }\n}\n";
+const DEFAULT_LLM_ENV_TEMPLATE: &str = "# KB LLM runtime template\n# Effective precedence: process env > system keyring > project .kb/config.json > global config.json\n# This template is for exporting env vars in your shell/session.\n\n# Enable LLM-based semantic/graph/wiki compilation during `kb update`\nKB_LLM_ENABLE_SEMANTIC=0\nKB_LLM_ENABLE_GRAPH=0\nKB_LLM_ENABLE_WIKI=0\n\n# OpenAI-compatible endpoint settings.\n# Prefer keyring: kb stores/reads the key from the OS secret store under\n#   service=\"kb-cli\", user=\"default\" by default. Override with\n#   KB_LLM_KEYRING_SERVICE / KB_LLM_KEYRING_USER, or disable entirely with\n#   KB_LLM_DISABLE_KEYRING=1. Falling back: set KB_LLM_KEY below.\nKB_LLM_KEY=\nKB_LLM_MODEL=gpt-4o-mini\nKB_LLM_BASE_URL=https://api.openai.com/v1\n\n# LLM compile flow:\n#   two_step   -> analysis then memory generation (recommended)\n#   single_step -> direct generation in one request\nKB_LLM_SEMANTIC_FLOW=two_step\n\n# Tuning for multi-file semantic compilation\nKB_LLM_TIMEOUT_SECS=60\nKB_LLM_TEMPERATURE=0.1\nKB_LLM_MAX_OUTPUT_TOKENS=900\nKB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS=700\nKB_LLM_MAX_INPUT_CHARS=12000\nKB_LLM_MAX_CHUNKS=12\n\n# Lightweight agent-style refinement loop (GenericAgent-inspired)\nKB_LLM_AGENT_LOOP_MAX_ROUNDS=6\nKB_LLM_AGENT_REFLECTION_ENABLED=1\nKB_LLM_AGENT_MIN_CHUNK_COVERAGE=0.6\n\n# Retry strategy for transient provider/network failures\nKB_LLM_RETRY_MAX_ATTEMPTS=3\nKB_LLM_RETRY_BACKOFF_MS=600\n";
+// 项目级配置模板：从 #15 起不再写入 `key` 字段，避免误把明文密钥提交到仓库。
+// 推荐路径：环境变量 (`KB_LLM_KEY`) 或系统 keyring (`kb-llm::save_key_to_keyring`)；
+// 真正需要时仍可手工 `key: "..."` 追加，但 `kb init` 会在 .gitignore 里排除该文件。
+const DEFAULT_PROJECT_LLM_CONFIG: &str = "{\n  \"llm\": {\n    \"enable_semantic\": false,\n    \"enable_graph\": false,\n    \"enable_wiki\": false,\n    \"model\": \"gpt-4o-mini\",\n    \"base_url\": \"https://api.openai.com/v1\",\n    \"semantic_flow\": \"two_step\",\n    \"timeout_secs\": 60,\n    \"temperature\": 0.1,\n    \"max_output_tokens\": 900,\n    \"analysis_max_output_tokens\": 700,\n    \"max_input_chars\": 12000,\n    \"max_chunks\": 12,\n    \"retry_max_attempts\": 3,\n    \"retry_backoff_ms\": 600,\n    \"agent_loop_max_rounds\": 6,\n    \"agent_reflection_enabled\": true,\n    \"agent_min_chunk_coverage\": 0.6\n  }\n}\n";
+
+/// `.gitignore` 中应排除的 KB 敏感/派生路径。`kb init` 会确保这些行存在，
+/// 已经存在则跳过（不会扰动用户已有的 .gitignore）。
+const KB_GITIGNORE_LINES: &[&str] = &[
+    "# kb-cli: do not commit LLM keys, derived data, or local locks",
+    ".kb/config.json",
+    ".kb/.env.template",
+    ".kb/*.lock",
+    ".kb/index.json",
+    ".kb/index.errors.json",
+    ".kb/index.meta.json",
+    ".kb/knowledge.json",
+    ".kb/search.json",
+    ".kb/graph.json",
+    ".kb/wiki/",
+];
+
+/// 幂等地把 KB 推荐忽略项追加到 `cwd/.gitignore`。
+/// 已存在的行不会重复写入；用户已有的内容也不会被覆盖。
+pub(crate) fn ensure_kb_gitignore_entries(cwd: &Path) -> std::io::Result<bool> {
+    let path = cwd.join(".gitignore");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let already: std::collections::HashSet<&str> = existing
+        .lines()
+        .map(|line| line.trim_end_matches('\r'))
+        .collect();
+
+    let missing: Vec<&str> = KB_GITIGNORE_LINES
+        .iter()
+        .copied()
+        .filter(|line| !already.contains(line))
+        .collect();
+    if missing.is_empty() {
+        return Ok(false);
+    }
+
+    let mut next = existing;
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    for line in missing {
+        next.push_str(line);
+        next.push('\n');
+    }
+    fs::write(&path, next)?;
+    Ok(true)
+}
 
 fn default_kb_structure_guide() -> &'static str {
     "# KB Structure Guide\n\nThis directory stores compiled knowledge-base artifacts and configuration for `kb`.\n\n## Core files\n\n- `.kb/index.json`: L1 registry-backed index snapshot used for fallback retrieval.\n- `.kb/index.errors.json`: index write errors and invalid-entry diagnostics.\n- `.kb/index.meta.json`: metadata for the current index snapshot.\n- `.kb/knowledge.json`: L2 semantic memory, including summaries, tags, concepts, and chunks.\n- `.kb/search.json`: L3 search projection used for chunk-level retrieval.\n- `.kb/graph.json`: L4 knowledge graph that links files, concepts, and tags.\n- `.kb/wiki/`: L5 human-readable wiki projection built from the semantic and graph layers.\n\n## Runtime and config\n\n- `.kb/.env.template`: shell template for `KB_LLM_*` runtime variables.\n- `.kb/config.json`: per-project LLM config resolved by `kb update` and `kb ask --answer`.\n- `.kb/raw/`: copied source files when `kb add --mode copy` is used.\n- `.kb/refs.json`: local CLI state for declared references.\n- `.kb/regs.json`: persisted registry used during update/check orchestration.\n\n## How custom agents should use this KB\n\n1. Start from `.kb/search.json` or `.kb/knowledge.json` to find relevant records.\n2. Use `.kb/graph.json` to expand into related files and evidence-backed connections.\n3. Read `.kb/wiki/` for human-readable synthesized pages.\n4. Read original source files or raw chunks only when compiled layers are insufficient.\n\nThis guide is intentionally lightweight so users can point custom agents at one document and understand the KB layout quickly.\n"

@@ -3,6 +3,7 @@ members = [
   "crates/kb-cli",
   "crates/kb-core",
   "crates/kb-storage-fs",
+  "crates/kb-storage-sqlite",
   "crates/kb-index-memory",
   "crates/kb-llm",
 ]

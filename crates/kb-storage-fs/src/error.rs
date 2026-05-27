@@ -52,6 +52,25 @@ impl std::error::Error for PersistenceError {
     }
 }
 
+// 适配到 core 的 DomainError：保留分类语义（锁/格式/IO/不支持版本）。
+// 让 ports 适配层可以直接通过 `?` 把存储错误转成域错误。
+impl From<PersistenceError> for kb_core::DomainError {
+    fn from(err: PersistenceError) -> Self {
+        let message = err.to_string();
+        match err.kind {
+            PersistenceErrorKind::LockAlreadyHeld { .. }
+            | PersistenceErrorKind::LockState { .. } => kb_core::DomainError::conflict(message),
+            PersistenceErrorKind::SchemaUnsupported { .. }
+            | PersistenceErrorKind::MigrationFailed { .. } => {
+                kb_core::DomainError::validation(message)
+            }
+            PersistenceErrorKind::LockIo { .. }
+            | PersistenceErrorKind::AtomicWriteIo { .. }
+            | PersistenceErrorKind::SchemaIo { .. } => kb_core::DomainError::io(message),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PersistenceErrorKind {
     /// writer.lock 已被其他进程/线程持有。

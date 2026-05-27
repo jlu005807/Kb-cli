@@ -1,10 +1,14 @@
 //! Ports 定义：核心层对外依赖抽象。
 //! 通过 trait 隔离存储、检索与应答实现，保证 usecase 可测试与可替换。
+//!
+//! 所有 port 与桥接器统一使用 [`DomainError`]，让消费端能按 io / config /
+//! external 等语义维度分流（重试 / 终止 / 用户提示），而不是依赖字符串匹配。
 
 use crate::domain::{
     GraphSnapshot, IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
     SemanticProviderInfo, WikiManifestSnapshot, WikiViewSnapshot,
 };
+use crate::error::DomainError;
 
 // 运行态引用视图：供 usecase 层消费，不暴露具体持久化细节。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,38 +26,38 @@ pub struct StateSnapshot {
 
 // 状态端口：抽象“引用状态”的加载与保存。
 pub trait StateStore {
-    fn load_state(&self) -> Result<StateSnapshot, String>;
-    fn save_state(&self, state: &StateSnapshot) -> Result<(), String>;
+    fn load_state(&self) -> Result<StateSnapshot, DomainError>;
+    fn save_state(&self, state: &StateSnapshot) -> Result<(), DomainError>;
 }
 
 // 索引端口：抽象“索引快照”的读取与持久化。
 pub trait IndexStore {
-    fn read_index(&self) -> Result<Option<IndexSnapshot>, String>;
-    fn write_index(&self, snapshot: &IndexSnapshot) -> Result<(), String>;
+    fn read_index(&self) -> Result<Option<IndexSnapshot>, DomainError>;
+    fn write_index(&self, snapshot: &IndexSnapshot) -> Result<(), DomainError>;
 }
 
 pub trait KnowledgeStore {
-    fn read_knowledge(&self) -> Result<Option<KnowledgeSnapshot>, String>;
-    fn write_knowledge(&self, snapshot: &KnowledgeSnapshot) -> Result<(), String>;
+    fn read_knowledge(&self) -> Result<Option<KnowledgeSnapshot>, DomainError>;
+    fn write_knowledge(&self, snapshot: &KnowledgeSnapshot) -> Result<(), DomainError>;
 }
 
 pub trait SearchStore {
-    fn read_search(&self) -> Result<Option<SearchProjectionSnapshot>, String>;
-    fn write_search(&self, snapshot: &SearchProjectionSnapshot) -> Result<(), String>;
+    fn read_search(&self) -> Result<Option<SearchProjectionSnapshot>, DomainError>;
+    fn write_search(&self, snapshot: &SearchProjectionSnapshot) -> Result<(), DomainError>;
 }
 
 pub trait GraphStore {
-    fn read_graph(&self) -> Result<Option<GraphSnapshot>, String>;
-    fn write_graph(&self, snapshot: &GraphSnapshot) -> Result<(), String>;
+    fn read_graph(&self) -> Result<Option<GraphSnapshot>, DomainError>;
+    fn write_graph(&self, snapshot: &GraphSnapshot) -> Result<(), DomainError>;
 }
 
 pub trait WikiStore {
-    fn read_wiki_manifest(&self) -> Result<Option<WikiManifestSnapshot>, String>;
+    fn read_wiki_manifest(&self) -> Result<Option<WikiManifestSnapshot>, DomainError>;
     fn write_wiki_view(
         &self,
         snapshot: &WikiViewSnapshot,
         removed_paths: &[String],
-    ) -> Result<(), String>;
+    ) -> Result<(), DomainError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,11 +78,14 @@ pub struct SemanticExtractResponse {
 }
 
 pub trait SemanticExtractor {
-    fn extract(&self, request: &SemanticExtractRequest) -> Result<SemanticExtractResponse, String>;
+    fn extract(
+        &self,
+        request: &SemanticExtractRequest,
+    ) -> Result<SemanticExtractResponse, DomainError>;
 }
 
 pub trait FileContentReader {
-    fn read_text(&self, path: &str) -> Result<String, String>;
+    fn read_text(&self, path: &str) -> Result<String, DomainError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,12 +112,16 @@ pub trait Retriever {
         question: &str,
         top: usize,
         snapshot: &IndexSnapshot,
-    ) -> Result<Vec<RetrievedContext>, String>;
+    ) -> Result<Vec<RetrievedContext>, DomainError>;
 }
 
 // 应答端口：负责产出最终应答元信息（当前实现为 disabled 占位）。
 pub trait AnswerEngine {
-    fn meta(&self, question: &str, contexts: &[RetrievedContext]) -> Result<AnswerMeta, String>;
+    fn meta(
+        &self,
+        question: &str,
+        contexts: &[RetrievedContext],
+    ) -> Result<AnswerMeta, DomainError>;
 }
 
 // 后端知识库检索请求：用于接入远端/服务化知识库时的标准输入。
@@ -136,7 +147,7 @@ pub trait KnowledgeBackend {
     fn retrieve(
         &self,
         request: &BackendRetrieveRequest,
-    ) -> Result<Vec<BackendRetrievedItem>, String>;
+    ) -> Result<Vec<BackendRetrievedItem>, DomainError>;
 }
 
 // Agent 问答请求：将问题和上下文一并交给上层 Agent/LLM 编排服务。
@@ -159,7 +170,7 @@ pub struct AgentAnswerResponse {
 
 // Agent 问答端口：抽象上游 Agent 服务/模型编排层。
 pub trait AgentBackend {
-    fn answer(&self, request: &AgentAnswerRequest) -> Result<AgentAnswerResponse, String>;
+    fn answer(&self, request: &AgentAnswerRequest) -> Result<AgentAnswerResponse, DomainError>;
 }
 
 // 后端检索桥接器：把 KnowledgeBackend 适配为现有 Retriever 端口。
@@ -192,7 +203,7 @@ impl<B: KnowledgeBackend> Retriever for BackendRetrieverBridge<B> {
         question: &str,
         top: usize,
         _snapshot: &IndexSnapshot,
-    ) -> Result<Vec<RetrievedContext>, String> {
+    ) -> Result<Vec<RetrievedContext>, DomainError> {
         let request = BackendRetrieveRequest {
             question: question.to_string(),
             top_k: top,
@@ -240,7 +251,11 @@ impl<A> BackendAnswerEngineBridge<A> {
 }
 
 impl<A: AgentBackend> AnswerEngine for BackendAnswerEngineBridge<A> {
-    fn meta(&self, question: &str, contexts: &[RetrievedContext]) -> Result<AnswerMeta, String> {
+    fn meta(
+        &self,
+        question: &str,
+        contexts: &[RetrievedContext],
+    ) -> Result<AnswerMeta, DomainError> {
         let request = AgentAnswerRequest {
             question: question.to_string(),
             contexts: contexts.to_vec(),
@@ -264,6 +279,7 @@ mod tests {
         BackendRetrieverBridge, KnowledgeBackend, Retriever,
     };
     use crate::domain::{IndexMeta, IndexSnapshot};
+    use crate::error::DomainError;
 
     #[derive(Debug, Clone)]
     struct FakeKnowledgeBackend;
@@ -272,7 +288,7 @@ mod tests {
         fn retrieve(
             &self,
             request: &BackendRetrieveRequest,
-        ) -> Result<Vec<BackendRetrievedItem>, String> {
+        ) -> Result<Vec<BackendRetrievedItem>, DomainError> {
             Ok(vec![BackendRetrievedItem {
                 alias: format!("remote/{}", request.top_k),
                 snippet: request.question.clone(),
@@ -286,7 +302,10 @@ mod tests {
     struct FakeAgentBackend;
 
     impl AgentBackend for FakeAgentBackend {
-        fn answer(&self, request: &AgentAnswerRequest) -> Result<AgentAnswerResponse, String> {
+        fn answer(
+            &self,
+            request: &AgentAnswerRequest,
+        ) -> Result<AgentAnswerResponse, DomainError> {
             Ok(AgentAnswerResponse {
                 engine_status: "enabled".to_string(),
                 provider: Some("fake-agent".to_string()),

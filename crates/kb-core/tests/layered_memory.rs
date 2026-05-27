@@ -4,6 +4,7 @@ use kb_core::domain::{
     SearchHit, SearchProjectionSnapshot, SemanticProviderInfo, WikiManifestEntry,
     WikiManifestSnapshot, WikiPageDocument, WikiPageType, WikiViewSnapshot,
 };
+use kb_core::error::DomainError;
 use kb_core::ports::{
     FileContentReader, SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor,
 };
@@ -118,14 +119,14 @@ struct FakeReader {
 }
 
 impl FileContentReader for FakeReader {
-    fn read_text(&self, path: &str) -> Result<String, String> {
+    fn read_text(&self, path: &str) -> Result<String, DomainError> {
         if self.missing.contains(path) {
-            return Err(format!("source not found: {}", path));
+            return Err(DomainError::not_found(format!("source not found: {}", path)));
         }
         self.docs
             .get(path)
             .cloned()
-            .ok_or_else(|| format!("unknown test path: {}", path))
+            .ok_or_else(|| DomainError::not_found(format!("unknown test path: {}", path)))
     }
 }
 
@@ -134,9 +135,15 @@ struct FakeExtractor {
 }
 
 impl SemanticExtractor for FakeExtractor {
-    fn extract(&self, request: &SemanticExtractRequest) -> Result<SemanticExtractResponse, String> {
+    fn extract(
+        &self,
+        request: &SemanticExtractRequest,
+    ) -> Result<SemanticExtractResponse, DomainError> {
         if self.fail_records.contains(&request.record_id) {
-            return Err(format!("forced extractor failure: {}", request.record_id));
+            return Err(DomainError::external(format!(
+                "forced extractor failure: {}",
+                request.record_id
+            )));
         }
 
         Ok(SemanticExtractResponse {

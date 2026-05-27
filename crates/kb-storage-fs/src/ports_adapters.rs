@@ -5,6 +5,7 @@ use kb_core::domain::{
     GraphSnapshot, IndexSnapshot, KnowledgeSnapshot, SearchProjectionSnapshot,
     WikiManifestSnapshot, WikiViewSnapshot,
 };
+use kb_core::error::DomainError;
 use kb_core::{FileContentReader, GraphStore, IndexStore, KnowledgeStore, SearchStore, WikiStore};
 
 #[derive(Debug, Clone)]
@@ -19,14 +20,14 @@ impl FsIndexStore {
 }
 
 impl IndexStore for FsIndexStore {
-    fn read_index(&self) -> Result<Option<IndexSnapshot>, String> {
-        crate::read_index_files(&self.cwd).map_err(|err| err.to_string())
+    fn read_index(&self) -> Result<Option<IndexSnapshot>, DomainError> {
+        crate::read_index_files(&self.cwd).map_err(Into::into)
     }
 
-    fn write_index(&self, snapshot: &IndexSnapshot) -> Result<(), String> {
+    fn write_index(&self, snapshot: &IndexSnapshot) -> Result<(), DomainError> {
         crate::write_index_files(&self.cwd, snapshot)
             .map(|_| ())
-            .map_err(|err| err.to_string())
+            .map_err(Into::into)
     }
 }
 
@@ -42,14 +43,14 @@ impl FsKnowledgeStore {
 }
 
 impl KnowledgeStore for FsKnowledgeStore {
-    fn read_knowledge(&self) -> Result<Option<KnowledgeSnapshot>, String> {
-        crate::read_knowledge_file(&self.cwd).map_err(|err| err.to_string())
+    fn read_knowledge(&self) -> Result<Option<KnowledgeSnapshot>, DomainError> {
+        crate::read_knowledge_file(&self.cwd).map_err(Into::into)
     }
 
-    fn write_knowledge(&self, snapshot: &KnowledgeSnapshot) -> Result<(), String> {
+    fn write_knowledge(&self, snapshot: &KnowledgeSnapshot) -> Result<(), DomainError> {
         crate::write_knowledge_file(&self.cwd, snapshot)
             .map(|_| ())
-            .map_err(|err| err.to_string())
+            .map_err(Into::into)
     }
 }
 
@@ -65,14 +66,14 @@ impl FsSearchStore {
 }
 
 impl SearchStore for FsSearchStore {
-    fn read_search(&self) -> Result<Option<SearchProjectionSnapshot>, String> {
-        crate::read_search_file(&self.cwd).map_err(|err| err.to_string())
+    fn read_search(&self) -> Result<Option<SearchProjectionSnapshot>, DomainError> {
+        crate::read_search_file(&self.cwd).map_err(Into::into)
     }
 
-    fn write_search(&self, snapshot: &SearchProjectionSnapshot) -> Result<(), String> {
+    fn write_search(&self, snapshot: &SearchProjectionSnapshot) -> Result<(), DomainError> {
         crate::write_search_file(&self.cwd, snapshot)
             .map(|_| ())
-            .map_err(|err| err.to_string())
+            .map_err(Into::into)
     }
 }
 
@@ -88,14 +89,14 @@ impl FsGraphStore {
 }
 
 impl GraphStore for FsGraphStore {
-    fn read_graph(&self) -> Result<Option<GraphSnapshot>, String> {
-        crate::read_graph_file(&self.cwd).map_err(|err| err.to_string())
+    fn read_graph(&self) -> Result<Option<GraphSnapshot>, DomainError> {
+        crate::read_graph_file(&self.cwd).map_err(Into::into)
     }
 
-    fn write_graph(&self, snapshot: &GraphSnapshot) -> Result<(), String> {
+    fn write_graph(&self, snapshot: &GraphSnapshot) -> Result<(), DomainError> {
         crate::write_graph_file(&self.cwd, snapshot)
             .map(|_| ())
-            .map_err(|err| err.to_string())
+            .map_err(Into::into)
     }
 }
 
@@ -111,18 +112,18 @@ impl FsWikiStore {
 }
 
 impl WikiStore for FsWikiStore {
-    fn read_wiki_manifest(&self) -> Result<Option<WikiManifestSnapshot>, String> {
-        crate::read_wiki_manifest_file(&self.cwd).map_err(|err| err.to_string())
+    fn read_wiki_manifest(&self) -> Result<Option<WikiManifestSnapshot>, DomainError> {
+        crate::read_wiki_manifest_file(&self.cwd).map_err(Into::into)
     }
 
     fn write_wiki_view(
         &self,
         snapshot: &WikiViewSnapshot,
         removed_paths: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<(), DomainError> {
         crate::write_wiki_view_files(&self.cwd, snapshot, removed_paths)
             .map(|_| ())
-            .map_err(|err| err.to_string())
+            .map_err(Into::into)
     }
 }
 
@@ -138,8 +139,9 @@ impl FsFileContentReader {
 }
 
 impl FileContentReader for FsFileContentReader {
-    fn read_text(&self, path: &str) -> Result<String, String> {
+    fn read_text(&self, path: &str) -> Result<String, DomainError> {
         let abs = self.cwd.join(path.trim_start_matches("./"));
-        fs::read_to_string(&abs).map_err(|err| format!("failed to read {}: {}", path, err))
+        fs::read_to_string(&abs)
+            .map_err(|err| DomainError::io(format!("failed to read {}: {}", path, err)))
     }
 }
