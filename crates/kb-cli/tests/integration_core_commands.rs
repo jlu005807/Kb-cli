@@ -1602,11 +1602,10 @@ fn ask_answer_stub_emits_agent_trace_and_stderr_progress() {
             .any(|item| item["tool"] == "search_context")
     );
     assert!(
-        body["data"]["retrieved_context"]
+        !body["data"]["retrieved_context"]
             .as_array()
             .expect("retrieved_context should be array")
-            .len()
-            >= 1
+            .is_empty()
     );
     let agent_trace = body["data"]["agent_trace"]
         .as_array()

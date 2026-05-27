@@ -451,7 +451,7 @@ impl SemanticExtractor for LlmSemanticExtractor {
                 name: format!("{};flow={}", self.provider_name, self.config.semantic_flow),
             },
         })
-        .map(|response| {
+        .inspect(|response| {
             self.emit_progress(
                 "record-done",
                 request,
@@ -462,7 +462,6 @@ impl SemanticExtractor for LlmSemanticExtractor {
                     response.chunks.len()
                 )),
             );
-            response
         })
     }
 }
@@ -723,6 +722,11 @@ Rules:\n\
     )
 }
 
+// Reflection prompt 拼接需要把所有 round-N 上下文（请求、已规划 chunk、
+// agent 工具上下文、上一轮 payload、分析 payload、覆盖率、最小阈值、当前轮次、
+// 缺失 chunk 列表）全部送进模板。引入参数结构体只会徒增包装/解包样板，
+// 因此此处显式抑制 too_many_arguments。
+#[allow(clippy::too_many_arguments)]
 fn build_semantic_prompt_reflection(
     request: &SemanticExtractRequest,
     planned_chunks: &[KnowledgeChunk],

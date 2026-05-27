@@ -128,6 +128,10 @@ fn search_context_for_agent(
         .map_err(|err| format!("search_context failed: {}", err))
 }
 
+// ask 命令的人类可读摘要需要把 engine/provider/trace/citations 等独立来源
+// 全部拼到一段文本里；这里继续按字段平铺最直观，引入结构体会牵动调用方
+// 多处签名。`ask.rs` 后续会整体拆分（part of #1 follow-up），届时再考虑分组。
+#[allow(clippy::too_many_arguments)]
 fn format_answer_text(
     engine_status: &str,
     provider: Option<&str>,
@@ -614,6 +618,11 @@ fn build_minimal_follow_up_tool_instruction(requirement: &str, tool_trace: &[Val
     )
 }
 
+// 这是 ask agent loop 对 OpenAI Chat Completions 的一次性请求，需要把
+// endpoint/auth/timeout/model/temperature/max_tokens/messages/tools 全部
+// 显式传入；这些都是独立维度，绑成结构体反而牺牲调用清晰度。`ask.rs` 后续
+// 整体拆分时（#1 follow-up）会一并迁到 kb-llm。
+#[allow(clippy::too_many_arguments)]
 fn send_ask_chat_completion_once(
     endpoint: &str,
     api_key: &str,

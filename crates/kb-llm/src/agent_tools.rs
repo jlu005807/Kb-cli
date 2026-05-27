@@ -45,18 +45,19 @@ impl SemanticAgentToolbox {
         request: &SemanticExtractRequest,
         fallback_source_text: &str,
     ) -> SemanticAgentContext {
-        let mut context = SemanticAgentContext::default();
-
-        context.raw_source_excerpt = self.tool_read_raw_file(request, fallback_source_text);
         let knowledge = self.load_knowledge_snapshot();
         let graph = self.load_graph_snapshot();
 
-        context.current_file_summary = self.tool_read_file_summary(request, knowledge.as_ref());
-        context.related_file_summaries =
-            self.collect_related_summaries(request, knowledge.as_ref(), graph.as_ref());
-        context.graph_relations = self.tool_read_knowledge_graph(request, graph.as_ref());
-
-        context
+        SemanticAgentContext {
+            raw_source_excerpt: self.tool_read_raw_file(request, fallback_source_text),
+            current_file_summary: self.tool_read_file_summary(request, knowledge.as_ref()),
+            related_file_summaries: self.collect_related_summaries(
+                request,
+                knowledge.as_ref(),
+                graph.as_ref(),
+            ),
+            graph_relations: self.tool_read_knowledge_graph(request, graph.as_ref()),
+        }
     }
 
     pub fn build_graph_context(
@@ -326,9 +327,7 @@ impl SemanticAgentToolbox {
         request: &SemanticExtractRequest,
         knowledge: Option<&KnowledgeSnapshot>,
     ) -> Option<AgentSummaryItem> {
-        let Some(knowledge) = knowledge else {
-            return None;
-        };
+        let knowledge = knowledge?;
         knowledge
             .entries
             .iter()
