@@ -33,7 +33,7 @@ KB-CLI 是一个 Rust workspace，遵循六边形架构（ports/adapters）：
 
 ```json
 {
-  "storage": { "backend": "json" }
+  "storage": { "backend": "fs" }
 }
 ```
 
@@ -45,8 +45,8 @@ KB-CLI 是一个 Rust workspace，遵循六边形架构（ports/adapters）：
 }
 ```
 
-- `json`（默认）：所有 `.kb/*.json` 与 `.kb/wiki/*.md` 直接落盘，便于人工查看与 diff。
-- `sqlite`：所有快照写入 `./.kb/kb.sqlite`，适合需要更稳定原子性、并发读取或大仓库场景。
+- `fs`（默认，未配置或字段拼错都走这条）：所有 `.kb/*.json` 与 `.kb/wiki/*.md` 直接落盘，便于人工查看与 diff。
+- `sqlite`：所有快照写入 `./.kb/store.sqlite3`，适合需要更稳定原子性、并发读取或大仓库场景。
 - 两个后端共用同一组 `*Store` trait，CLI 通过 `StorageHandles::open(cwd)` 路由，runtime 行为完全等价。
 
 ## 命令速览
@@ -177,6 +177,129 @@ kb update --llm --output json
 - `W-L2-LLM-CONFIG-MISSING`
 - `W-L4-LLM-CONFIG-MISSING`
 - `W-L5-LLM-CONFIG-MISSING`
+
+## 配置参数完整参考（`config.json`）
+
+KB-CLI 读取两份 JSON 配置：
+
+- **项目级**：`./.kb/config.json`（由 `kb init` 写入推荐模板，被 `.gitignore` 排除）
+- **全局**：`%USERPROFILE%\.kb-cli\config.json`（Linux/macOS：`~/.kb-cli/config.json`），可通过 `KB_GLOBAL_CONFIG` 覆盖路径
+
+两份文件 schema 完全一致；同名字段按下面"优先级"小节合并。无效 JSON、缺失字段、类型不匹配都会**静默回退到默认值**而不是拒绝启动。
+
+### `llm.*` —— LLM 适配器
+
+| 字段 | 环境变量 | 类型 | 默认值 | 取值范围 / 说明 |
+|---|---|---|---|---|
+| `llm.key` | `KB_LLM_KEY` | string | — | OpenAI-compatible API key。**不建议**写在配置里；优先使用环境变量或 keyring。 |
+| `llm.model` | `KB_LLM_MODEL` | string | `gpt-4o-mini` | 模型 ID。 |
+| `llm.base_url` | `KB_LLM_BASE_URL` | string | `https://api.openai.com/v1` | OpenAI-compatible 端点（DashScope / Together / 本地 vLLM 等都可填）。 |
+| `llm.enable_semantic` | `KB_LLM_ENABLE_SEMANTIC` | bool | `false` | 是否在 `kb update` 中启用 L2 语义编译（LLM 路径）。 |
+| `llm.enable_graph` | `KB_LLM_ENABLE_GRAPH` | bool | `false` | 是否在规则构建后用 LLM 增强 L4 知识图谱。 |
+| `llm.enable_wiki` | `KB_LLM_ENABLE_WIKI` | bool | `false` | 是否在规则构建后用 LLM 增强 L5 wiki。 |
+| `llm.semantic_flow` | `KB_LLM_SEMANTIC_FLOW` | string | `two_step` | `two_step`（先分析后生成，推荐）或 `single_step`（一次生成）。非法值回退为 `two_step`。 |
+| `llm.timeout_secs` | `KB_LLM_TIMEOUT_SECS` | u64 (秒) | `60` | 单次 HTTP 请求超时，下限 5。 |
+| `llm.temperature` | `KB_LLM_TEMPERATURE` | f64 | `0.1` | 采样温度，钳制 `[0.0, 2.0]`。 |
+| `llm.max_output_tokens` | `KB_LLM_MAX_OUTPUT_TOKENS` | u32 | `900` | 单次响应最大输出 token，下限 64。 |
+| `llm.analysis_max_output_tokens` | `KB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS` | u32 | `700` | `two_step` 分析阶段的输出 token 上限，下限 64。 |
+| `llm.max_input_chars` | `KB_LLM_MAX_INPUT_CHARS` | usize | `12000` | 单次请求拼接的输入字符上限，下限 1200。 |
+| `llm.max_chunks` | `KB_LLM_MAX_CHUNKS` | usize | `12` | 每次语义编译请求最多传入的 chunk 数量，下限 1。 |
+| `llm.retry_max_attempts` | `KB_LLM_RETRY_MAX_ATTEMPTS` | usize | `3` | 暂态失败（429 / 5xx / 超时）的重试次数，钳制 `[1, 8]`。 |
+| `llm.retry_backoff_ms` | `KB_LLM_RETRY_BACKOFF_MS` | u64 (毫秒) | `600` | 重试初始退避，上限 30000。 |
+| `llm.agent_loop_max_rounds` | `KB_LLM_AGENT_LOOP_MAX_ROUNDS` | usize | `2` | L2/L4/L5 agent 风格细化循环最大轮数，钳制 `[1, 4]`（即使写更大也会被截到 4）。 |
+| `llm.agent_reflection_enabled` | `KB_LLM_AGENT_REFLECTION_ENABLED` | bool | `true` | 是否启用 agent loop 自反思阶段。 |
+| `llm.agent_min_chunk_coverage` | `KB_LLM_AGENT_MIN_CHUNK_COVERAGE` | f64 | `0.6` | 触发 agent 细化的 chunk 覆盖率阈值，钳制 `[0.0, 1.0]`。 |
+
+> bool 解析接受 `1` / `true` / `yes` / `on`（真）和 `0` / `false` / `no` / `off`（假），都不区分大小写。
+
+### `storage.*` —— 存储后端
+
+| 字段 | 类型 | 默认值 | 取值 |
+|---|---|---|---|
+| `storage.backend` | string | `fs` | `fs` 或 `sqlite`。其它值（包括拼错）静默回退为 `fs`。 |
+
+> 存储后端**只读项目级配置**，不接受环境变量覆盖。详见前文"存储后端切换"。
+
+### 仅环境变量（不在 config.json 里）
+
+| 环境变量 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `KB_LLM_MAX_PARALLEL` | usize | `4` | L2 并行编译的最大并发请求数，钳制 `[1, 32]`。 |
+| `KB_LLM_KEYRING_SERVICE` | string | `kb-cli` | 系统 keyring 的 service 名（用于多环境隔离）。 |
+| `KB_LLM_KEYRING_USER` | string | `default` | 系统 keyring 的 user 名。 |
+| `KB_LLM_DISABLE_KEYRING` | bool | `false` | 设为 `1` / `true` 完全停用 keyring 路径（CI / 容器场景）。 |
+| `KB_GLOBAL_CONFIG` | path | 见下 | 覆盖全局 config.json 文件路径。 |
+
+> 全局 config 默认查找顺序：`KB_GLOBAL_CONFIG` → `kb` 可执行文件同目录下的 `config.json` → `%USERPROFILE%\.kb-cli\config.json`（或 Linux/macOS 下 `~/.kb-cli/config.json`）。
+
+### 优先级（高 → 低）
+
+对 `llm.key` 字段：
+
+```
+process env (KB_LLM_KEY)  >  系统 keyring  >  项目 .kb/config.json  >  全局 config.json  >  defaults
+```
+
+对其它 `llm.*` 字段：
+
+```
+process env (KB_LLM_*)  >  项目 .kb/config.json  >  全局 config.json  >  defaults
+```
+
+对 `storage.backend`：
+
+```
+项目 .kb/config.json  >  defaults("fs")
+```
+
+任何层缺失或解析失败都会跳到下一层，永不破坏启动。`kb env --doctor` 会逐字段打印当前生效来源，便于排查"为什么我的 timeout 没生效"。
+
+### 全局 config.json 的额外字段
+
+全局 config 文件除 `llm` 节外还会维护一个 `knowledge_bases` 数组（由 `kb init` 写入、`kb env --list` 读取）：
+
+```json
+{
+  "llm": { "model": "gpt-4o-mini" },
+  "knowledge_bases": [
+    "C:\\path\\to\\kb-one",
+    "C:\\path\\to\\kb-two"
+  ]
+}
+```
+
+该数组由 CLI 自维护，**不要手工编辑**（路径会在 `kb init` / `kb env --list` 时被规范化）。
+
+### 全字段示例（项目级 `./.kb/config.json`）
+
+```json
+{
+  "llm": {
+    "enable_semantic": true,
+    "enable_graph": true,
+    "enable_wiki": true,
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1",
+    "semantic_flow": "two_step",
+    "timeout_secs": 60,
+    "temperature": 0.1,
+    "max_output_tokens": 900,
+    "analysis_max_output_tokens": 700,
+    "max_input_chars": 12000,
+    "max_chunks": 12,
+    "retry_max_attempts": 3,
+    "retry_backoff_ms": 600,
+    "agent_loop_max_rounds": 2,
+    "agent_reflection_enabled": true,
+    "agent_min_chunk_coverage": 0.6
+  },
+  "storage": {
+    "backend": "fs"
+  }
+}
+```
+
+> 真正需要时密钥可以写在 `llm.key` 里，但 `kb init` 默认不写、`.kb/config.json` 默认被 `.gitignore` 排除——优先选择环境变量或 keyring。
 
 ## Ask 模式说明
 
