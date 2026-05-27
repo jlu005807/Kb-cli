@@ -408,28 +408,6 @@ fn ask_agent_tools_schema() -> Vec<Value> {
     ]
 }
 
-fn send_chat_completion(
-    endpoint: &str,
-    api_key: &str,
-    timeout_secs: u64,
-    body: &Value,
-) -> Result<Value, String> {
-    // 同步 facade：HTTP/2 + 连接池在 kb-llm::http 里复用，避免 ureq 每次重连开销。
-    let client = kb_llm::HttpClient::new(timeout_secs);
-    let endpoint = endpoint.to_string();
-    let api_key = api_key.to_string();
-    let body = body.clone();
-    let timeout = std::time::Duration::from_secs(timeout_secs.saturating_mul(2).max(timeout_secs));
-    kb_llm::block_on_with_timeout(timeout, async move {
-        client.post_json(&endpoint, &api_key, &body).await
-    })
-    .map_err(|err| err.to_string())
-}
-
-fn build_chat_completion_endpoint(base_url: &str) -> String {
-    kb_llm::ask_chat_completion_endpoint(base_url)
-}
-
 fn emit_runtime_trace(prefix: &str, message: &str) {
     eprintln!("[{}] {}", prefix, message);
 }
@@ -549,38 +527,6 @@ fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
     ))
 }
 
-fn supports_ask_provider_fallback(error_text: &str) -> bool {
-    kb_llm::supports_ask_provider_fallback(error_text)
-}
-
-fn build_ask_chat_completion_body(
-    model: &str,
-    temperature: f64,
-    max_output_tokens: u32,
-    messages: &[Value],
-    tools: &[Value],
-    max_tokens_key: &str,
-    include_response_format: bool,
-) -> Value {
-    let mut body = json!({
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "tools": tools,
-        "tool_choice": "auto",
-    });
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
-        if include_response_format {
-            obj.insert(
-                "response_format".to_string(),
-                json!({ "type": "json_object" }),
-            );
-        }
-    }
-    body
-}
-
 fn build_minimal_follow_up_tool_instruction(requirement: &str, tool_trace: &[Value]) -> String {
     if requirement.contains("search_context") {
         return "Do not answer yet. First call search_context with a refined or broader query, then continue."
@@ -618,204 +564,6 @@ fn build_minimal_follow_up_tool_instruction(requirement: &str, tool_trace: &[Val
         "Do not answer yet. {} Continue by calling the necessary tool instead of summarizing.",
         requirement
     )
-}
-
-// 这是 ask agent loop 对 OpenAI Chat Completions 的一次性请求，需要把
-// endpoint/auth/timeout/model/temperature/max_tokens/messages/tools 全部
-// 显式传入；这些都是独立维度，绑成结构体反而牺牲调用清晰度。`ask.rs` 后续
-// 整体拆分时（#1 follow-up）会一并迁到 kb-llm。
-#[allow(clippy::too_many_arguments)]
-fn send_ask_chat_completion_once(
-    endpoint: &str,
-    api_key: &str,
-    timeout_secs: u64,
-    model: &str,
-    temperature: f64,
-    max_output_tokens: u32,
-    messages: &[Value],
-    tools: &[Value],
-) -> Result<Value, String> {
-    let variants = [
-        ("max_completion_tokens", "max_completion_tokens", false),
-        ("max_tokens", "max_tokens", false),
-        (
-            "max_completion_tokens+response_format",
-            "max_completion_tokens",
-            true,
-        ),
-        ("max_tokens+response_format", "max_tokens", true),
-    ];
-    let mut errors = Vec::new();
-    for (label, max_tokens_key, include_response_format) in variants {
-        let body = build_ask_chat_completion_body(
-            model,
-            temperature,
-            max_output_tokens,
-            messages,
-            tools,
-            max_tokens_key,
-            include_response_format,
-        );
-        match send_chat_completion(endpoint, api_key, timeout_secs, &body) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                let can_try_next = supports_ask_provider_fallback(&err);
-                errors.push(format!("{} failed: {}", label, err));
-                if !can_try_next {
-                    return Err(errors.join(" | "));
-                }
-            }
-        }
-    }
-    Err(format!(
-        "ask agent compatibility fallbacks failed; {}",
-        errors.join(" | ")
-    ))
-}
-
-fn send_ask_chat_completion_with_retry(
-    endpoint: &str,
-    api_key: &str,
-    llm: &kb_llm::LlmRuntimeConfig,
-    messages: &[Value],
-    tools: &[Value],
-) -> Result<Value, String> {
-    let max_attempts = llm.retry_max_attempts.max(1);
-    let mut errors = Vec::new();
-    for attempt in 1..=max_attempts {
-        match send_ask_chat_completion_once(
-            endpoint,
-            api_key,
-            llm.timeout_secs,
-            &llm.model,
-            llm.temperature,
-            llm.max_output_tokens,
-            messages,
-            tools,
-        ) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                errors.push(format!("attempt {}: {}", attempt, err));
-                if attempt < max_attempts {
-                    std::thread::sleep(std::time::Duration::from_millis(
-                        llm.retry_backoff_ms,
-                    ));
-                }
-            }
-        }
-    }
-    Err(format!(
-        "ask agent request failed after {} attempts; {}",
-        max_attempts,
-        errors.join(" | ")
-    ))
-}
-
-fn build_final_answer_body(
-    model: &str,
-    temperature: f64,
-    max_output_tokens: u32,
-    messages: &[Value],
-    max_tokens_key: &str,
-    include_response_format: bool,
-) -> Value {
-    let mut body = json!({
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-    });
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
-        if include_response_format {
-            obj.insert(
-                "response_format".to_string(),
-                json!({ "type": "json_object" }),
-            );
-        }
-    }
-    body
-}
-
-fn send_final_answer_completion_once(
-    endpoint: &str,
-    api_key: &str,
-    timeout_secs: u64,
-    model: &str,
-    temperature: f64,
-    max_output_tokens: u32,
-    messages: &[Value],
-) -> Result<Value, String> {
-    let variants = [
-        (
-            "max_completion_tokens+response_format",
-            "max_completion_tokens",
-            true,
-        ),
-        ("max_tokens+response_format", "max_tokens", true),
-        ("max_completion_tokens", "max_completion_tokens", false),
-        ("max_tokens", "max_tokens", false),
-    ];
-    let mut errors = Vec::new();
-    for (label, max_tokens_key, include_response_format) in variants {
-        let body = build_final_answer_body(
-            model,
-            temperature,
-            max_output_tokens,
-            messages,
-            max_tokens_key,
-            include_response_format,
-        );
-        match send_chat_completion(endpoint, api_key, timeout_secs, &body) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                let can_try_next = supports_ask_provider_fallback(&err);
-                errors.push(format!("{} failed: {}", label, err));
-                if !can_try_next {
-                    return Err(errors.join(" | "));
-                }
-            }
-        }
-    }
-    Err(format!(
-        "final answer compatibility fallbacks failed; {}",
-        errors.join(" | ")
-    ))
-}
-
-fn send_final_answer_completion_with_retry(
-    endpoint: &str,
-    api_key: &str,
-    llm: &kb_llm::LlmRuntimeConfig,
-    messages: &[Value],
-) -> Result<Value, String> {
-    let max_attempts = llm.retry_max_attempts.max(1);
-    let mut errors = Vec::new();
-    for attempt in 1..=max_attempts {
-        match send_final_answer_completion_once(
-            endpoint,
-            api_key,
-            llm.timeout_secs,
-            &llm.model,
-            llm.temperature,
-            llm.max_output_tokens,
-            messages,
-        ) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                errors.push(format!("attempt {}: {}", attempt, err));
-                if attempt < max_attempts {
-                    std::thread::sleep(std::time::Duration::from_millis(
-                        llm.retry_backoff_ms,
-                    ));
-                }
-            }
-        }
-    }
-    Err(format!(
-        "final answer request failed after {} attempts; {}",
-        max_attempts,
-        errors.join(" | ")
-    ))
 }
 
 fn decode_ask_agent_final_payload(content: &str) -> Result<AskAgentFinalPayload, String> {
@@ -1652,7 +1400,7 @@ fn run_live_ask_agent(
         .key
         .as_deref()
         .ok_or_else(|| "missing KB_LLM_KEY for ask answer mode".to_string())?;
-    let endpoint = build_chat_completion_endpoint(&llm.base_url);
+    let endpoint = kb_llm::ask_chat_completion_endpoint(&llm.base_url);
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd.to_path_buf()));
 
     let mut messages = vec![
@@ -1692,7 +1440,8 @@ fn run_live_ask_agent(
     for round in 1..=max_rounds {
         emit_ask_trace(&format!("round {} request", round));
         let response =
-            send_ask_chat_completion_with_retry(&endpoint, api_key, &llm, &messages, &tools)?;
+            kb_llm::send_ask_chat_completion_with_retry(&endpoint, api_key, &llm, &messages, &tools)
+                .map_err(|err| err.to_string())?;
         let turn = decode_ask_agent_turn(&response)?;
 
         if let Some(reasoning) = turn.reasoning_summary.clone() {
@@ -1838,7 +1587,8 @@ fn run_live_ask_agent(
         }
     }));
     let final_response =
-        send_final_answer_completion_with_retry(&endpoint, api_key, &llm, &messages)?;
+        kb_llm::send_final_answer_completion_with_retry(&endpoint, api_key, &llm, &messages)
+            .map_err(|err| err.to_string())?;
     let final_content = extract_chat_message_content(
         final_response
             .pointer("/choices/0/message")
