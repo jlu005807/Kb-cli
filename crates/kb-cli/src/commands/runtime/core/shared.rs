@@ -33,7 +33,10 @@ use crate::registry::{load_registry, save_registry, RegistryEntry, RegistryState
 use crate::state::{load_state, save_state, RefEntry, State};
 use kb_core::RuleBasedSemanticExtractor;
 use kb_index_memory::LayeredRetriever;
-use kb_llm::{enrich_graph_with_llm, enrich_wiki_with_llm, LlmSemanticConfig, LlmSemanticExtractor};
+use kb_llm::{
+    enrich_graph_with_llm, enrich_wiki_with_llm, probe_keyring_status, KeyringStatus,
+    LlmSemanticConfig, LlmSemanticExtractor,
+};
 use kb_storage_fs::{
     FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore, FsSearchStore, FsWikiStore,
 };

@@ -49,7 +49,7 @@ pub fn dispatch(cli: Cli) -> Result<Value, CliError> {
             top,
             answer,
         } => cmd_ask::handle(question, top, answer),
-        Commands::Env { list } => cmd_env::handle(list),
+        Commands::Env { list, doctor } => cmd_env::handle(list, doctor),
         Commands::Completion { shell } => cmd_completion::handle(shell),
     }
 }

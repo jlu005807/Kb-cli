@@ -129,6 +129,10 @@ pub enum Commands {
     Env {
         #[arg(long, action = ArgAction::SetTrue)]
         list: bool,
+        /// 诊断模式：打印 LLM 配置解析路径（key/model/base_url 各自的来源），
+        /// 含 keyring service/user 名，方便排查 "key 究竟从哪里读到"。
+        #[arg(long, action = ArgAction::SetTrue)]
+        doctor: bool,
     },
     Completion {
         shell: clap_complete::Shell,
