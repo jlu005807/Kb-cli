@@ -15,7 +15,22 @@ pub(crate) fn run_update(
     let desired = collect_desired_entries(&cwd, &kb_doc, &ignored, false, None)?;
     let mut registry = load_registry(&cwd)?;
 
-    let index_store = FsIndexStore::new(cwd.clone());
+    // 经由 StorageHandles 选择后端：fs 维持原行为，sqlite 让 L1-L5 全部走 SQL。
+    // 打开失败（极少见——基本只有目录不可写）直接报到 CoreError，不再静默回退，
+    // 防止用户配置 backend=sqlite 后却把数据继续写到 JSON。
+    let storage = StorageHandles::open(&cwd).map_err(|err| {
+        map_core_error(
+            CoreErrorKind::PersistIndexFailed,
+            json!({"reason": err.to_string()}),
+        )
+    })?;
+    let index_store = &*storage.index;
+    let knowledge_store = &*storage.knowledge;
+    let search_store = &*storage.search;
+    let graph_store = &*storage.graph;
+    let wiki_store = &*storage.wiki;
+    let content_reader = &storage.content_reader;
+
     let effective_baseline = index_store
         .read_index()
         .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
@@ -60,11 +75,6 @@ pub(crate) fn run_update(
 
     let mut progressive_issues = collect_progressive_layer_issues();
 
-    let knowledge_store = FsKnowledgeStore::new(cwd.clone());
-    let search_store = FsSearchStore::new(cwd.clone());
-    let graph_store = FsGraphStore::new(cwd.clone());
-    let wiki_store = FsWikiStore::new(cwd.clone());
-    let content_reader = FsFileContentReader::new(cwd.clone());
     let semantic_llm_requested = llm || llm_runtime.semantic_enabled;
     let graph_llm_requested = llm || llm_runtime.graph_enabled;
     let wiki_llm_requested = llm || llm_runtime.wiki_enabled;
@@ -170,7 +180,7 @@ pub(crate) fn run_update(
     let l2_outcome = compile_l2(
         baseline_knowledge.as_ref(),
         &outcome.snapshot,
-        &content_reader,
+        content_reader,
         extractor.as_ref(),
         &generated_at,
     );

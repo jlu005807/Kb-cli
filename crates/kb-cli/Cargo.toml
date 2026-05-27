@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 kb-core = { path = "../kb-core" }
 kb-storage-fs = { path = "../kb-storage-fs" }
+kb-storage-sqlite = { path = "../kb-storage-sqlite" }
 kb-index-memory = { path = "../kb-index-memory" }
 kb-llm = { path = "../kb-llm" }
 clap = { version = "4.5.38", features = ["derive"] }

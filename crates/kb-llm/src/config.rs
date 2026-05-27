@@ -132,6 +132,72 @@ const KB_LLM_KEYRING_SERVICE_ENV: &str = "KB_LLM_KEYRING_SERVICE";
 const KB_LLM_KEYRING_USER_ENV: &str = "KB_LLM_KEYRING_USER";
 const KB_LLM_DISABLE_KEYRING_ENV: &str = "KB_LLM_DISABLE_KEYRING";
 
+fn resolve_keyring_service() -> String {
+    std::env::var(KB_LLM_KEYRING_SERVICE_ENV)
+        .ok()
+        .and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .unwrap_or_else(|| DEFAULT_KEYRING_SERVICE.to_string())
+}
+
+fn resolve_keyring_user() -> String {
+    std::env::var(KB_LLM_KEYRING_USER_ENV)
+        .ok()
+        .and_then(|v| {
+            let trimmed = v.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .unwrap_or_else(|| DEFAULT_KEYRING_USER.to_string())
+}
+
+fn keyring_disabled() -> bool {
+    std::env::var(KB_LLM_DISABLE_KEYRING_ENV)
+        .ok()
+        .map(|v| parse_bool(&v).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// 当前生效的 keyring 后端探查结果。供 `kb env --doctor` 等可观测性场景使用，
+/// 不影响 hot path：每次调用都会真正去碰一次平台后端。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyringStatus {
+    /// 经过 env override 解析后的 service 名。
+    pub service: String,
+    /// 经过 env override 解析后的 user 名。
+    pub user: String,
+    /// 用户是否通过 `KB_LLM_DISABLE_KEYRING=1` 主动禁用了 keyring。
+    pub disabled: bool,
+    /// 该 service/user 下是否存在一条非空记录。失败 / 缺失 / 平台不可用都归为 `false`。
+    pub key_present: bool,
+}
+
+/// 探测当前 keyring 状态——不返回 key 本身，只回报"是否能拿到 key"。
+/// 设计成 pub 是为了让 CLI 的诊断子命令复用 kb-llm 这套 env 解析 + 默认值，
+/// 避免在两个 crate 里维护同样的常量。
+pub fn probe_keyring_status() -> KeyringStatus {
+    let disabled = keyring_disabled();
+    let service = resolve_keyring_service();
+    let user = resolve_keyring_user();
+
+    let key_present = if disabled {
+        false
+    } else {
+        matches!(
+            keyring::Entry::new(&service, &user).and_then(|entry| entry.get_password()),
+            Ok(value) if !value.trim().is_empty()
+        )
+    };
+
+    KeyringStatus {
+        service,
+        user,
+        disabled,
+        key_present,
+    }
+}
+
 /// 从系统密钥环读取 LLM API key。返回 `Some` 仅当：
 /// 1. `KB_LLM_DISABLE_KEYRING=1` 未设置（运维 / 测试可关）
 /// 2. 平台后端可用
@@ -140,28 +206,12 @@ const KB_LLM_DISABLE_KEYRING_ENV: &str = "KB_LLM_DISABLE_KEYRING";
 /// 任何失败都被吞掉——keyring 只是 best-effort 升级层，缺失时降级到配置文件 / env。
 /// 这样在 CI / 容器 / 无 keyring 后端的服务器上不会破坏正常启动。
 fn load_key_from_keyring() -> Option<String> {
-    if std::env::var(KB_LLM_DISABLE_KEYRING_ENV)
-        .ok()
-        .map(|v| parse_bool(&v).unwrap_or(false))
-        .unwrap_or(false)
-    {
+    if keyring_disabled() {
         return None;
     }
 
-    let service = std::env::var(KB_LLM_KEYRING_SERVICE_ENV)
-        .ok()
-        .and_then(|v| {
-            let trimmed = v.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        })
-        .unwrap_or_else(|| DEFAULT_KEYRING_SERVICE.to_string());
-    let user = std::env::var(KB_LLM_KEYRING_USER_ENV)
-        .ok()
-        .and_then(|v| {
-            let trimmed = v.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        })
-        .unwrap_or_else(|| DEFAULT_KEYRING_USER.to_string());
+    let service = resolve_keyring_service();
+    let user = resolve_keyring_user();
 
     match keyring::Entry::new(&service, &user) {
         Ok(entry) => match entry.get_password() {
@@ -188,14 +238,8 @@ pub fn save_key_to_keyring(key: &str) -> Result<(), kb_core::DomainError> {
             "refusing to store an empty key in keyring",
         ));
     }
-    let service = std::env::var(KB_LLM_KEYRING_SERVICE_ENV)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_KEYRING_SERVICE.to_string());
-    let user = std::env::var(KB_LLM_KEYRING_USER_ENV)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_KEYRING_USER.to_string());
+    let service = resolve_keyring_service();
+    let user = resolve_keyring_user();
     let entry = keyring::Entry::new(&service, &user)
         .map_err(|err| kb_core::DomainError::io(format!("keyring entry init failed: {err}")))?;
     entry

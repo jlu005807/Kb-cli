@@ -16,7 +16,10 @@ pub use ask_client::{
     send_ask_chat_completion_with_retry, send_final_answer_completion_with_retry,
     supports_ask_provider_fallback, FinalAnswerPayload,
 };
-pub use config::{resolve_llm_config, LlmConfigSource, LlmConfigSourceMap, LlmRuntimeConfig};
+pub use config::{
+    probe_keyring_status, resolve_llm_config, KeyringStatus, LlmConfigSource, LlmConfigSourceMap,
+    LlmRuntimeConfig,
+};
 pub use http::{block_on, block_on_with_timeout, HttpClient};
 pub use openai_graph_wiki::{enrich_graph_with_llm, enrich_wiki_with_llm};
 pub use openai_semantic::{LlmSemanticConfig, LlmSemanticExtractor};

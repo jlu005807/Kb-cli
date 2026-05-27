@@ -7,8 +7,9 @@ include!("core/kbmd_ops.rs");
 
 // Handlers split by command family (#1 optimization pass 2026-05).
 // Each file owns one command surface and stays well under 600 lines; the
-// `ask.rs` agent loop is still the heaviest at ~2.3k and remains a follow-up
-// target for further sub-division.
+// `ask` entrypoint was further split into 4 sub-files (formatting / tools /
+// http-traces / agent loop) during the 2026-05 follow-up to keep the heaviest
+// agent surface manageable.
 include!("core/handlers/completion.rs");
 include!("core/handlers/init.rs");
 include!("core/handlers/env.rs");
@@ -17,4 +18,7 @@ include!("core/handlers/list.rs");
 include!("core/handlers/check.rs");
 include!("core/handlers/layer_issues.rs");
 include!("core/handlers/update.rs");
-include!("core/handlers/ask.rs");
+include!("core/handlers/ask/http.rs");
+include!("core/handlers/ask/formatting.rs");
+include!("core/handlers/ask/tools.rs");
+include!("core/handlers/ask/agent.rs");

@@ -436,12 +436,25 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
         }
     }
 
-    let mut entries = Vec::new();
+    // 第一阶段：消化"无需调用 extractor"的记录（missing / 命中 baseline /
+    // 源文件读取失败），并为剩余需要抽取的记录预先 stage 占位条目 + 待发送的
+    // request。这样第二阶段就可以把所有 request 一次性丢给 extractor.batch
+    // —— LLM 适配器会在 tokio runtime 上并发地跑这一批。
+    enum SlotInit {
+        Final(KnowledgeEntry),
+        Pending {
+            record_id: String,
+            path: String,
+            input_signature: String,
+            text: String,
+        },
+    }
+
+    let mut slots: Vec<SlotInit> = Vec::with_capacity(index_snapshot.records.len());
     let mut issues = Vec::new();
     let mut processed = 0usize;
     let mut reused = 0usize;
     let mut missing = 0usize;
-    let mut failed = 0usize;
 
     for record in &index_snapshot.records {
         let record_id = record.alias.clone();
@@ -457,7 +470,7 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                 message: "Index record marked as not present".to_string(),
                 retryable: true,
             });
-            entries.push(KnowledgeEntry {
+            slots.push(SlotInit::Final(KnowledgeEntry {
                 record_id,
                 path,
                 input_signature,
@@ -470,7 +483,7 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                     kind: "system".to_string(),
                     name: "missing-source".to_string(),
                 },
-            });
+            }));
             continue;
         }
 
@@ -480,7 +493,7 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                 && previous.status == KnowledgeStatus::Active
             {
                 reused += 1;
-                entries.push((**previous).clone());
+                slots.push(SlotInit::Final((**previous).clone()));
                 continue;
             }
         }
@@ -497,7 +510,7 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                     message: err.to_string(),
                     retryable: true,
                 });
-                entries.push(KnowledgeEntry {
+                slots.push(SlotInit::Final(KnowledgeEntry {
                     record_id,
                     path,
                     input_signature,
@@ -510,58 +523,101 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                         kind: "system".to_string(),
                         name: "missing-source".to_string(),
                     },
-                });
+                }));
                 continue;
             }
         };
 
-        let request = SemanticExtractRequest {
-            record_id: record_id.clone(),
-            path: path.clone(),
-            text: text.clone(),
-            input_signature: input_signature.clone(),
-        };
+        slots.push(SlotInit::Pending {
+            record_id,
+            path,
+            input_signature,
+            text,
+        });
+    }
 
-        match extractor.extract(&request) {
-            Ok(extracted) => {
-                entries.push(KnowledgeEntry {
-                    record_id,
-                    path,
-                    input_signature,
-                    status: KnowledgeStatus::Active,
-                    summary: extracted.summary,
-                    tags: extracted.tags,
-                    key_concepts: extracted.key_concepts,
-                    chunks: extracted.chunks,
-                    provider: extracted.provider,
-                });
-            }
-            Err(err) => {
-                failed += 1;
-                issues.push(CompileL2Issue {
-                    record_id: record_id.clone(),
-                    path: path.clone(),
-                    code: "W-L2-EXTRACT-FAILED".to_string(),
-                    message: err.to_string(),
-                    retryable: true,
-                });
-                entries.push(KnowledgeEntry {
-                    record_id,
-                    path,
-                    input_signature,
-                    status: KnowledgeStatus::Failed,
-                    summary: first_non_empty_line(&text).unwrap_or_default(),
-                    tags: vec![],
-                    key_concepts: vec![],
-                    chunks: vec![],
-                    provider: SemanticProviderInfo {
-                        kind: "system".to_string(),
-                        name: "extract-failed".to_string(),
-                    },
-                });
+    // 第二阶段：收集所有 pending request，批量交给 extractor。LlmSemanticExtractor
+    // 覆写了 extract_batch，会在共享 tokio runtime 上用 semaphore 限制并发地跑；
+    // 默认实现退化成串行 `extract`，对 rule-based extractor 无副作用。
+    let pending_requests: Vec<SemanticExtractRequest> = slots
+        .iter()
+        .filter_map(|slot| match slot {
+            SlotInit::Pending {
+                record_id,
+                path,
+                input_signature,
+                text,
+            } => Some(SemanticExtractRequest {
+                record_id: record_id.clone(),
+                path: path.clone(),
+                text: text.clone(),
+                input_signature: input_signature.clone(),
+            }),
+            SlotInit::Final(_) => None,
+        })
+        .collect();
+    let mut batch_results = extractor.extract_batch(&pending_requests).into_iter();
+
+    let mut failed = 0usize;
+    let mut entries = Vec::with_capacity(slots.len());
+    for slot in slots {
+        match slot {
+            SlotInit::Final(entry) => entries.push(entry),
+            SlotInit::Pending {
+                record_id,
+                path,
+                input_signature,
+                text,
+            } => {
+                let result = batch_results
+                    .next()
+                    .expect("extract_batch returned fewer results than requests");
+                match result {
+                    Ok(extracted) => {
+                        entries.push(KnowledgeEntry {
+                            record_id,
+                            path,
+                            input_signature,
+                            status: KnowledgeStatus::Active,
+                            summary: extracted.summary,
+                            tags: extracted.tags,
+                            key_concepts: extracted.key_concepts,
+                            chunks: extracted.chunks,
+                            provider: extracted.provider,
+                        });
+                    }
+                    Err(err) => {
+                        failed += 1;
+                        issues.push(CompileL2Issue {
+                            record_id: record_id.clone(),
+                            path: path.clone(),
+                            code: "W-L2-EXTRACT-FAILED".to_string(),
+                            message: err.to_string(),
+                            retryable: true,
+                        });
+                        entries.push(KnowledgeEntry {
+                            record_id,
+                            path,
+                            input_signature,
+                            status: KnowledgeStatus::Failed,
+                            summary: first_non_empty_line(&text).unwrap_or_default(),
+                            tags: vec![],
+                            key_concepts: vec![],
+                            chunks: vec![],
+                            provider: SemanticProviderInfo {
+                                kind: "system".to_string(),
+                                name: "extract-failed".to_string(),
+                            },
+                        });
+                    }
+                }
             }
         }
     }
+    debug_assert!(
+        batch_results.next().is_none(),
+        "extract_batch returned more results than requests"
+    );
 
     let snapshot = KnowledgeSnapshot {
         schema_version: 1,
@@ -1509,14 +1565,19 @@ fn slugify_for_path(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_mv, plan_add, plan_ask, plan_init, AddModePlan, AddPlanError, AddPlanInput,
-        AskPlanError, InitPlanError, MovePlanError,
+        apply_mv, compile_l2, plan_add, plan_ask, plan_init, AddModePlan, AddPlanError,
+        AddPlanInput, AskPlanError, InitPlanError, MovePlanError,
     };
-    use crate::domain::{IndexMeta, IndexRecord, IndexSnapshot};
+    use crate::domain::{
+        IndexMeta, IndexRecord, IndexSnapshot, KnowledgeChunk, SemanticProviderInfo,
+    };
     use crate::error::DomainError;
     use crate::ports::{
-        AnswerEngine, AnswerMeta, RetrievedContext, Retriever, StateRef, StateSnapshot,
+        AnswerEngine, AnswerMeta, FileContentReader, RetrievedContext, Retriever,
+        SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor, StateRef,
+        StateSnapshot,
     };
+    use std::cell::RefCell;
 
     struct TestRetriever;
 
@@ -1640,5 +1701,107 @@ mod tests {
         assert_eq!(out.meta.engine_status, "disabled");
         assert_eq!(out.retrieved_context.len(), 1);
         assert_eq!(out.retrieved_context[0].alias, "docs/config");
+    }
+
+    struct MemReader<'a>(&'a [(&'a str, &'a str)]);
+    impl<'a> FileContentReader for MemReader<'a> {
+        fn read_text(&self, path: &str) -> Result<String, DomainError> {
+            for (p, body) in self.0 {
+                if *p == path {
+                    return Ok((*body).to_string());
+                }
+            }
+            Err(DomainError::io(format!("missing: {path}")))
+        }
+    }
+
+    // 计数器型 extractor：默认 `extract_batch` 应该串行回退到 `extract`，
+    // 且返回值顺序必须严格匹配 requests。
+    struct CountingExtractor {
+        seen_paths: RefCell<Vec<String>>,
+    }
+    impl SemanticExtractor for CountingExtractor {
+        fn extract(
+            &self,
+            request: &SemanticExtractRequest,
+        ) -> Result<SemanticExtractResponse, DomainError> {
+            self.seen_paths.borrow_mut().push(request.path.clone());
+            Ok(SemanticExtractResponse {
+                summary: format!("sum:{}", request.record_id),
+                tags: vec![],
+                key_concepts: vec![],
+                chunks: vec![KnowledgeChunk {
+                    chunk_id: format!("{}:0001", request.record_id),
+                    byte_range: [0, request.text.len() as u64],
+                    content_signature: "sig".to_string(),
+                    summary: request.text.clone(),
+                    preview: request.text.clone(),
+                }],
+                provider: SemanticProviderInfo {
+                    kind: "test".to_string(),
+                    name: "counting".to_string(),
+                },
+            })
+        }
+    }
+
+    #[test]
+    fn compile_l2_routes_through_extract_batch_in_record_order() {
+        let snapshot = IndexSnapshot {
+            meta: IndexMeta {
+                full: true,
+                baseline_size: 0,
+                tracked_size: 3,
+            },
+            errors: vec![],
+            records: vec![
+                IndexRecord {
+                    alias: "a/one".to_string(),
+                    path: "./docs/one.md".to_string(),
+                    category: "raw".to_string(),
+                    signature: "sig-one".to_string(),
+                    present: true,
+                    excerpt: None,
+                },
+                IndexRecord {
+                    alias: "b/two".to_string(),
+                    path: "./docs/two.md".to_string(),
+                    category: "raw".to_string(),
+                    signature: "sig-two".to_string(),
+                    present: true,
+                    excerpt: None,
+                },
+                IndexRecord {
+                    alias: "c/missing".to_string(),
+                    path: "./docs/missing.md".to_string(),
+                    category: "raw".to_string(),
+                    signature: "sig-missing".to_string(),
+                    present: false,
+                    excerpt: None,
+                },
+            ],
+        };
+        let reader = MemReader(&[
+            ("./docs/one.md", "first body"),
+            ("./docs/two.md", "second body"),
+        ]);
+        let extractor = CountingExtractor {
+            seen_paths: RefCell::new(Vec::new()),
+        };
+
+        let outcome = compile_l2(None, &snapshot, &reader, &extractor, "now");
+
+        assert_eq!(outcome.processed, 2, "two present non-baseline records");
+        assert_eq!(outcome.missing, 1, "one missing record");
+        assert_eq!(outcome.failed, 0);
+        assert_eq!(outcome.snapshot.entries.len(), 3);
+        assert_eq!(outcome.snapshot.entries[0].record_id, "a/one");
+        assert_eq!(outcome.snapshot.entries[0].summary, "sum:a/one");
+        assert_eq!(outcome.snapshot.entries[1].record_id, "b/two");
+        assert_eq!(outcome.snapshot.entries[1].summary, "sum:b/two");
+        assert_eq!(outcome.snapshot.entries[2].record_id, "c/missing");
+        // 默认 extract_batch 串行走 extract，且只对 present 记录调用——missing 跳过。
+        let seen = extractor.seen_paths.borrow().clone();
+        assert_eq!(seen, vec!["./docs/one.md", "./docs/two.md"]);
     }
 }

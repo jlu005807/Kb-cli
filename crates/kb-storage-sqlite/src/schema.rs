@@ -23,7 +23,16 @@ use kb_core::error::DomainError;
 use crate::connection::SqliteConnection;
 
 /// 当前 schema 版本号。每次 DDL 变更必须 +1 并补一段 `up_v{N}` 迁移。
-pub const SCHEMA_VERSION: i64 = 1;
+///
+/// 版本历史：
+/// - v1：初始 schema，建好 L0–L5 所有数据行表（state_refs / index_records /
+///   knowledge_entries+chunks / search_hits / graph_nodes+edges /
+///   wiki_pages+manifest）以及 index_meta 单例表。
+/// - v2：为 L2/L3/L4/L5 各补一个单例 meta 表
+///   （knowledge_meta / search_meta / graph_meta / wiki_meta），
+///   存放 schema_version + generated_at + 上游 signature；至此每个
+///   snapshot 都能在 SQLite 里完整 round-trip。
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// 确保数据库处于最新 schema。幂等：多次调用安全。
 ///
@@ -55,6 +64,12 @@ pub fn ensure_schema(conn: &SqliteConnection) -> Result<(), DomainError> {
         let starting = current.unwrap_or(0);
         if starting < 1 {
             up_v1(&tx)?;
+        }
+        if starting < 2 {
+            up_v2(&tx)?;
+        }
+
+        if starting < SCHEMA_VERSION {
             let now = now_string();
             if current.is_none() {
                 tx.execute(
@@ -62,17 +77,13 @@ pub fn ensure_schema(conn: &SqliteConnection) -> Result<(), DomainError> {
                      VALUES (1, ?1, ?2, ?2)",
                     rusqlite::params![SCHEMA_VERSION, now],
                 )
-                .map_err(|err| {
-                    DomainError::io(format!("insert kb_meta failed: {err}"))
-                })?;
+                .map_err(|err| DomainError::io(format!("insert kb_meta failed: {err}")))?;
             } else {
                 tx.execute(
                     "UPDATE kb_meta SET schema_version = ?1, last_migrated_at = ?2 WHERE id = 1",
                     rusqlite::params![SCHEMA_VERSION, now],
                 )
-                .map_err(|err| {
-                    DomainError::io(format!("update kb_meta failed: {err}"))
-                })?;
+                .map_err(|err| DomainError::io(format!("update kb_meta failed: {err}")))?;
             }
         }
 
@@ -182,6 +193,46 @@ CREATE TABLE IF NOT EXISTS wiki_manifest (
     Ok(())
 }
 
+fn up_v2(tx: &rusqlite::Transaction<'_>) -> Result<(), DomainError> {
+    // 每个 layer 单例 meta 表：把原本只能落在 snapshot JSON 头部的
+    // schema_version / generated_at / 上游 signature 字段固化到 SQL 里。
+    // id = 1 约束保证至多一行，使读取语义跟 fs 实现一致："要么有完整 meta，
+    // 要么视作未生成"。
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS knowledge_meta (
+    id                    INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version        INTEGER NOT NULL,
+    generated_at          TEXT NOT NULL,
+    base_index_signature  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS search_meta (
+    id                        INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version            INTEGER NOT NULL,
+    generated_at              TEXT NOT NULL,
+    base_knowledge_signature  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS graph_meta (
+    id                        INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version            INTEGER NOT NULL,
+    generated_at              TEXT NOT NULL,
+    base_knowledge_signature  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wiki_meta (
+    id                     INTEGER PRIMARY KEY CHECK (id = 1),
+    schema_version         INTEGER NOT NULL,
+    generated_at           TEXT NOT NULL,
+    base_graph_signature   TEXT NOT NULL
+);
+"#,
+    )
+    .map_err(|err| DomainError::io(format!("up_v2 DDL failed: {err}")))?;
+    Ok(())
+}
+
 fn now_string() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -219,11 +270,15 @@ mod tests {
                 "index_records",
                 "knowledge_entries",
                 "knowledge_chunks",
+                "knowledge_meta",
                 "search_hits",
+                "search_meta",
                 "graph_nodes",
                 "graph_edges",
+                "graph_meta",
                 "wiki_pages",
                 "wiki_manifest",
+                "wiki_meta",
                 "kb_meta",
             ] {
                 let count: i64 = c

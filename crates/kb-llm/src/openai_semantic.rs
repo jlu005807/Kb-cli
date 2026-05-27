@@ -464,6 +464,64 @@ impl SemanticExtractor for LlmSemanticExtractor {
             );
         })
     }
+
+    /// 并行批处理：在共享 tokio runtime 上用 semaphore 限制并发地跑 `extract`。
+    ///
+    /// - 每条 request 走一个 `spawn_blocking` 任务（因为 `extract` 内部仍是
+    ///   阻塞 `ureq` 调用 + CPU 解析），避免堵塞 runtime worker。
+    /// - 并发上限取 `KB_LLM_MAX_PARALLEL`，缺省 4，clamp 到 [1, 32]。
+    ///   超过 32 没意义——所有主流 OpenAI 兼容 provider 都在更小的范围内 rate-limit。
+    /// - 顺序：返回值与 requests 一一对应，靠 `tokio::spawn` 句柄按收集顺序 await。
+    fn extract_batch(
+        &self,
+        requests: &[SemanticExtractRequest],
+    ) -> Vec<Result<SemanticExtractResponse, DomainError>> {
+        if requests.is_empty() {
+            return Vec::new();
+        }
+        let max_parallel = std::env::var("KB_LLM_MAX_PARALLEL")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(4)
+            .min(32);
+
+        let extractor = Arc::new(self.clone());
+        let owned_requests: Vec<SemanticExtractRequest> = requests.to_vec();
+
+        crate::http::block_on(async move {
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(max_parallel));
+            let mut handles = Vec::with_capacity(owned_requests.len());
+            for request in owned_requests {
+                let extractor_clone = Arc::clone(&extractor);
+                let semaphore_clone = Arc::clone(&semaphore);
+                handles.push(tokio::spawn(async move {
+                    let _permit = semaphore_clone
+                        .acquire_owned()
+                        .await
+                        .expect("kb-llm semaphore closed unexpectedly");
+                    tokio::task::spawn_blocking(move || extractor_clone.extract(&request))
+                        .await
+                        .unwrap_or_else(|err| {
+                            Err(DomainError::external(format!(
+                                "kb-llm parallel extract panicked: {err}"
+                            )))
+                        })
+                }));
+            }
+
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let res = handle.await.unwrap_or_else(|err| {
+                    Err(DomainError::external(format!(
+                        "kb-llm parallel join failed: {err}"
+                    )))
+                });
+                results.push(res);
+            }
+            results
+        })
+    }
 }
 
 #[derive(Debug)]

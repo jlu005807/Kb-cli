@@ -10,6 +10,7 @@ mod paths;
 mod registry;
 mod runtime_config;
 mod state;
+mod storage_backend;
 
 use clap::Parser;
 use std::process::ExitCode;

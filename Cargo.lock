@@ -812,6 +812,7 @@ dependencies = [
  "kb-index-memory",
  "kb-llm",
  "kb-storage-fs",
+ "kb-storage-sqlite",
  "predicates",
  "serde",
  "serde_json",

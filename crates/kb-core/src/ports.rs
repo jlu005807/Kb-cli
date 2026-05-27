@@ -82,6 +82,18 @@ pub trait SemanticExtractor {
         &self,
         request: &SemanticExtractRequest,
     ) -> Result<SemanticExtractResponse, DomainError>;
+
+    /// 批量抽取：默认实现按顺序调用 `extract`，保持与现有适配器二进制兼容。
+    ///
+    /// LLM 适配器（如 `kb_llm::LlmSemanticExtractor`）可以覆写该方法在 tokio
+    /// 共享 runtime 上并发跑，对大仓库 `kb update` 是显著提速。返回值顺序与
+    /// `requests` 一一对应——`compile_l2` 依赖这个顺序回填快照。
+    fn extract_batch(
+        &self,
+        requests: &[SemanticExtractRequest],
+    ) -> Vec<Result<SemanticExtractResponse, DomainError>> {
+        requests.iter().map(|req| self.extract(req)).collect()
+    }
 }
 
 pub trait FileContentReader {
