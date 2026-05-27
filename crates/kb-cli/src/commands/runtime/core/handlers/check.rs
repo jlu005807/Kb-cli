@@ -20,8 +20,10 @@ pub(crate) fn run_check(
     )?;
     let registry = load_registry(&cwd)?;
 
-    let index_store = FsIndexStore::new(cwd.clone());
-    let baseline = index_store
+    let storage = StorageHandles::open(&cwd)
+        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+    let baseline = storage
+        .index
         .read_index()
         .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
 

@@ -12,12 +12,6 @@
 //!    所有 store 都 clone 该连接句柄，保证多 store 共用一个数据库文件 + 单写者
 //!    互斥。FS 后端每个 store 拿独立 cwd 副本。
 //! 3. 解析失败默认回退到 fs，并在 trace 字段里留痕，避免单字段拼错就拖垮启动。
-//!
-//! 当前 commit 只落地 `StorageHandles` factory；handlers 还在直接构造 `Fs*Store`，
-//! 将在后续 commit 里逐步迁移到 `Box<dyn _>`。期间允许整个模块 `dead_code`，
-//! 避免 CI `-D warnings` 因"尚未消费的桥接层"而失败。
-
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
@@ -40,6 +34,10 @@ pub enum StorageBackend {
 }
 
 impl StorageBackend {
+    /// trace/输出协议里展示当前实际生效的后端；当前仅在测试断言中使用，但
+    /// 是 StorageHandles 对外 API 的一部分，handlers 后续做 backend 感知逻辑
+    /// 时会复用。允许 dead_code 而不是删除——加回去比保留稳定 API 风险更大。
+    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fs => "fs",
@@ -88,6 +86,9 @@ pub fn sqlite_database_path(cwd: &Path) -> PathBuf {
 /// 因为它桥接的是 `crate::state::State` 而不是 `kb_core::StateSnapshot` 的纯
 /// 文件序列化路径。SQLite 化 state 是单独的迁移项，不在本模块范围内。
 pub struct StorageHandles {
+    /// 当前生效的后端类型。允许 dead_code：现在仅测试断言使用，但暴露给
+    /// handlers 后续做"是否需要 sqlite 专属优化"判断时不至于再扩字段。
+    #[allow(dead_code)]
     pub backend: StorageBackend,
     pub index: Box<dyn IndexStore + Send + Sync>,
     pub knowledge: Box<dyn KnowledgeStore + Send + Sync>,
@@ -99,6 +100,7 @@ pub struct StorageHandles {
     pub content_reader: FsFileContentReader,
     /// 仅在 SQLite 后端下出现，供需要直接读取 wiki 页面正文等"trait 之外"的
     /// 便利方法使用。FS 后端时为 `None`。
+    #[allow(dead_code)]
     pub sqlite_conn: Option<SqliteConnection>,
 }
 

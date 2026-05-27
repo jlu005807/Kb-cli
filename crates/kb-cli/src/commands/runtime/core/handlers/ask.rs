@@ -117,11 +117,13 @@ fn search_context_for_agent(
     query: &str,
     top_k: usize,
 ) -> Result<Vec<kb_core::RetrievedContext>, String> {
-    let index_store = FsIndexStore::new(cwd.to_path_buf());
-    let snapshot = index_store
+    let storage = StorageHandles::open(cwd)
+        .map_err(|err| format!("open storage backend failed: {}", err))?;
+    let snapshot = storage
+        .index
         .read_index()
         .map_err(|err| format!("failed to read index snapshot: {}", err))?
-        .ok_or_else(|| "missing .kb/index.json; run `kb update` first".to_string())?;
+        .ok_or_else(|| "missing index snapshot; run `kb update` first".to_string())?;
     let (retriever, _) = build_ask_stack(cwd);
     retriever
         .retrieve(query, top_k.max(1), &snapshot)
@@ -1874,8 +1876,10 @@ fn run_live_ask_agent(
 }
 pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
-    let index_store = FsIndexStore::new(cwd.clone());
-    let snapshot = index_store
+    let storage = StorageHandles::open(&cwd)
+        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+    let snapshot = storage
+        .index
         .read_index()
         .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
     let Some(snapshot) = snapshot else {

@@ -1,12 +1,17 @@
 fn build_ask_stack(cwd: &Path) -> (Box<dyn Retriever>, Box<dyn AnswerEngine>) {
-    let search_store = FsSearchStore::new(cwd.to_path_buf());
-    let knowledge_store = FsKnowledgeStore::new(cwd.to_path_buf());
-    let graph_store = FsGraphStore::new(cwd.to_path_buf());
-    let retriever: Box<dyn Retriever> = Box::new(LayeredRetriever::new(
-        search_store.read_search().ok().flatten(),
-        knowledge_store.read_knowledge().ok().flatten(),
-        graph_store.read_graph().ok().flatten(),
-    ));
+    // 走 StorageHandles 的好处：sqlite 后端下也能让 ask 命中同一份数据；
+    // 解析失败兜底到 fs，所以这里仅在打开数据库本身硬错时才进 ok()=None 分支。
+    let snapshots = StorageHandles::open(cwd).ok();
+    let (search_snap, knowledge_snap, graph_snap) = match snapshots {
+        Some(handles) => (
+            handles.search.read_search().ok().flatten(),
+            handles.knowledge.read_knowledge().ok().flatten(),
+            handles.graph.read_graph().ok().flatten(),
+        ),
+        None => (None, None, None),
+    };
+    let retriever: Box<dyn Retriever> =
+        Box::new(LayeredRetriever::new(search_snap, knowledge_snap, graph_snap));
 
     let llm = resolve_llm_config(cwd);
     let has_llm_credentials = llm.key.is_some();

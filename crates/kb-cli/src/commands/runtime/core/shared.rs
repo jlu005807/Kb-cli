@@ -7,10 +7,7 @@ use kb_core::usecases::{
     validate_category_filter, AddModePlan, AddPlanError, AddPlanInput, CategoryFilterError,
     InitPlanError, ListRow, MovePlanError, PathPlanError,
 };
-use kb_core::{
-    AnswerEngine, GraphStore, IndexStore, KnowledgeStore, Retriever, SearchStore,
-    SemanticExtractor, StateStore, WikiStore,
-};
+use kb_core::{AnswerEngine, Retriever, SemanticExtractor, StateStore};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -37,9 +34,7 @@ use kb_llm::{
     enrich_graph_with_llm, enrich_wiki_with_llm, probe_keyring_status, KeyringStatus,
     LlmSemanticConfig, LlmSemanticExtractor,
 };
-use kb_storage_fs::{
-    FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore, FsSearchStore, FsWikiStore,
-};
+use crate::storage_backend::StorageHandles;
 
 const DEFAULT_KBIGNORE_CONTENT: &str = "# KB internal files (auto-generated)\n./kb.md\n./.kb/.kbignore\n./.kb/refs.json\n./.kb/regs.json\n./.kb/index.json\n./.kb/index.errors.json\n./.kb/index.meta.json\n./.kb/schema.version\n./.kb/*.lock\n";
 const DEFAULT_LLM_ENV_TEMPLATE: &str = "# KB LLM runtime template\n# Effective precedence: process env > system keyring > project .kb/config.json > global config.json\n# This template is for exporting env vars in your shell/session.\n\n# Enable LLM-based semantic/graph/wiki compilation during `kb update`\nKB_LLM_ENABLE_SEMANTIC=0\nKB_LLM_ENABLE_GRAPH=0\nKB_LLM_ENABLE_WIKI=0\n\n# OpenAI-compatible endpoint settings.\n# Prefer keyring: kb stores/reads the key from the OS secret store under\n#   service=\"kb-cli\", user=\"default\" by default. Override with\n#   KB_LLM_KEYRING_SERVICE / KB_LLM_KEYRING_USER, or disable entirely with\n#   KB_LLM_DISABLE_KEYRING=1. Falling back: set KB_LLM_KEY below.\nKB_LLM_KEY=\nKB_LLM_MODEL=gpt-4o-mini\nKB_LLM_BASE_URL=https://api.openai.com/v1\n\n# LLM compile flow:\n#   two_step   -> analysis then memory generation (recommended)\n#   single_step -> direct generation in one request\nKB_LLM_SEMANTIC_FLOW=two_step\n\n# Tuning for multi-file semantic compilation\nKB_LLM_TIMEOUT_SECS=60\nKB_LLM_TEMPERATURE=0.1\nKB_LLM_MAX_OUTPUT_TOKENS=900\nKB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS=700\nKB_LLM_MAX_INPUT_CHARS=12000\nKB_LLM_MAX_CHUNKS=12\n\n# Lightweight agent-style refinement loop (GenericAgent-inspired)\nKB_LLM_AGENT_LOOP_MAX_ROUNDS=6\nKB_LLM_AGENT_REFLECTION_ENABLED=1\nKB_LLM_AGENT_MIN_CHUNK_COVERAGE=0.6\n\n# Retry strategy for transient provider/network failures\nKB_LLM_RETRY_MAX_ATTEMPTS=3\nKB_LLM_RETRY_BACKOFF_MS=600\n";
