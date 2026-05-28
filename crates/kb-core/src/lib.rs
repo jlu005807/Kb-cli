@@ -16,12 +16,12 @@ pub mod usecases;
 pub use config::{ConfigLayers, ConfigMergeTrace, ConfigSource, MergeResult};
 pub use error::{DomainError, DomainResult};
 pub use domain::{
-    Alias, AliasError, AliasErrorKind, GraphEdge, GraphEdgeType, GraphEvidence, GraphNode,
-    GraphNodeType, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot,
-    KnowledgeStatus, Permission, PermissionAction, PermissionExplainTrace, PermissionInterpreter,
-    PermissionParseError, PermissionParseErrorKind, Ref, RefError, SearchHit,
-    SearchProjectionSnapshot, SemanticProviderInfo, WikiManifestEntry, WikiManifestSnapshot,
-    WikiPageDocument, WikiPageType, WikiViewSnapshot,
+    AgentId, AgentIdError, Alias, AliasError, AliasErrorKind, GraphEdge, GraphEdgeType,
+    GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot, KnowledgeChunk, KnowledgeEntry,
+    KnowledgeSnapshot, KnowledgeSource, KnowledgeStatus, Permission, PermissionAction,
+    PermissionExplainTrace, PermissionInterpreter, PermissionParseError, PermissionParseErrorKind,
+    Ref, RefError, SearchHit, SearchProjectionSnapshot, SemanticProviderInfo, Timestamp,
+    WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument, WikiPageType, WikiViewSnapshot,
 };
 pub use ports::{
     AgentAnswerRequest, AgentAnswerResponse, AgentBackend, AnswerEngine, AnswerMeta,

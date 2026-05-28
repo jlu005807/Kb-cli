@@ -1041,6 +1041,7 @@ mod tests {
                     kind: "rule".to_string(),
                     name: "rule".to_string(),
                 },
+                ..KnowledgeEntry::default()
             }],
         };
         fs::write(

@@ -4,6 +4,7 @@
 //! - `reference`：引用实体
 //! - `index`：索引快照与差异引擎
 
+mod agent;
 mod alias;
 mod graph;
 mod index;
@@ -11,8 +12,11 @@ mod knowledge;
 mod permission;
 mod reference;
 mod search;
+mod source;
+mod timestamp;
 mod wiki_view;
 
+pub use agent::{AgentId, AgentIdError};
 pub use alias::{Alias, AliasError, AliasErrorKind};
 pub use graph::{GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot};
 pub use index::{
@@ -22,6 +26,8 @@ pub use index::{
 pub use knowledge::{
     KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SemanticProviderInfo,
 };
+pub use source::KnowledgeSource;
+pub use timestamp::Timestamp;
 pub use permission::{
     Permission, PermissionAction, PermissionExplainTrace, PermissionInterpreter,
     PermissionParseError, PermissionParseErrorKind,

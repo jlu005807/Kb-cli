@@ -412,7 +412,7 @@ pub struct CompileL2Issue {
     pub retryable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompileL2Outcome {
     pub snapshot: KnowledgeSnapshot,
     pub processed: usize,
@@ -470,20 +470,20 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                 message: "Index record marked as not present".to_string(),
                 retryable: true,
             });
-            slots.push(SlotInit::Final(KnowledgeEntry {
+            slots.push(SlotInit::Final(KnowledgeEntry::from_file(
                 record_id,
                 path,
                 input_signature,
-                status: KnowledgeStatus::Missing,
-                summary: String::new(),
-                tags: vec![],
-                key_concepts: vec![],
-                chunks: vec![],
-                provider: SemanticProviderInfo {
+                KnowledgeStatus::Missing,
+                String::new(),
+                vec![],
+                vec![],
+                vec![],
+                SemanticProviderInfo {
                     kind: "system".to_string(),
                     name: "missing-source".to_string(),
                 },
-            }));
+            )));
             continue;
         }
 
@@ -510,20 +510,20 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                     message: err.to_string(),
                     retryable: true,
                 });
-                slots.push(SlotInit::Final(KnowledgeEntry {
+                slots.push(SlotInit::Final(KnowledgeEntry::from_file(
                     record_id,
                     path,
                     input_signature,
-                    status: KnowledgeStatus::Missing,
-                    summary: String::new(),
-                    tags: vec![],
-                    key_concepts: vec![],
-                    chunks: vec![],
-                    provider: SemanticProviderInfo {
+                    KnowledgeStatus::Missing,
+                    String::new(),
+                    vec![],
+                    vec![],
+                    vec![],
+                    SemanticProviderInfo {
                         kind: "system".to_string(),
                         name: "missing-source".to_string(),
                     },
-                }));
+                )));
                 continue;
             }
         };
@@ -574,17 +574,17 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                     .expect("extract_batch returned fewer results than requests");
                 match result {
                     Ok(extracted) => {
-                        entries.push(KnowledgeEntry {
+                        entries.push(KnowledgeEntry::from_file(
                             record_id,
                             path,
                             input_signature,
-                            status: KnowledgeStatus::Active,
-                            summary: extracted.summary,
-                            tags: extracted.tags,
-                            key_concepts: extracted.key_concepts,
-                            chunks: extracted.chunks,
-                            provider: extracted.provider,
-                        });
+                            KnowledgeStatus::Active,
+                            extracted.summary,
+                            extracted.tags,
+                            extracted.key_concepts,
+                            extracted.chunks,
+                            extracted.provider,
+                        ));
                     }
                     Err(err) => {
                         failed += 1;
@@ -595,20 +595,20 @@ pub fn compile_l2<R: FileContentReader + ?Sized, E: SemanticExtractor + ?Sized>(
                             message: err.to_string(),
                             retryable: true,
                         });
-                        entries.push(KnowledgeEntry {
+                        entries.push(KnowledgeEntry::from_file(
                             record_id,
                             path,
                             input_signature,
-                            status: KnowledgeStatus::Failed,
-                            summary: first_non_empty_line(&text).unwrap_or_default(),
-                            tags: vec![],
-                            key_concepts: vec![],
-                            chunks: vec![],
-                            provider: SemanticProviderInfo {
+                            KnowledgeStatus::Failed,
+                            first_non_empty_line(&text).unwrap_or_default(),
+                            vec![],
+                            vec![],
+                            vec![],
+                            SemanticProviderInfo {
                                 kind: "system".to_string(),
                                 name: "extract-failed".to_string(),
                             },
-                        });
+                        ));
                     }
                 }
             }
