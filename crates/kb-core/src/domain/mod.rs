@@ -6,6 +6,7 @@
 
 mod agent;
 mod alias;
+mod episode;
 mod graph;
 mod index;
 mod knowledge;
@@ -18,6 +19,7 @@ mod wiki_view;
 
 pub use agent::{AgentId, AgentIdError};
 pub use alias::{Alias, AliasError, AliasErrorKind};
+pub use episode::{Episode, EpisodeFilter, EpisodeKind};
 pub use graph::{GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot};
 pub use index::{
     CheckOutcome, CheckResult, IndexConfig, IndexEngine, IndexErrorRecord, IndexMeta, IndexRecord,

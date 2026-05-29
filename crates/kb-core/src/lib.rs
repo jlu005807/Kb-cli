@@ -16,18 +16,20 @@ pub mod usecases;
 pub use config::{ConfigLayers, ConfigMergeTrace, ConfigSource, MergeResult};
 pub use error::{DomainError, DomainResult};
 pub use domain::{
-    AgentId, AgentIdError, Alias, AliasError, AliasErrorKind, GraphEdge, GraphEdgeType,
-    GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot, KnowledgeChunk, KnowledgeEntry,
-    KnowledgeSnapshot, KnowledgeSource, KnowledgeStatus, Permission, PermissionAction,
-    PermissionExplainTrace, PermissionInterpreter, PermissionParseError, PermissionParseErrorKind,
-    Ref, RefError, SearchHit, SearchProjectionSnapshot, SemanticProviderInfo, Timestamp,
-    WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument, WikiPageType, WikiViewSnapshot,
+    AgentId, AgentIdError, Alias, AliasError, AliasErrorKind, Episode, EpisodeFilter, EpisodeKind,
+    GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot,
+    KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeSource, KnowledgeStatus, Permission,
+    PermissionAction, PermissionExplainTrace, PermissionInterpreter, PermissionParseError,
+    PermissionParseErrorKind, Ref, RefError, SearchHit, SearchProjectionSnapshot,
+    SemanticProviderInfo, Timestamp, WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument,
+    WikiPageType, WikiViewSnapshot,
 };
 pub use ports::{
     AgentAnswerRequest, AgentAnswerResponse, AgentBackend, AnswerEngine, AnswerMeta,
     BackendAnswerEngineBridge, BackendRetrieveRequest, BackendRetrievedItem,
-    BackendRetrieverBridge, FileContentReader, GraphStore, IndexStore, KnowledgeBackend,
-    KnowledgeStore, RetrievedContext, Retriever, SearchStore, SemanticExtractRequest,
-    SemanticExtractResponse, SemanticExtractor, StateRef, StateSnapshot, StateStore, WikiStore,
+    BackendRetrieverBridge, EpisodeStore, FileContentReader, GraphStore, IndexStore,
+    KnowledgeBackend, KnowledgeStore, RetrievedContext, Retriever, SearchStore,
+    SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor, StateRef, StateSnapshot,
+    StateStore, WikiStore,
 };
 pub use semantic_default::RuleBasedSemanticExtractor;
