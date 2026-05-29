@@ -5,6 +5,7 @@
 //! - index 三文件读写
 
 mod atomic_write;
+mod episode_files;
 mod error;
 mod graph_files;
 mod index_files;
@@ -17,6 +18,7 @@ mod search_files;
 mod wiki_view_files;
 
 pub use atomic_write::atomic_write_bytes;
+pub use episode_files::FsEpisodeStore;
 pub use error::{PersistenceError, PersistenceErrorKind};
 pub use graph_files::{read_graph_file, write_graph_file, GraphFiles};
 pub use index_files::{read_index_files, write_index_files, IndexFiles};
