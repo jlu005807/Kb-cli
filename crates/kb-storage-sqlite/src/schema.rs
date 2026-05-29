@@ -32,7 +32,10 @@ use crate::connection::SqliteConnection;
 ///   （knowledge_meta / search_meta / graph_meta / wiki_meta），
 ///   存放 schema_version + generated_at + 上游 signature；至此每个
 ///   snapshot 都能在 SQLite 里完整 round-trip。
-pub const SCHEMA_VERSION: i64 = 2;
+/// - v3：新增 L0 Episodic 层 `episodes` 表（append-only 交互时间线），
+///   对应 `kb_core::Episode` / [`crate::SqliteEpisodeStore`]。refs 序列化为
+///   JSON 数组列；按 (timestamp, id) 排序提供时间升序读取。
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// 确保数据库处于最新 schema。幂等：多次调用安全。
 ///
@@ -67,6 +70,9 @@ pub fn ensure_schema(conn: &SqliteConnection) -> Result<(), DomainError> {
         }
         if starting < 2 {
             up_v2(&tx)?;
+        }
+        if starting < 3 {
+            up_v3(&tx)?;
         }
 
         if starting < SCHEMA_VERSION {
@@ -233,6 +239,34 @@ CREATE TABLE IF NOT EXISTS wiki_meta (
     Ok(())
 }
 
+fn up_v3(tx: &rusqlite::Transaction<'_>) -> Result<(), DomainError> {
+    // L0 Episodic 层：append-only 交互时间线。
+    // - id 主键保证同一 store 内 episode 唯一（与 fs JSONL 语义一致）。
+    // - refs_json 把 Vec<String> chunk 引用序列化为 JSON 数组列。
+    // - 复合索引 (timestamp, id) 支撑"按时间升序读取 + limit 取最近 N 条"。
+    // - agent_id / session_id / kind 上各建索引，支撑 EpisodeFilter 的等值过滤。
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS episodes (
+    id          TEXT PRIMARY KEY,
+    timestamp   INTEGER NOT NULL,
+    agent_id    TEXT NOT NULL,
+    session_id  TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    refs_json   TEXT NOT NULL,
+    confidence  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_episodes_time ON episodes(timestamp, id);
+CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id);
+CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id);
+CREATE INDEX IF NOT EXISTS idx_episodes_kind ON episodes(kind);
+"#,
+    )
+    .map_err(|err| DomainError::io(format!("up_v3 DDL failed: {err}")))?;
+    Ok(())
+}
+
 fn now_string() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -279,6 +313,7 @@ mod tests {
                 "wiki_pages",
                 "wiki_manifest",
                 "wiki_meta",
+                "episodes",
                 "kb_meta",
             ] {
                 let count: i64 = c

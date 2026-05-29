@@ -18,6 +18,7 @@
 //! 这里只做行↔领域结构的 marshal/unmarshal + 事务管理。
 
 pub mod connection;
+pub mod episode_store;
 pub mod graph_store;
 pub mod index_store;
 pub mod knowledge_store;
@@ -27,6 +28,7 @@ pub mod state_store;
 pub mod wiki_store;
 
 pub use connection::{open_database, SqliteConnection};
+pub use episode_store::SqliteEpisodeStore;
 pub use graph_store::SqliteGraphStore;
 pub use index_store::SqliteIndexStore;
 pub use knowledge_store::SqliteKnowledgeStore;
