@@ -854,6 +854,9 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
         ));
     };
 
+    // Phase 1.5：把这次提问记入 L0 时间线（best-effort，失败仅降级为 trace）。
+    record_ask_query_episode(&storage, &question, answer);
+
     if answer {
         let (_, answer_engine) = build_ask_stack(&cwd);
         let meta = answer_engine
@@ -890,6 +893,14 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
             &answer_out.tool_trace,
             &answer_out.answer_text,
             &answer_out.citations,
+        );
+        // Phase 1.5：把这次回答记入 L0 时间线，refs 挂上引用到的 chunk_id。
+        record_ask_answer_episode(
+            &storage,
+            &question,
+            &answer_out.answer_text,
+            &answer_out.citations,
+            &answer_out.retrieved_context,
         );
         let data = json!({
             "mode": "answer",
