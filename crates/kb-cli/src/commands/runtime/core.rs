@@ -23,3 +23,4 @@ include!("core/handlers/ask/formatting.rs");
 include!("core/handlers/ask/tools.rs");
 include!("core/handlers/ask/episodes.rs");
 include!("core/handlers/ask/agent.rs");
+include!("core/handlers/memory.rs");

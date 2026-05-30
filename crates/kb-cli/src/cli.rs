@@ -6,7 +6,7 @@
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
-const HELP_OVERVIEW: &str = "These are common kb commands used in various situations:\n\nstart a working area\n  init        Create kb.md, .kb state and default ignore rules\n\nmanage references\n  add         Add file contents to the knowledge base\n  mv          Move or rename an alias\n  rm          Remove an alias from the working set\n  path        Show or update the path of an alias\n  chmod       Update permissions of an alias\n  list        List tracked aliases\n\nmaintain index state\n  check       Show index diff without writing files\n  update      Apply index diff and persist snapshot (use --strict for L2-L5 hard-fail)\n\nretrieve and environment\n  ask         Retrieve relevant context for a question\n  env         Show registered knowledge base roots\n  completion  Generate shell completion scripts\n";
+const HELP_OVERVIEW: &str = "These are common kb commands used in various situations:\n\nstart a working area\n  init        Create kb.md, .kb state and default ignore rules\n\nmanage references\n  add         Add file contents to the knowledge base\n  mv          Move or rename an alias\n  rm          Remove an alias from the working set\n  path        Show or update the path of an alias\n  chmod       Update permissions of an alias\n  list        List tracked aliases\n\nmaintain index state\n  check       Show index diff without writing files\n  update      Apply index diff and persist snapshot (use --strict for L2-L5 hard-fail)\n\nbuild agent memory\n  remember    Record an agent observation into the L0 episode timeline\n  correct     Record a user correction (highest-priority memory signal)\n  consolidate Distill accumulated episodes into agent-memory files\n\nretrieve and environment\n  ask         Retrieve relevant context for a question\n  env         Show registered knowledge base roots\n  completion  Generate shell completion scripts\n";
 
 // CLI 参数契约：全局选项 + 子命令集合。
 // 这里的结构应与 docs/cli/command-manual.md 保持同步。
@@ -125,6 +125,35 @@ pub enum Commands {
         top: Option<u32>,
         #[arg(long, alias = "llm", action = ArgAction::SetTrue)]
         answer: bool,
+    },
+    // Record an agent observation into the L0 episode timeline.
+    // (description shown via HELP_OVERVIEW, matching the other commands)
+    Remember {
+        /// The fact / observation to remember.
+        content: String,
+        /// chunk_id(s) this observation references (repeatable).
+        #[arg(long = "ref")]
+        refs: Vec<String>,
+        /// Self-assessed confidence in [0.0, 1.0]; defaults to 0.8.
+        #[arg(long)]
+        confidence: Option<f32>,
+    },
+    // Record a user correction (highest-priority memory signal).
+    Correct {
+        /// The corrected statement.
+        content: String,
+        /// chunk_id(s) this correction applies to (repeatable).
+        #[arg(long = "ref")]
+        refs: Vec<String>,
+    },
+    // Distill accumulated episodes into .kb/agent-memory/*.md memory files.
+    Consolidate {
+        /// Minimum episodes per topic before a memory file is produced.
+        #[arg(long, default_value_t = 2)]
+        min: usize,
+        /// Plan only: show what would be written without touching disk.
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
     },
     Env {
         #[arg(long, action = ArgAction::SetTrue)]

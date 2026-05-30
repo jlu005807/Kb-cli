@@ -1,6 +1,5 @@
 ---
 source: crates/kb-cli/tests/cli_surface.rs
-assertion_line: 109
 expression: normalized
 ---
 KB CLI MVP command surface
@@ -8,18 +7,21 @@ KB CLI MVP command surface
 Usage: kb [OPTIONS] <COMMAND>
 
 Commands:
-  init        
-  add         
-  mv          
-  rm          
-  path        
-  chmod       
-  list        
-  check       
-  update      
-  ask         
-  env         
-  completion  
+  init         
+  add          
+  mv           
+  rm           
+  path         
+  chmod        
+  list         
+  check        
+  update       
+  ask          
+  remember     
+  correct      
+  consolidate  
+  env          
+  completion   
 
 Options:
       --output <OUTPUT>
@@ -63,6 +65,11 @@ manage references
 maintain index state
   check       Show index diff without writing files
   update      Apply index diff and persist snapshot (use --strict for L2-L5 hard-fail)
+
+build agent memory
+  remember    Record an agent observation into the L0 episode timeline
+  correct     Record a user correction (highest-priority memory signal)
+  consolidate Distill accumulated episodes into agent-memory files
 
 retrieve and environment
   ask         Retrieve relevant context for a question
