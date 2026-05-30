@@ -8,11 +8,14 @@ mod cmd_ask;
 mod cmd_check;
 mod cmd_chmod;
 mod cmd_completion;
+mod cmd_consolidate;
+mod cmd_correct;
 mod cmd_env;
 mod cmd_init;
 mod cmd_list;
 mod cmd_mv;
 mod cmd_path;
+mod cmd_remember;
 mod cmd_rm;
 mod cmd_update;
 mod runtime;
@@ -49,6 +52,13 @@ pub fn dispatch(cli: Cli) -> Result<Value, CliError> {
             top,
             answer,
         } => cmd_ask::handle(question, top, answer),
+        Commands::Remember {
+            content,
+            refs,
+            confidence,
+        } => cmd_remember::handle(content, refs, confidence),
+        Commands::Correct { content, refs } => cmd_correct::handle(content, refs),
+        Commands::Consolidate { min, dry_run } => cmd_consolidate::handle(min, dry_run),
         Commands::Env { list, doctor } => cmd_env::handle(list, doctor),
         Commands::Completion { shell } => cmd_completion::handle(shell),
     }

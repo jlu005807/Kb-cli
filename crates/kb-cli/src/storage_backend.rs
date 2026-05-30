@@ -15,13 +15,14 @@
 
 use std::path::{Path, PathBuf};
 
-use kb_core::ports::{GraphStore, IndexStore, KnowledgeStore, SearchStore, WikiStore};
+use kb_core::ports::{EpisodeStore, GraphStore, IndexStore, KnowledgeStore, SearchStore, WikiStore};
 use kb_storage_fs::{
-    FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore, FsSearchStore, FsWikiStore,
+    FsEpisodeStore, FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore,
+    FsSearchStore, FsWikiStore,
 };
 use kb_storage_sqlite::{
-    open_database, SqliteConnection, SqliteGraphStore, SqliteIndexStore, SqliteKnowledgeStore,
-    SqliteSearchStore, SqliteWikiStore,
+    open_database, SqliteConnection, SqliteEpisodeStore, SqliteGraphStore, SqliteIndexStore,
+    SqliteKnowledgeStore, SqliteSearchStore, SqliteWikiStore,
 };
 
 /// 用户在 `.kb/config.json` 里选择的存储后端。
@@ -95,6 +96,10 @@ pub struct StorageHandles {
     pub search: Box<dyn SearchStore + Send + Sync>,
     pub graph: Box<dyn GraphStore + Send + Sync>,
     pub wiki: Box<dyn WikiStore + Send + Sync>,
+    /// L0 Episodic 层：append-only 交互时间线。两个后端都接入——fs 写
+    /// `.kb/episodes.jsonl`，sqlite 写 `episodes` 表。供 agent runtime 写入
+    /// （ask / remember / correct）与 consolidation 读取。
+    pub episode: Box<dyn EpisodeStore + Send + Sync>,
     /// L2 编译需要读原始文件；fs 后端就是文件系统读取，sqlite 后端也复用同一个
     /// reader（数据库里不存原文）。
     pub content_reader: FsFileContentReader,
@@ -125,6 +130,7 @@ impl StorageHandles {
             search: Box::new(FsSearchStore::new(cwd.to_path_buf())),
             graph: Box::new(FsGraphStore::new(cwd.to_path_buf())),
             wiki: Box::new(FsWikiStore::new(cwd.to_path_buf())),
+            episode: Box::new(FsEpisodeStore::new(cwd.to_path_buf())),
             content_reader: FsFileContentReader::new(cwd.to_path_buf()),
             sqlite_conn: None,
         }
@@ -148,6 +154,7 @@ impl StorageHandles {
             search: Box::new(SqliteSearchStore::new(conn.clone())),
             graph: Box::new(SqliteGraphStore::new(conn.clone())),
             wiki: Box::new(SqliteWikiStore::new(conn.clone())),
+            episode: Box::new(SqliteEpisodeStore::new(conn.clone())),
             content_reader: FsFileContentReader::new(cwd.to_path_buf()),
             sqlite_conn: Some(conn),
         })

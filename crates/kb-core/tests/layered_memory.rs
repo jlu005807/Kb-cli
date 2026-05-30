@@ -36,6 +36,7 @@ fn knowledge_snapshot_roundtrip_preserves_structure() {
                 kind: "rule".to_string(),
                 name: "rule-based-v1".to_string(),
             },
+            ..KnowledgeEntry::default()
         }],
     };
 
@@ -202,6 +203,7 @@ fn compile_l2_reuses_unchanged_active_entry() {
                 kind: "rule".to_string(),
                 name: "rule-based-v1".to_string(),
             },
+            ..KnowledgeEntry::default()
         }],
     };
     let snapshot = index_snapshot(vec![IndexRecord {
@@ -312,6 +314,7 @@ fn compile_l3_reuses_unchanged_hits() {
                 kind: "rule".to_string(),
                 name: "rule-based-v1".to_string(),
             },
+            ..KnowledgeEntry::default()
         }],
     };
 
@@ -362,6 +365,7 @@ fn compile_l3_rebuilds_changed_chunks_and_prunes_non_active_entries() {
                     kind: "rule".to_string(),
                     name: "rule-based-v1".to_string(),
                 },
+                ..KnowledgeEntry::default()
             },
             KnowledgeEntry {
                 record_id: "docs/b".to_string(),
@@ -376,6 +380,7 @@ fn compile_l3_rebuilds_changed_chunks_and_prunes_non_active_entries() {
                     kind: "system".to_string(),
                     name: "missing-source".to_string(),
                 },
+                ..KnowledgeEntry::default()
             },
         ],
     };
@@ -437,6 +442,7 @@ fn graph_builder_reuses_unchanged_edges() {
                     kind: "rule".to_string(),
                     name: "rule-based-v1".to_string(),
                 },
+                ..KnowledgeEntry::default()
             },
             KnowledgeEntry {
                 record_id: "docs/b".to_string(),
@@ -457,6 +463,7 @@ fn graph_builder_reuses_unchanged_edges() {
                     kind: "rule".to_string(),
                     name: "rule-based-v1".to_string(),
                 },
+                ..KnowledgeEntry::default()
             },
         ],
     };
@@ -497,6 +504,7 @@ fn graph_builder_enforces_evidence_and_prunes_non_active_entries() {
                     kind: "rule".to_string(),
                     name: "rule-based-v1".to_string(),
                 },
+                ..KnowledgeEntry::default()
             },
             KnowledgeEntry {
                 record_id: "docs/missing".to_string(),
@@ -511,6 +519,7 @@ fn graph_builder_enforces_evidence_and_prunes_non_active_entries() {
                     kind: "system".to_string(),
                     name: "missing-source".to_string(),
                 },
+                ..KnowledgeEntry::default()
             },
         ],
     };
@@ -591,6 +600,7 @@ fn wiki_view_builder_reuses_unchanged_pages() {
                 kind: "rule".to_string(),
                 name: "rule-based-v1".to_string(),
             },
+            ..KnowledgeEntry::default()
         }],
     };
     let graph = compile_l4(None, &knowledge, "g1").snapshot;
@@ -633,6 +643,7 @@ fn wiki_view_builder_tracks_removed_pages() {
                 kind: "rule".to_string(),
                 name: "rule-based-v1".to_string(),
             },
+            ..KnowledgeEntry::default()
         }],
     };
     let graph = compile_l4(None, &knowledge, "g1").snapshot;

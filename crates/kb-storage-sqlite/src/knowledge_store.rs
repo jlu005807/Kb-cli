@@ -118,6 +118,10 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                         kind: provider_kind,
                         name: provider_name,
                     },
+                    // Phase 0 schema bump：SQLite 后端尚未持久化 confidence /
+                    // source / timestamps / provenance，临时走 default 占位。
+                    // 等 Phase 1（Episode 层）一起做 schema migration。
+                    ..KnowledgeEntry::default()
                 });
             }
 
@@ -339,6 +343,7 @@ mod tests {
                     kind: "rule".to_string(),
                     name: "rule-v1".to_string(),
                 },
+                ..KnowledgeEntry::default()
             }],
         }
     }

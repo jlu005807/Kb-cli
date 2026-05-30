@@ -5,8 +5,8 @@
 //! external 等语义维度分流（重试 / 终止 / 用户提示），而不是依赖字符串匹配。
 
 use crate::domain::{
-    GraphSnapshot, IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot, SearchProjectionSnapshot,
-    SemanticProviderInfo, WikiManifestSnapshot, WikiViewSnapshot,
+    Episode, EpisodeFilter, GraphSnapshot, IndexSnapshot, KnowledgeChunk, KnowledgeSnapshot,
+    SearchProjectionSnapshot, SemanticProviderInfo, WikiManifestSnapshot, WikiViewSnapshot,
 };
 use crate::error::DomainError;
 
@@ -28,6 +28,28 @@ pub struct StateSnapshot {
 pub trait StateStore {
     fn load_state(&self) -> Result<StateSnapshot, DomainError>;
     fn save_state(&self, state: &StateSnapshot) -> Result<(), DomainError>;
+}
+
+// L0 Episodic 层端口：append-only 的交互时间线。
+//
+// 与其它 *Store 的根本区别：Episode 是 **append-only** 的——只追加、不覆写、
+// 不删除（consolidation 也只标记 / 派生，不物理删原始记录）。因此接口刻意
+// **不提供** `save_all` / 全量重写语义，避免误用成 snapshot store。
+//
+// 这是对齐"agent runtime 写入"场景的结构设计：runtime 每观察到一件事就
+// `append` 一条，读取侧用 `query` 按 filter 拉取，`count` 给 consolidation
+// 判断是否积累到触发阈值。
+pub trait EpisodeStore {
+    /// 追加一条 episode。实现必须保证对同一 store 的并发 append 不丢记录。
+    fn append(&self, episode: &Episode) -> Result<(), DomainError>;
+
+    /// 按 filter 查询。返回顺序由实现保证为**时间升序**（最早在前）；
+    /// 当 `filter.limit = Some(n)` 时返回**最近的 n 条**（仍按时间升序排列）。
+    fn query(&self, filter: &EpisodeFilter) -> Result<Vec<Episode>, DomainError>;
+
+    /// 满足 filter 的 episode 总数（忽略 `filter.limit`）。
+    /// consolidation 用它判断"某 topic 是否积累够了"，避免把全部记录读进内存。
+    fn count(&self, filter: &EpisodeFilter) -> Result<usize, DomainError>;
 }
 
 // 索引端口：抽象“索引快照”的读取与持久化。

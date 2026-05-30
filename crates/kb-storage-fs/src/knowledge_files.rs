@@ -107,6 +107,7 @@ mod tests {
                     kind: "rule".to_string(),
                     name: "rule-based-v1".to_string(),
                 },
+                ..KnowledgeEntry::default()
             }],
         };
 
