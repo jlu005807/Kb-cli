@@ -6,6 +6,7 @@
 
 mod agent;
 mod alias;
+mod consolidation;
 mod episode;
 mod graph;
 mod index;
@@ -19,6 +20,7 @@ mod wiki_view;
 
 pub use agent::{AgentId, AgentIdError};
 pub use alias::{Alias, AliasError, AliasErrorKind};
+pub use consolidation::{plan_consolidation, ConsolidatedMemory, ConsolidationPlan};
 pub use episode::{Episode, EpisodeFilter, EpisodeKind};
 pub use graph::{GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot};
 pub use index::{
