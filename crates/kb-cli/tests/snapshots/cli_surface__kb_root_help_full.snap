@@ -21,6 +21,7 @@ Commands:
   correct      
   consolidate  
   env          
+  serve        
   completion   
 
 Options:
@@ -73,5 +74,6 @@ build agent memory
 
 retrieve and environment
   ask         Retrieve relevant context for a question
+  serve       Serve the memory system over stdio JSON-RPC (MCP) for external agents
   env         Show registered knowledge base roots
   completion  Generate shell completion scripts

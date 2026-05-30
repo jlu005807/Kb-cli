@@ -17,6 +17,7 @@ mod cmd_mv;
 mod cmd_path;
 mod cmd_remember;
 mod cmd_rm;
+mod cmd_serve;
 mod cmd_update;
 mod runtime;
 
@@ -60,6 +61,7 @@ pub fn dispatch(cli: Cli) -> Result<Value, CliError> {
         Commands::Correct { content, refs } => cmd_correct::handle(content, refs),
         Commands::Consolidate { min, dry_run } => cmd_consolidate::handle(min, dry_run),
         Commands::Env { list, doctor } => cmd_env::handle(list, doctor),
+        Commands::Serve { mcp } => cmd_serve::handle(mcp),
         Commands::Completion { shell } => cmd_completion::handle(shell),
     }
 }

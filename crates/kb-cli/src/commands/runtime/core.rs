@@ -24,3 +24,7 @@ include!("core/handlers/ask/tools.rs");
 include!("core/handlers/ask/episodes.rs");
 include!("core/handlers/ask/agent.rs");
 include!("core/handlers/memory.rs");
+include!("core/handlers/mcp/protocol.rs");
+include!("core/handlers/mcp/schema.rs");
+include!("core/handlers/mcp/dispatch.rs");
+include!("core/handlers/mcp/tools.rs");

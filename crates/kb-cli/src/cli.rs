@@ -6,7 +6,7 @@
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
-const HELP_OVERVIEW: &str = "These are common kb commands used in various situations:\n\nstart a working area\n  init        Create kb.md, .kb state and default ignore rules\n\nmanage references\n  add         Add file contents to the knowledge base\n  mv          Move or rename an alias\n  rm          Remove an alias from the working set\n  path        Show or update the path of an alias\n  chmod       Update permissions of an alias\n  list        List tracked aliases\n\nmaintain index state\n  check       Show index diff without writing files\n  update      Apply index diff and persist snapshot (use --strict for L2-L5 hard-fail)\n\nbuild agent memory\n  remember    Record an agent observation into the L0 episode timeline\n  correct     Record a user correction (highest-priority memory signal)\n  consolidate Distill accumulated episodes into agent-memory files\n\nretrieve and environment\n  ask         Retrieve relevant context for a question\n  env         Show registered knowledge base roots\n  completion  Generate shell completion scripts\n";
+const HELP_OVERVIEW: &str = "These are common kb commands used in various situations:\n\nstart a working area\n  init        Create kb.md, .kb state and default ignore rules\n\nmanage references\n  add         Add file contents to the knowledge base\n  mv          Move or rename an alias\n  rm          Remove an alias from the working set\n  path        Show or update the path of an alias\n  chmod       Update permissions of an alias\n  list        List tracked aliases\n\nmaintain index state\n  check       Show index diff without writing files\n  update      Apply index diff and persist snapshot (use --strict for L2-L5 hard-fail)\n\nbuild agent memory\n  remember    Record an agent observation into the L0 episode timeline\n  correct     Record a user correction (highest-priority memory signal)\n  consolidate Distill accumulated episodes into agent-memory files\n\nretrieve and environment\n  ask         Retrieve relevant context for a question\n  serve       Serve the memory system over stdio JSON-RPC (MCP) for external agents\n  env         Show registered knowledge base roots\n  completion  Generate shell completion scripts\n";
 
 // CLI 参数契约：全局选项 + 子命令集合。
 // 这里的结构应与 docs/cli/command-manual.md 保持同步。
@@ -163,6 +163,12 @@ pub enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         doctor: bool,
     },
+    // Serve the memory system over stdio JSON-RPC (MCP) for external agents.
+    Serve {
+        /// Speak the Model Context Protocol over stdio (the only transport for now).
+        #[arg(long, action = ArgAction::SetTrue)]
+        mcp: bool,
+    },
     Completion {
         shell: clap_complete::Shell,
     },
@@ -187,6 +193,10 @@ mod tests {
             "check",
             "update",
             "ask",
+            "remember",
+            "correct",
+            "consolidate",
+            "serve",
             "env",
             "completion",
         ] {
@@ -248,6 +258,15 @@ mod tests {
                 assert!(answer);
             }
             _ => panic!("expected ask command"),
+        }
+    }
+
+    #[test]
+    fn serve_parses_mcp_flag() {
+        let cli = Cli::parse_from(["kb", "serve", "--mcp"]);
+        match cli.command {
+            Commands::Serve { mcp } => assert!(mcp),
+            _ => panic!("expected serve command"),
         }
     }
 }
