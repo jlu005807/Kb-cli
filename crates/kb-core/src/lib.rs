@@ -16,13 +16,14 @@ pub mod usecases;
 pub use config::{ConfigLayers, ConfigMergeTrace, ConfigSource, MergeResult};
 pub use error::{DomainError, DomainResult};
 pub use domain::{
-    AgentId, AgentIdError, Alias, AliasError, AliasErrorKind, ConsolidatedMemory,
-    ConsolidationPlan, Episode, EpisodeFilter, EpisodeKind, GraphEdge, GraphEdgeType, GraphEvidence,
-    GraphNode, GraphNodeType, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot,
-    KnowledgeSource, KnowledgeStatus, Permission, PermissionAction, PermissionExplainTrace,
-    PermissionInterpreter, PermissionParseError, PermissionParseErrorKind, Ref, RefError, SearchHit,
-    SearchProjectionSnapshot, SemanticProviderInfo, Timestamp, WikiManifestEntry,
-    WikiManifestSnapshot, WikiPageDocument, WikiPageType, WikiViewSnapshot, plan_consolidation,
+    AgentId, AgentIdError, Alias, AliasError, AliasErrorKind, CitationMatch, CitationVerdict,
+    ConsolidatedMemory, ConsolidationPlan, Episode, EpisodeFilter, EpisodeKind, GraphEdge,
+    GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot, KnowledgeChunk,
+    KnowledgeEntry, KnowledgeSnapshot, KnowledgeSource, KnowledgeStatus, Permission,
+    PermissionAction, PermissionExplainTrace, PermissionInterpreter, PermissionParseError,
+    PermissionParseErrorKind, Ref, RefError, SearchHit, SearchProjectionSnapshot,
+    SemanticProviderInfo, Timestamp, WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument,
+    WikiPageType, WikiViewSnapshot, plan_consolidation, verify_citation,
 };
 pub use ports::{
     AgentAnswerRequest, AgentAnswerResponse, AgentBackend, AnswerEngine, AnswerMeta,
