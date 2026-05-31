@@ -862,7 +862,249 @@ kb env --output=json
 }
 ```
 
-## 12. `kb completion <SHELL>`
+## 12. `kb remember <CONTENT>`
+
+### 成功示例
+**命令：**
+```bash
+kb remember "项目使用 Rust workspace + 六边形架构" --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "episode_id": "ep_1748707200000000000_abc123",
+    "agent_id": "kb-cli",
+    "session_id": null,
+    "kind": "Observation",
+    "content": "项目使用 Rust workspace + 六边形架构",
+    "confidence": 0.8,
+    "timestamp": 1748707200000000000
+  }
+}
+```
+
+**命令（text 模式）：**
+```bash
+kb remember "项目使用 Rust workspace + 六边形架构"
+```
+**输出（text）：**
+```text
+Episode recorded
+episode_id: ep_1748707200000000000_abc123
+kind: Observation
+confidence: 0.8
+```
+
+## 13. `kb correct <CONTENT>`
+
+### 成功示例
+**命令：**
+```bash
+kb correct "存储后端默认是 fs 不是 sqlite" --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "episode_id": "ep_1748707260000000000_def456",
+    "agent_id": "kb-cli",
+    "session_id": null,
+    "kind": "UserCorrection",
+    "content": "存储后端默认是 fs 不是 sqlite",
+    "confidence": 1.0,
+    "timestamp": 1748707260000000000
+  }
+}
+```
+
+**命令（text 模式）：**
+```bash
+kb correct "存储后端默认是 fs 不是 sqlite"
+```
+**输出（text）：**
+```text
+User correction recorded
+episode_id: ep_1748707260000000000_def456
+kind: UserCorrection
+confidence: 1.0 (highest priority)
+```
+
+## 14. `kb consolidate`
+
+### 成功示例（dry-run）
+**命令：**
+```bash
+kb consolidate --dry-run --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "mode": "dry_run",
+    "episodes_processed": 15,
+    "files_created": 0,
+    "files_updated": 0,
+    "consolidation_plan": [
+      {
+        "agent_id": "kb-cli",
+        "episode_count": 12,
+        "target_file": ".kb/raw/agent-memory/kb-cli-session-001.md",
+        "action": "create"
+      },
+      {
+        "agent_id": "claude-desktop",
+        "episode_count": 3,
+        "target_file": ".kb/raw/agent-memory/claude-desktop-session-002.md",
+        "action": "update"
+      }
+    ]
+  }
+}
+```
+
+### 成功示例（execute）
+**命令：**
+```bash
+kb consolidate --output=json
+```
+**输出（JSON）：**
+```json
+{
+  "schema_version": "1.0",
+  "status": "success",
+  "data": {
+    "mode": "execute",
+    "episodes_processed": 15,
+    "files_created": 1,
+    "files_updated": 1
+  }
+}
+```
+
+**命令（text 模式）：**
+```bash
+kb consolidate
+```
+**输出（text）：**
+```text
+Memory consolidation complete
+episodes_processed: 15
+files_created: 1
+files_updated: 1
+
+Next step: Run 'kb update' to compile consolidated memories into L1-L5 layers
+```
+
+## 15. `kb serve --mcp`
+
+### 运行示例
+**命令：**
+```bash
+kb serve --mcp
+```
+**输出（text，启动日志）：**
+```text
+KB-CLI MCP Server starting...
+Protocol: JSON-RPC 2.0 over stdio
+Tools available: 8
+  - recall
+  - remember
+  - correct
+  - verify_citation
+  - list_episodes
+  - consolidate
+  - read_summary
+  - read_neighbors
+
+Waiting for requests... (Press Ctrl+C to stop)
+```
+
+**MCP 协议交互示例（JSON-RPC）：**
+
+客户端请求（initialize）：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {},
+    "clientInfo": {
+      "name": "claude-desktop",
+      "version": "1.0.0"
+    }
+  }
+}
+```
+
+服务端响应：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {
+      "tools": {}
+    },
+    "serverInfo": {
+      "name": "kb-cli-mcp",
+      "version": "0.1.0"
+    }
+  }
+}
+```
+
+客户端请求（tools/list）：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+服务端响应（部分）：
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "recall",
+        "description": "Retrieve memory from the knowledge base using layered search",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "top_k": {
+              "type": "integer",
+              "description": "Number of results to return",
+              "default": 5
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    ]
+  }
+}
+```
+
+## 16. `kb completion <SHELL>`
 
 ### 成功示例
 **命令：**

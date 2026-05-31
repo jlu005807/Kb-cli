@@ -300,7 +300,91 @@ LLM 配置优先级：
 错误与退出：
 - 无可用上下文：`E5003`（退出码 5）
 
-### 4.11 `kb env [--list]`
+### 4.11 `kb remember <CONTENT>`
+
+行为：
+- 记录 agent 观察到的事实，写入 L0 episode 时间线（`.kb/episodes.jsonl` 或 sqlite `episodes` 表）。
+- Episode kind 为 `Observation`，默认 confidence 为 0.8。
+- 自动记录 `agent_id`（从环境变量 `KB_AGENT_ID` 读取，默认 `kb-cli`）和 `session_id`（从 `KB_SESSION_ID` 读取，可选）。
+
+主要输出字段：
+- `episode_id`
+- `agent_id`
+- `session_id`
+- `kind`
+- `content`
+- `confidence`
+- `timestamp`
+
+错误与退出：
+- Episode store 写入失败：`E1004`（退出码 1）
+
+### 4.12 `kb correct <CONTENT>`
+
+行为：
+- 记录用户纠错，写入 L0 episode 时间线。
+- Episode kind 为 `UserCorrection`，confidence 固定为 1.0（最高优先级记忆信号）。
+- 用于反幻觉和记忆冲突解决。
+
+主要输出字段：
+- `episode_id`
+- `agent_id`
+- `session_id`
+- `kind`
+- `content`
+- `confidence`
+- `timestamp`
+
+错误与退出：
+- Episode store 写入失败：`E1004`（退出码 1）
+
+### 4.13 `kb consolidate [--dry-run]`
+
+行为：
+- 将积累的 L0 episodes 固化为语义记忆文件（`.kb/raw/agent-memory/*.md`）。
+- 按 agent_id 聚类，提炼成机器可读的 skill/SOP 格式。
+- 支持 `--dry-run` 预览固化计划而不实际写入。
+- 固化后的文件会在下次 `kb update` 时编译进 L1-L5 层。
+
+主要输出字段：
+- `mode`（`dry_run` 或 `execute`）
+- `episodes_processed`
+- `files_created`
+- `files_updated`
+- `consolidation_plan[]`（仅 `--dry-run`）
+
+错误与退出：
+- Episode store 读取失败：`E1005`（退出码 1）
+- 文件写入失败：`E1003`（退出码 1）
+
+### 4.14 `kb serve --mcp`
+
+行为：
+- 启动 MCP (Model Context Protocol) server，通过 stdio 接受 JSON-RPC 2.0 请求。
+- 暴露 8 个 tools：`recall`、`remember`、`correct`、`verify_citation`、`list_episodes`、`consolidate`、`read_summary`、`read_neighbors`。
+- 用于让外部 agent（Claude Desktop / Cursor / Cline）接入记忆系统。
+- Server 运行在前台，通过 stdio 通信，按 Ctrl+C 或发送 EOF 停止。
+
+MCP Tools：
+- `recall`：检索记忆（分层检索，返回 ranked contexts）
+- `remember`：写入观察（L0 episode，kind=Observation）
+- `correct`：写入纠错（L0 episode，kind=UserCorrection）
+- `verify_citation`：验证引用（词法校验 quote 是否真实存在于 chunk_id）
+- `list_episodes`：列出 episode 时间线（可按 agent_id 过滤）
+- `consolidate`：触发记忆固化（支持 dry_run 预览）
+- `read_summary`：读取文件语义摘要（L2）
+- `read_neighbors`：读取知识图谱邻接（L4）
+
+环境变量：
+- `KB_AGENT_ID`：标识调用方 agent（默认 `kb-cli`）
+- `KB_SESSION_ID`：会话 ID（可选）
+
+错误与退出：
+- 知识库未初始化：`E3001`（退出码 3）
+- JSON-RPC 协议错误：写入错误响应到 stdout，继续运行
+- 内部错误：写入错误响应到 stdout，继续运行
+
+### 4.15 `kb env [--list]`
 
 行为：
 - 读取全局注册表并返回当前仍存在的 KB 根目录。
@@ -313,7 +397,7 @@ LLM 配置优先级：
 - `recorded_total`
 - `config_path`
 
-### 4.12 `kb completion <SHELL>`
+### 4.16 `kb completion <SHELL>`
 
 行为：
 - 生成 shell 补全脚本。
@@ -330,6 +414,10 @@ LLM 配置优先级：
 - `kb check`：比较声明源与 `regs.json`
 - `kb update`：唯一负责落盘到 `regs.json` 与索引快照
 - `kb list`：读取 `regs.json`
+- `kb remember`：写入 L0 episode（Observation）
+- `kb correct`：写入 L0 episode（UserCorrection）
+- `kb consolidate`：L0 episodes → `.kb/raw/agent-memory/*.md`
+- `kb serve --mcp`：启动 MCP server（stdio JSON-RPC）
 
 ## 6. 错误术语约定
 
