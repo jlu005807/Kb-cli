@@ -263,11 +263,157 @@ Layer 5: Wiki Markdown View Layer
 2. **知识累积更强**：L2-L5 随更新持续沉淀，不止“瞬时召回”。
 3. **人机协同更好**：L5 让知识可读可审，而非只存在向量或临时上下文中。
 
-## 10. 非目标
+## 10. Agent 记忆系统扩展（L0 Episode Layer）
+
+> 状态：2026-05-31  
+> 实现阶段：Phase 0-3 已完成并合并到主分支
+
+### 10.1 设计动机
+
+KB-CLI 的核心是”知识库编译”，但在 agent 交互场景中，还需要一个**时间线记忆层**来：
+
+1. 记录 agent 观察到的事实（Observation）
+2. 接受用户纠错（UserCorrection，最高优先级）
+3. 固化为语义记忆文件（consolidation）
+4. 让外部 agent（Claude Desktop / Cursor / Cline）通过 MCP 接入
+
+这形成了一个**可插拔的外部 agent 记忆系统**，让任何 agent 都能把 KB-CLI 当作外挂大脑使用。
+
+### 10.2 L0 Episode Layer 架构
+
+L0 Episode Layer 位于现有 L0 声明层之下，是一个 **append-only 时间线存储**：
+
+```text
+L0 Episode (Time-series Memory)
+  ├─ .kb/episodes.jsonl (fs backend)
+  └─ episodes table (sqlite backend)
+        |
+        | kb consolidate
+        v
+  .kb/raw/agent-memory/*.md (semantic memory files)
+        |
+        | kb update (existing pipeline)
+        v
+L0 Declaration → L1 Index → L2-L5 (existing layers)
+```
+
+### 10.3 Episode 数据模型
+
+每个 episode 包含：
+
+- `episode_id`：唯一标识（`ep_<timestamp_nanos>_<random>`）
+- `agent_id`：调用方标识（从 `KB_AGENT_ID` 环境变量读取，默认 `kb-cli`）
+- `session_id`：会话 ID（可选，从 `KB_SESSION_ID` 读取）
+- `kind`：类型枚举
+  - `Observation`：agent 观察到的事实（confidence 默认 0.8）
+  - `UserCorrection`：用户纠错（confidence 固定 1.0，最高优先级）
+  - `ToolCall`：工具调用记录（保留，未启用）
+  - `AgentThought`：agent 推理过程（保留，未启用）
+- `content`：记忆内容（纯文本）
+- `confidence`：置信度（0.0-1.0）
+- `timestamp`：Unix 纳秒时间戳
+- `metadata`：可选元数据（JSON）
+
+### 10.4 记忆命令
+
+#### `kb remember <CONTENT>`
+- 写入 Observation episode
+- 默认 confidence 0.8
+- 用于记录 agent 学到的事实
+
+#### `kb correct <CONTENT>`
+- 写入 UserCorrection episode
+- 固定 confidence 1.0（最高优先级）
+- 用于反幻觉和记忆冲突解决
+
+#### `kb consolidate [--dry-run]`
+- 将积累的 episodes 固化为 `.kb/raw/agent-memory/*.md` 文件
+- 按 agent_id 聚类，提炼成机器可读的 skill/SOP 格式
+- 固化后的文件会在下次 `kb update` 时编译进 L1-L5 层
+
+### 10.5 MCP 集成（Model Context Protocol）
+
+#### 启动 MCP Server
+```bash
+kb serve --mcp
+```
+
+通过 stdio 暴露 8 个 tools：
+
+| Tool | 功能 |
+|------|------|
+| `recall` | 检索记忆（分层检索，返回 ranked contexts） |
+| `remember` | 写入观察（L0 episode，kind=Observation） |
+| `correct` | 写入纠错（L0 episode，kind=UserCorrection） |
+| `verify_citation` | 验证引用（词法校验 quote 是否真实存在于 chunk_id） |
+| `list_episodes` | 列出 episode 时间线（可按 agent_id 过滤） |
+| `consolidate` | 触发记忆固化（支持 dry_run 预览） |
+| `read_summary` | 读取文件语义摘要（L2） |
+| `read_neighbors` | 读取知识图谱邻接（L4） |
+
+#### 配置示例（Claude Desktop）
+```json
+{
+  “mcpServers”: {
+    “kb-memory”: {
+      “command”: “kb”,
+      “args”: [“serve”, “--mcp”],
+      “env”: {
+        “KB_AGENT_ID”: “claude-desktop”
+      }
+    }
+  }
+}
+```
+
+### 10.6 记忆系统设计原则
+
+1. **反幻觉优先**
+   - `verify_citation` 做词法验证（substring match + token overlap）
+   - `UserCorrection` 最高优先级（confidence 1.0）
+   - 冲突可见但不覆写（provenance 链保留历史）
+
+2. **轻量无依赖**
+   - 不用向量嵌入（保持”无 LLM 也能跑”）
+   - 手写 stdio JSON-RPC（零额外依赖）
+   - Append-only episode store（JSONL 或 sqlite）
+
+3. **多 agent 共享**
+   - 每个 episode 带 `agent_id` 归属
+   - `consolidate` 聚合多 agent 贡献
+   - 通过 `KB_AGENT_ID` 隔离不同调用方
+
+4. **借鉴前沿研究**
+   - 4 类记忆分层（Working / Episodic / Semantic / Procedural，arXiv:2404.13501）
+   - 双时态标注（Zep/Graphiti：事实成立时间 + 观测时间）
+   - Confidence decay + provenance chains（Mem0 冲突检测）
+
+### 10.7 与现有分层模型的关系
+
+L0 Episode Layer 是对现有 L0-L5 模型的**正交扩展**：
+
+- **现有 L0-L5**：面向”知识库编译”，输入是用户声明的文件/目录
+- **L0 Episode**：面向”agent 记忆”，输入是 agent 交互时间线
+- **连接点**：`kb consolidate` 将 episodes 固化为 `.kb/raw/agent-memory/*.md`，然后通过 `kb update` 编译进 L1-L5
+
+这样设计的好处：
+1. 不破坏现有知识库编译流程
+2. agent 记忆可以独立演进（append-only，无需重建）
+3. 固化后的记忆文件与普通知识源一视同仁（统一编译、检索、图谱化）
+
+### 10.8 实现状态
+
+- ✅ Phase 0：基础类型（Timestamp / AgentId / KnowledgeSource / Episode）
+- ✅ Phase 1：Episode store（fs + sqlite 后端）
+- ✅ Phase 2：记忆命令（remember / correct / consolidate）
+- ✅ Phase 3：MCP server（kb serve --mcp，8 tools）
+- 🚧 Phase 4：文档 + 真实集成验证（进行中）
+
+## 11. 非目标
 
 当前阶段不做：
 
 1. 让 LLM 直接改写 `kb.md` 或用户源文件。
 2. 把 L5 当作唯一问答真值层。
 3. 在未验证性能瓶颈前强制引入外部向量库。
-4. 以“模型可用”为前提阻断 L0/L1 基础更新流程。
+4. 以”模型可用”为前提阻断 L0/L1 基础更新流程。
