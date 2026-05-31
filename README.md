@@ -51,6 +51,7 @@ KB-CLI 是一个 Rust workspace，遵循六边形架构（ports/adapters）：
 
 ## 命令速览
 
+### 知识库管理
 - `kb init [name]`：初始化知识库目录与配置
 - `kb add <path> [alias]`：添加声明
 - `kb rm <alias>`：删除声明
@@ -60,8 +61,19 @@ KB-CLI 是一个 Rust workspace，遵循六边形架构（ports/adapters）：
 - `kb list`：列出当前登记项
 - `kb check`：检查声明与登记差异
 - `kb update [--llm]`：执行分层更新（可用 `--llm` 强制启用本次 LLM 语义/图谱/wiki 构建）
+
+### 检索与问答
 - `kb ask <question>`：默认返回检索包；加 `--answer` 启用最小 LLM agent 最终回答
+
+### Agent 记忆系统
+- `kb remember <content>`：记录 agent 观察到的事实（写入 L0 episode 时间线）
+- `kb correct <content>`：记录用户纠错（最高优先级记忆信号）
+- `kb consolidate`：将积累的 episodes 固化为语义记忆文件（`.kb/raw/agent-memory/*.md`）
+- `kb serve --mcp`：启动 MCP server，让外部 agent（Claude Desktop / Cursor / Cline）接入记忆系统
+
+### 环境管理
 - `kb env --list`：列出已登记知识库
+- `kb env --doctor`：诊断配置与 keyring 状态
 - `kb completion <shell>`：生成补全脚本
 
 ## 安装快速开始
@@ -301,6 +313,154 @@ process env (KB_LLM_*)  >  项目 .kb/config.json  >  全局 config.json  >  def
 
 > 真正需要时密钥可以写在 `llm.key` 里，但 `kb init` 默认不写、`.kb/config.json` 默认被 `.gitignore` 排除——优先选择环境变量或 keyring。
 
+## Agent 记忆系统
+
+KB-CLI 实现了一个**可插拔的外部 agent 记忆系统**，让任何 agent（Claude Desktop / Cursor / Cline / 自定义 agent）都能把这个项目当作外挂大脑使用。
+
+### 记忆分层模型（L0-L5）
+
+- **L0 Episode**：原始交互时间线（append-only，`.kb/episodes.jsonl` 或 sqlite `episodes` 表）
+- **L1 Index**：文件索引（`.kb/index.json`）
+- **L2 Knowledge**：语义记忆（`.kb/knowledge.json` + `.kb/raw/agent-memory/*.md`）
+- **L3 Search**：检索索引（`.kb/search.json`）
+- **L4 Graph**：知识图谱（`.kb/graph.json`）
+- **L5 Wiki**：wiki 页面（`.kb/wiki/*.md`）
+
+### 记忆写入流程
+
+1. **实时写入 L0**：agent 通过 `kb remember` / `kb correct` 或 MCP tools 写入 episode
+2. **固化为语义记忆**：`kb consolidate` 将 episodes 聚类/提炼成 `.kb/raw/agent-memory/*.md` 文件（机器可读，类似 skill/SOP）
+3. **编译到上层**：`kb update` 将 agent-memory 文件编译进 L1-L5，供检索使用
+
+### 记忆命令
+
+```bash
+# 记录观察（默认 confidence 0.8）
+kb remember "项目使用 Rust workspace + 六边形架构"
+
+# 记录用户纠错（最高优先级，confidence 1.0）
+kb correct "存储后端默认是 fs 不是 sqlite"
+
+# 固化记忆（dry-run 预览）
+kb consolidate --dry-run
+
+# 固化记忆（实际写入）
+kb consolidate
+
+# 查看 episode 时间线
+kb ask "list recent episodes" --output json
+```
+
+### MCP 集成：让外部 agent 接入
+
+KB-CLI 通过 [Model Context Protocol (MCP)](https://modelcontextprotocol.io) 暴露记忆系统，任何支持 MCP 的 agent 都能无缝接入。
+
+#### 启动 MCP server
+
+```bash
+kb serve --mcp
+```
+
+Server 通过 stdio 接受 JSON-RPC 2.0 请求，暴露 8 个 tools：
+
+| Tool | 功能 |
+|------|------|
+| `recall` | 检索记忆（分层检索，返回 ranked contexts） |
+| `remember` | 写入观察（L0 episode，kind=Observation） |
+| `correct` | 写入纠错（L0 episode，kind=UserCorrection，最高优先级） |
+| `verify_citation` | 验证引用（词法校验 quote 是否真实存在于 chunk_id） |
+| `list_episodes` | 列出 episode 时间线（可按 agent_id 过滤） |
+| `consolidate` | 触发记忆固化（支持 dry_run 预览） |
+| `read_summary` | 读取文件语义摘要（L2） |
+| `read_neighbors` | 读取知识图谱邻接（L4） |
+
+#### Claude Desktop 配置
+
+编辑 `%APPDATA%\Claude\claude_desktop_config.json`（Windows）或 `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）：
+
+```json
+{
+  "mcpServers": {
+    "kb-memory": {
+      "command": "kb",
+      "args": ["serve", "--mcp"],
+      "env": {
+        "KB_AGENT_ID": "claude-desktop"
+      }
+    }
+  }
+}
+```
+
+重启 Claude Desktop，在对话中 agent 会自动看到 8 个 tools，可以：
+- 用 `recall` 检索项目知识
+- 用 `remember` 记录学到的事实
+- 用 `correct` 接受用户纠错
+- 用 `verify_citation` 验证引用真实性（反幻觉）
+
+#### Cursor 配置
+
+在项目根目录创建 `.cursorrules` 或编辑 Cursor 设置中的 MCP servers：
+
+```json
+{
+  "mcpServers": {
+    "kb-memory": {
+      "command": "kb",
+      "args": ["serve", "--mcp"],
+      "env": {
+        "KB_AGENT_ID": "cursor"
+      }
+    }
+  }
+}
+```
+
+#### Cline (VSCode) 配置
+
+在 VSCode 设置中添加 MCP server（`settings.json`）：
+
+```json
+{
+  "cline.mcpServers": {
+    "kb-memory": {
+      "command": "kb",
+      "args": ["serve", "--mcp"],
+      "env": {
+        "KB_AGENT_ID": "cline"
+      }
+    }
+  }
+}
+```
+
+#### 环境变量说明
+
+- `KB_AGENT_ID`：标识调用方 agent（用于 episode 归属和审计），默认 `kb-cli`
+- `KB_SESSION_ID`：会话 ID（可选，用于按会话过滤 episodes）
+
+### 记忆系统设计原则
+
+1. **反幻觉优先**：
+   - `verify_citation` 做词法验证（substring match + token overlap）
+   - `UserCorrection` 最高优先级（confidence 1.0）
+   - 冲突可见但不覆写（provenance 链保留历史）
+
+2. **轻量无依赖**：
+   - 不用向量嵌入（保持"无 LLM 也能跑"）
+   - 手写 stdio JSON-RPC（零额外依赖）
+   - Append-only episode store（JSONL 或 sqlite）
+
+3. **多 agent 共享**：
+   - 每个 episode 带 `agent_id` 归属
+   - `consolidate` 聚合多 agent 贡献
+   - 通过 `KB_AGENT_ID` 隔离不同调用方
+
+4. **借鉴前沿研究**：
+   - 4 类记忆分层（Working / Episodic / Semantic / Procedural，arXiv:2404.13501）
+   - 双时态标注（Zep/Graphiti：事实成立时间 + 观测时间）
+   - Confidence decay + provenance chains（Mem0 冲突检测）
+
 ## Ask 模式说明
 
 默认检索包模式：
@@ -329,7 +489,7 @@ kb ask "这个项目如何更新索引？" --answer --output json
 - `data.answer.text`
 - `data.answer.citations`
 
-当前 `--answer` 会最大化复用 `.kb/search.json`、`.kb/knowledge.json`、`.kb/graph.json`、`.kb/wiki/*` 以及命中的原文片段，走一个最小只读 agent loop；过程输出保持简短，最终答案是主输出。
+当前 `--answer` 会最大化复用 `.kb/search.json`、`.kb/knowledge.json`、`.kb/graph.json`、`.kb/wiki/*` 以及命中的原文片段，走一个最小只读 agent loop；过程输出保持简短，最终答案是主输出。内置 agent 仅作参考实现——**推荐通过 MCP 让外部 agent 接入记忆系统**。
 
 ## 更多文档
 
