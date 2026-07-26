@@ -6,7 +6,9 @@ use std::time::Duration;
 use crate::agent_tools::{SemanticAgentContext, SemanticAgentToolbox};
 use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
 use kb_core::error::DomainError;
-use kb_core::{SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor};
+use kb_core::{
+    split_paragraph_spans, SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use unicode_segmentation::UnicodeSegmentation;
@@ -1087,33 +1089,24 @@ fn plan_semantic_chunks(record_id: &str, text: &str, max_chunks: usize) -> Vec<K
         return vec![];
     }
 
+    // 段落切分统一走 kb-core 的共享实现：按空行（兼容 CRLF）切分，
+    // 返回指向原文的精确字节区间，天然规避 "\n\n" 匹配失败与游标漂移问题。
     let mut chunks = Vec::new();
-    let mut cursor = 0usize;
-    for raw_part in text.split("\n\n") {
+    for (start, end) in split_paragraph_spans(text) {
         if chunks.len() >= max_chunks {
             break;
         }
 
-        let local_trimmed = raw_part.trim();
-        if local_trimmed.is_empty() {
-            cursor = cursor.saturating_add(raw_part.len() + 2);
-            continue;
-        }
-
-        let local_offset = raw_part.find(local_trimmed).unwrap_or(0);
-        let start = cursor.saturating_add(local_offset);
-        let end = start.saturating_add(local_trimmed.len()).min(text.len());
+        let chunk_text = &text[start..end];
         let chunk_index = chunks.len() + 1;
 
         chunks.push(KnowledgeChunk {
             chunk_id: format!("{}:{:04}", record_id, chunk_index),
             byte_range: [start as u64, end as u64],
-            content_signature: format!("fnv1a64:{:016x}", fnv1a64_local(local_trimmed.as_bytes())),
-            summary: stable_truncate(local_trimmed, 120),
-            preview: stable_truncate(local_trimmed, 200),
+            content_signature: format!("fnv1a64:{:016x}", fnv1a64_local(chunk_text.as_bytes())),
+            summary: stable_truncate(chunk_text, 120),
+            preview: stable_truncate(chunk_text, 200),
         });
-
-        cursor = cursor.saturating_add(raw_part.len() + 2);
     }
 
     if chunks.is_empty() {
@@ -1222,7 +1215,8 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_semantic_progress, parse_json_object_from_text, supports_max_tokens_fallback,
+        fnv1a64_local, format_semantic_progress, parse_json_object_from_text,
+        plan_semantic_chunks, supports_max_tokens_fallback,
     };
 
     #[test]
@@ -1252,5 +1246,42 @@ mod tests {
         assert!(line.contains("docs/config"));
         assert!(line.contains("./docs/config.md"));
         assert!(line.contains("chunks=3"));
+    }
+
+    #[test]
+    fn plan_semantic_chunks_splits_crlf_paragraphs_with_real_offsets() {
+        let text = "Para one.\r\n\r\nPara two.\r\n";
+        let chunks = plan_semantic_chunks("docs/a", text, 6);
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].chunk_id, "docs/a:0001");
+        assert_eq!(chunks[0].byte_range, [0, 9]);
+        assert_eq!(
+            chunks[0].content_signature,
+            format!("fnv1a64:{:016x}", fnv1a64_local("Para one.".as_bytes()))
+        );
+        assert_eq!(chunks[1].chunk_id, "docs/a:0002");
+        assert_eq!(chunks[1].byte_range, [13, 22]);
+        assert_eq!(
+            chunks[1].content_signature,
+            format!("fnv1a64:{:016x}", fnv1a64_local("Para two.".as_bytes()))
+        );
+        assert_eq!(&text[13..22], "Para two.");
+    }
+
+    #[test]
+    fn plan_semantic_chunks_respects_max_chunks_and_triple_newlines() {
+        let text = "a\n\n\nb\n\nc";
+        let chunks = plan_semantic_chunks("docs/a", text, 2);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].byte_range, [0, 1]);
+        assert_eq!(chunks[1].byte_range, [4, 5]);
+        assert_eq!(&text[4..5], "b");
+    }
+
+    #[test]
+    fn plan_semantic_chunks_returns_empty_for_blank_text_or_zero_budget() {
+        assert!(plan_semantic_chunks("docs/a", "  \r\n  ", 4).is_empty());
+        assert!(plan_semantic_chunks("docs/a", "content", 0).is_empty());
     }
 }

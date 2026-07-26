@@ -33,4 +33,4 @@ pub use ports::{
     SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor, StateRef, StateSnapshot,
     StateStore, WikiStore,
 };
-pub use semantic_default::RuleBasedSemanticExtractor;
+pub use semantic_default::{split_paragraph_spans, RuleBasedSemanticExtractor};

@@ -24,7 +24,8 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
         .map_err(|_| write_config_error())?;
     fs::write(cwd.join(".kb/README.md"), default_kb_structure_guide())
         .map_err(|_| write_config_error())?;
-    fs::write(&kb_md, "# raw\n").map_err(|_| write_config_error())?;
+    // kb.md 与 .kb/*.json 一样走原子写，避免 init 中断留下半写入的 kb.md。
+    kb_storage_fs::atomic_write_bytes(&kb_md, b"# raw\n").map_err(|_| write_config_error())?;
     save_state(&cwd, &State::default())?;
     save_registry(&cwd, &RegistryState::default())?;
     // 维护 .gitignore：把派生层 + LLM key 配置文件加入忽略列表。

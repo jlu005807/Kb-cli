@@ -1,3 +1,11 @@
+/// kb.md 的程序化改写统一走原子写协议（临时文件 + fsync + rename），
+/// 与 .kb/*.json 的落盘保持一致，避免进程中断留下半写入的 kb.md。
+/// 错误映射回 io::Error 以保持既有函数签名不变。
+fn write_kb_md_atomic(kb_md: &Path, content: &str) -> Result<(), std::io::Error> {
+    kb_storage_fs::atomic_write_bytes(kb_md, content.as_bytes())
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+}
+
 fn append_to_kb_md(
     kb_md: &Path,
     category: &str,
@@ -20,7 +28,7 @@ fn append_to_kb_md(
         content.push('\n');
     }
     content.push_str(&format!("[{alias}]({path})\n"));
-    fs::write(kb_md, content)
+    write_kb_md_atomic(kb_md, &content)
 }
 
 fn append_missing_raw_refs_to_kb_md(
@@ -73,7 +81,7 @@ fn apply_rm_to_kb_md(
     if raw.ends_with('\n') {
         out.push('\n');
     }
-    fs::write(kb_md, out)?;
+    write_kb_md_atomic(&kb_md, &out)?;
 
     Ok(Some(reference.identity()))
 }
@@ -179,7 +187,7 @@ fn apply_mv_to_kb_md(
     if raw.ends_with('\n') {
         out.push('\n');
     }
-    fs::write(kb_md, out)?;
+    write_kb_md_atomic(&kb_md, &out)?;
     Ok(Some(reference.identity()))
 }
 
@@ -207,7 +215,7 @@ fn apply_path_to_kb_md(
     if raw.ends_with('\n') {
         out.push('\n');
     }
-    fs::write(kb_md, out)?;
+    write_kb_md_atomic(&kb_md, &out)?;
     Ok(Some(reference.identity()))
 }
 
@@ -252,7 +260,7 @@ fn apply_chmod_to_kb_md(
             if raw.ends_with('\n') {
                 out.push('\n');
             }
-            fs::write(kb_md, out)?;
+            write_kb_md_atomic(&kb_md, &out)?;
             return Ok(true);
         }
     }
@@ -265,7 +273,7 @@ fn apply_chmod_to_kb_md(
                 if raw.ends_with('\n') {
                     out.push('\n');
                 }
-                fs::write(kb_md, out)?;
+                write_kb_md_atomic(&kb_md, &out)?;
                 return Ok(true);
             }
         }
@@ -342,7 +350,7 @@ fn prune_missing_refs_from_kb_md(
         if raw.ends_with('\n') {
             out.push('\n');
         }
-        fs::write(kb_md, out)?;
+        write_kb_md_atomic(&kb_md, &out)?;
     }
 
     Ok(removed)
@@ -389,7 +397,7 @@ fn dedupe_raw_refs_in_kb_md(
         if raw.ends_with('\n') {
             out.push('\n');
         }
-        fs::write(kb_md, out)?;
+        write_kb_md_atomic(&kb_md, &out)?;
     }
 
     Ok(removed)

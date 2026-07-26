@@ -1165,7 +1165,7 @@ fn build_index_signature(index_snapshot: &IndexSnapshot) -> String {
     format!("fnv1a64:{:016x}", fnv1a64(payload.as_bytes()))
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in bytes {
         hash ^= *byte as u64;
