@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::agent_tools::{SemanticAgentContext, SemanticAgentToolbox};
+use crate::protocol::{
+    self, build_chat_completion_endpoint, extract_chat_message_content, fnv1a64,
+    normalize_text_field, parse_json_object_from_text, ChatProtocolSettings,
+};
 use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
 use kb_core::error::DomainError;
 use kb_core::{
@@ -62,29 +65,22 @@ impl LlmSemanticExtractor {
         user_prompt: &str,
         max_output_tokens: u32,
     ) -> Result<Value, String> {
-        let mut errors = Vec::new();
-        for attempt in 1..=self.config.retry_max_attempts {
-            match self.call_openai_chat_once(api_key, system_prompt, user_prompt, max_output_tokens)
-            {
-                Ok(value) => return Ok(value),
-                Err(err) => {
-                    errors.push(format!(
-                        "attempt {}/{} failed: {}",
-                        attempt, self.config.retry_max_attempts, err
-                    ));
-                    if attempt < self.config.retry_max_attempts && self.config.retry_backoff_ms > 0
-                    {
-                        std::thread::sleep(Duration::from_millis(self.config.retry_backoff_ms));
-                    }
-                }
-            }
-        }
-
-        Err(format!(
-            "llm request failed after {} attempts; {}",
+        // 注意：此处沿用既有语义，把 retry_max_attempts 原值传入（不做 .max(1)
+        // 钳制）——与 openai_graph_wiki 的调用点保持各自原有行为。
+        protocol::call_openai_chat_with_retry(
+            &ChatProtocolSettings {
+                endpoint: &self.endpoint,
+                api_key,
+                timeout_secs: self.config.timeout_secs,
+                model: &self.config.model,
+                temperature: self.config.temperature,
+                max_output_tokens,
+            },
             self.config.retry_max_attempts,
-            errors.join(" | ")
-        ))
+            self.config.retry_backoff_ms,
+            system_prompt,
+            user_prompt,
+        )
     }
 
     fn emit_progress(&self, stage: &str, request: &SemanticExtractRequest, detail: Option<String>) {
@@ -96,78 +92,6 @@ impl LlmSemanticExtractor {
                 detail,
             ));
         }
-    }
-
-    fn call_openai_chat_once(
-        &self,
-        api_key: &str,
-        system_prompt: &str,
-        user_prompt: &str,
-        max_output_tokens: u32,
-    ) -> Result<Value, String> {
-        let variants = [
-            (
-                "max_completion_tokens+response_format",
-                "max_completion_tokens",
-                true,
-            ),
-            ("max_tokens+response_format", "max_tokens", true),
-            ("max_completion_tokens", "max_completion_tokens", false),
-            ("max_tokens", "max_tokens", false),
-        ];
-        let mut errors = Vec::new();
-        for (label, max_tokens_key, include_response_format) in variants {
-            let body = build_chat_completion_body(
-                &self.config.model,
-                self.config.temperature,
-                max_output_tokens,
-                system_prompt,
-                user_prompt,
-                max_tokens_key,
-                include_response_format,
-            );
-            match self.send_openai_chat(api_key, &body) {
-                Ok(value) => return Ok(value),
-                Err(err) => {
-                    let can_try_next = supports_max_tokens_fallback(&err);
-                    errors.push(format!("{} failed: {}", label, err));
-                    if !can_try_next {
-                        return Err(errors.join(" | "));
-                    }
-                }
-            }
-        }
-        Err(format!(
-            "llm request compatibility fallbacks failed; {}",
-            errors.join(" | ")
-        ))
-    }
-
-    fn send_openai_chat(&self, api_key: &str, body: &Value) -> Result<Value, String> {
-        let request = ureq::post(&self.endpoint)
-            .set("Authorization", &format!("Bearer {}", api_key))
-            .set("Content-Type", "application/json")
-            .timeout(Duration::from_secs(self.config.timeout_secs));
-
-        let raw = match request.send_string(&body.to_string()) {
-            Ok(response) => response
-                .into_string()
-                .map_err(|err| format!("failed to read llm response: {}", err))?,
-            Err(ureq::Error::Status(code, response)) => {
-                let body_text = response
-                    .into_string()
-                    .unwrap_or_else(|_| "<failed to read error body>".to_string());
-                return Err(format!(
-                    "http status {} from llm provider: {}",
-                    code, body_text
-                ));
-            }
-            Err(ureq::Error::Transport(err)) => {
-                return Err(format!("llm transport error: {}", err));
-            }
-        };
-
-        serde_json::from_str(&raw).map_err(|err| format!("invalid llm response json: {}", err))
     }
 
     fn extract_single_step(
@@ -363,7 +287,7 @@ impl SemanticExtractor for LlmSemanticExtractor {
                 byte_range: [0, truncated_text.len() as u64],
                 content_signature: format!(
                     "fnv1a64:{:016x}",
-                    fnv1a64_local(truncated_text.as_bytes())
+                    fnv1a64(truncated_text.as_bytes())
                 ),
                 summary: stable_truncate(&truncated_text, 120),
                 preview: stable_truncate(&truncated_text, 200),
@@ -565,44 +489,6 @@ struct LlmChunkInsight {
     chunk_id: String,
     #[serde(default)]
     facts: Vec<String>,
-}
-
-fn build_chat_completion_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/chat/completions") {
-        trimmed.to_string()
-    } else {
-        format!("{}/chat/completions", trimmed)
-    }
-}
-
-fn build_chat_completion_body(
-    model: &str,
-    temperature: f64,
-    max_output_tokens: u32,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_tokens_key: &str,
-    include_response_format: bool,
-) -> Value {
-    let mut body = json!({
-        "model": model,
-        "messages": [
-            { "role": "system", "content": system_prompt },
-            { "role": "user", "content": user_prompt }
-        ],
-        "temperature": temperature,
-    });
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
-        if include_response_format {
-            obj.insert(
-                "response_format".to_string(),
-                json!({ "type": "json_object" }),
-            );
-        }
-    }
-    body
 }
 
 fn build_semantic_prompt_single_step(
@@ -984,92 +870,6 @@ fn is_payload_good_enough(payload: &LlmSemanticPayload, coverage: f64, min_cover
     normalize_text_field(payload.summary.clone()).is_some() && coverage >= min_coverage
 }
 
-fn extract_chat_message_content(response: &Value) -> Option<String> {
-    let message_content = response.pointer("/choices/0/message/content")?;
-    if let Some(text) = message_content.as_str() {
-        return Some(text.to_string());
-    }
-    if let Some(parts) = message_content.as_array() {
-        let joined = parts
-            .iter()
-            .filter_map(|item| item.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("");
-        if !joined.trim().is_empty() {
-            return Some(joined);
-        }
-    }
-    None
-}
-
-fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
-    let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        if value.is_object() {
-            return Ok(value);
-        }
-    }
-
-    if let Some(candidate) = extract_first_json_object(trimmed) {
-        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-            if value.is_object() {
-                return Ok(value);
-            }
-        }
-    }
-
-    Err(format!(
-        "llm content is not a valid json object; excerpt={:?}",
-        stable_truncate(trimmed, 320)
-    ))
-}
-
-fn extract_first_json_object(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (idx, ch) in text[start..].char_indices() {
-        let absolute_idx = start + idx;
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(&text[start..=absolute_idx]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn supports_max_tokens_fallback(error_text: &str) -> bool {
-    let lowered = error_text.to_ascii_lowercase();
-    lowered.contains("max_completion_tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("response_format")
-        || lowered.contains("json_object")
-        || lowered.contains("unknown field")
-        || lowered.contains("unrecognized field")
-        || lowered.contains("invalid request")
-        || lowered.contains("unsupported parameter")
-        || lowered.contains("unsupported field")
-        || lowered.contains("unexpected field")
-}
-
 fn first_non_empty_list_item(items: &[String]) -> Option<&str> {
     items
         .iter()
@@ -1103,7 +903,7 @@ fn plan_semantic_chunks(record_id: &str, text: &str, max_chunks: usize) -> Vec<K
         chunks.push(KnowledgeChunk {
             chunk_id: format!("{}:{:04}", record_id, chunk_index),
             byte_range: [start as u64, end as u64],
-            content_signature: format!("fnv1a64:{:016x}", fnv1a64_local(chunk_text.as_bytes())),
+            content_signature: format!("fnv1a64:{:016x}", fnv1a64(chunk_text.as_bytes())),
             summary: stable_truncate(chunk_text, 120),
             preview: stable_truncate(chunk_text, 200),
         });
@@ -1115,7 +915,7 @@ fn plan_semantic_chunks(record_id: &str, text: &str, max_chunks: usize) -> Vec<K
             chunks.push(KnowledgeChunk {
                 chunk_id: format!("{}:0001", record_id),
                 byte_range: [0, trimmed.len() as u64],
-                content_signature: format!("fnv1a64:{:016x}", fnv1a64_local(trimmed.as_bytes())),
+                content_signature: format!("fnv1a64:{:016x}", fnv1a64(trimmed.as_bytes())),
                 summary: stable_truncate(trimmed, 120),
                 preview: stable_truncate(trimmed, 200),
             });
@@ -1123,17 +923,6 @@ fn plan_semantic_chunks(record_id: &str, text: &str, max_chunks: usize) -> Vec<K
     }
 
     chunks
-}
-
-fn normalize_text_field(input: Option<String>) -> Option<String> {
-    input.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
 }
 
 fn normalize_semantic_list(values: Vec<String>, limit: usize, lowercase: bool) -> Vec<String> {
@@ -1187,15 +976,12 @@ fn first_non_empty_line_local(text: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn fnv1a64_local(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
+/// 字素簇（grapheme cluster）级稳定截断。
+///
+/// 与 `crate::protocol::stable_truncate`（char 级）**有意**不同：本文件的截断
+/// 结果会写入用户可见的 chunk `summary`/`preview` 与最终语义摘要，按字素簇
+/// 截断可避免把 emoji/组合字符从中间切开。合并到共享模块会改变既有输出，
+/// 因此 Stage 5 去重时保留本地变体（见 protocol.rs 模块文档）。
 fn stable_truncate(text: &str, max_chars: usize) -> String {
     let grapheme_starts: Vec<usize> = UnicodeSegmentation::grapheme_indices(text, true)
         .map(|(idx, _)| idx)
@@ -1214,25 +1000,10 @@ fn stable_truncate(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        fnv1a64_local, format_semantic_progress, parse_json_object_from_text,
-        plan_semantic_chunks, supports_max_tokens_fallback,
-    };
+    use super::{fnv1a64, format_semantic_progress, plan_semantic_chunks};
 
-    #[test]
-    fn response_format_errors_are_provider_compatibility_fallbacks() {
-        assert!(supports_max_tokens_fallback(
-            "http status 400 from llm provider: unsupported parameter: response_format"
-        ));
-    }
-
-    #[test]
-    fn json_parse_error_includes_safe_excerpt() {
-        let err =
-            parse_json_object_from_text("semantic not json").expect_err("expected parse error");
-        assert!(err.contains("semantic not json"));
-        assert!(err.contains("valid json object"));
-    }
+    // 说明：parse_json_object_from_text / supports_max_tokens_fallback 等共享
+    // 协议助手的测试已随实现迁移至 crate::protocol::tests。
 
     #[test]
     fn semantic_progress_mentions_record_and_stage() {
@@ -1258,13 +1029,13 @@ mod tests {
         assert_eq!(chunks[0].byte_range, [0, 9]);
         assert_eq!(
             chunks[0].content_signature,
-            format!("fnv1a64:{:016x}", fnv1a64_local("Para one.".as_bytes()))
+            format!("fnv1a64:{:016x}", fnv1a64("Para one.".as_bytes()))
         );
         assert_eq!(chunks[1].chunk_id, "docs/a:0002");
         assert_eq!(chunks[1].byte_range, [13, 22]);
         assert_eq!(
             chunks[1].content_signature,
-            format!("fnv1a64:{:016x}", fnv1a64_local("Para two.".as_bytes()))
+            format!("fnv1a64:{:016x}", fnv1a64("Para two.".as_bytes()))
         );
         assert_eq!(&text[13..22], "Para two.");
     }

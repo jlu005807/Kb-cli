@@ -1,3 +1,4 @@
+use crate::protocol::stable_truncate;
 use kb_core::domain::{
     GraphEdge, GraphSnapshot, KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus,
     WikiManifestSnapshot, WikiPageDocument,
@@ -728,15 +729,6 @@ fn resolve_source_path(root: &Path, raw_path: &str) -> PathBuf {
     } else {
         root.join(raw_path.trim_start_matches("./"))
     }
-}
-
-fn stable_truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text.chars().take(max_chars).collect::<String>();
-    out.push_str("...");
-    out
 }
 
 #[cfg(test)]

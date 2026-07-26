@@ -1,8 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
 
 use crate::agent_tools::SemanticAgentToolbox;
 use crate::openai_semantic::LlmSemanticConfig;
+use crate::protocol::{
+    self, build_chat_completion_endpoint, extract_chat_message_content, fnv1a64,
+    normalize_text_field, parse_json_object_from_text, stable_truncate, ChatProtocolSettings,
+};
 use kb_core::domain::{
     GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot,
     KnowledgeSnapshot, KnowledgeStatus, WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument,
@@ -1800,245 +1803,32 @@ fn decode_wiki_enrichment_payload(response: &Value) -> Result<LlmWikiEnrichmentP
         .map_err(|err| format!("invalid llm wiki enrichment payload: {}", err))
 }
 
+/// graph/wiki 富化路径的带重试 LLM 调用：从 `LlmSemanticConfig` 展开协议参数后
+/// 委托给共享实现 `crate::protocol::call_openai_chat_with_retry`。
+///
+/// 注意：此处保留既有的 `.max(1)` 钳制（与 `openai_semantic` 传原值不同），
+/// 维持两个调用点各自的历史行为。
 fn call_openai_chat_with_retry(
     config: &LlmSemanticConfig,
     api_key: &str,
     system_prompt: &str,
     user_prompt: &str,
 ) -> Result<Value, String> {
-    let mut errors = Vec::new();
-    let max_attempts = config.retry_max_attempts.max(1);
-    for attempt in 1..=max_attempts {
-        match call_openai_chat_once(config, api_key, system_prompt, user_prompt) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                errors.push(format!(
-                    "attempt {}/{} failed: {}",
-                    attempt, max_attempts, err
-                ));
-                if attempt < max_attempts && config.retry_backoff_ms > 0 {
-                    std::thread::sleep(Duration::from_millis(config.retry_backoff_ms));
-                }
-            }
-        }
-    }
-    Err(format!(
-        "llm request failed after {} attempts; {}",
-        max_attempts,
-        errors.join(" | ")
-    ))
-}
-
-fn call_openai_chat_once(
-    config: &LlmSemanticConfig,
-    api_key: &str,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<Value, String> {
     let endpoint = build_chat_completion_endpoint(&config.base_url);
-    let variants = [
-        (
-            "max_completion_tokens+response_format",
-            "max_completion_tokens",
-            true,
-        ),
-        ("max_tokens+response_format", "max_tokens", true),
-        ("max_completion_tokens", "max_completion_tokens", false),
-        ("max_tokens", "max_tokens", false),
-    ];
-    let mut errors = Vec::new();
-    for (label, max_tokens_key, include_response_format) in variants {
-        let body = build_chat_completion_body(
-            &config.model,
-            config.temperature,
-            config.max_output_tokens,
-            system_prompt,
-            user_prompt,
-            max_tokens_key,
-            include_response_format,
-        );
-        match send_openai_chat(api_key, &endpoint, config.timeout_secs, &body) {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                let can_try_next = supports_max_tokens_fallback(&err);
-                errors.push(format!("{} failed: {}", label, err));
-                if !can_try_next {
-                    return Err(errors.join(" | "));
-                }
-            }
-        }
-    }
-    Err(format!(
-        "llm request compatibility fallbacks failed; {}",
-        errors.join(" | ")
-    ))
-}
-
-fn build_chat_completion_body(
-    model: &str,
-    temperature: f64,
-    max_output_tokens: u32,
-    system_prompt: &str,
-    user_prompt: &str,
-    max_tokens_key: &str,
-    include_response_format: bool,
-) -> Value {
-    let mut body = json!({
-        "model": model,
-        "messages": [
-            { "role": "system", "content": system_prompt },
-            { "role": "user", "content": user_prompt }
-        ],
-        "temperature": temperature,
-    });
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
-        if include_response_format {
-            obj.insert(
-                "response_format".to_string(),
-                json!({ "type": "json_object" }),
-            );
-        }
-    }
-    body
-}
-
-fn send_openai_chat(
-    api_key: &str,
-    endpoint: &str,
-    timeout_secs: u64,
-    body: &Value,
-) -> Result<Value, String> {
-    let request = ureq::post(endpoint)
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .set("Content-Type", "application/json")
-        .timeout(Duration::from_secs(timeout_secs));
-
-    let raw = match request.send_string(&body.to_string()) {
-        Ok(response) => response
-            .into_string()
-            .map_err(|err| format!("failed to read llm response: {}", err))?,
-        Err(ureq::Error::Status(code, response)) => {
-            let body_text = response
-                .into_string()
-                .unwrap_or_else(|_| "<failed to read error body>".to_string());
-            return Err(format!(
-                "http status {} from llm provider: {}",
-                code, body_text
-            ));
-        }
-        Err(ureq::Error::Transport(err)) => {
-            return Err(format!("llm transport error: {}", err));
-        }
-    };
-
-    serde_json::from_str(&raw).map_err(|err| format!("invalid llm response json: {}", err))
-}
-
-fn build_chat_completion_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/chat/completions") {
-        trimmed.to_string()
-    } else {
-        format!("{}/chat/completions", trimmed)
-    }
-}
-
-fn extract_chat_message_content(response: &Value) -> Option<String> {
-    let message_content = response.pointer("/choices/0/message/content")?;
-    if let Some(text) = message_content.as_str() {
-        return Some(text.to_string());
-    }
-    if let Some(parts) = message_content.as_array() {
-        let joined = parts
-            .iter()
-            .filter_map(|item| item.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("");
-        if !joined.trim().is_empty() {
-            return Some(joined);
-        }
-    }
-    None
-}
-
-fn parse_json_object_from_text(text: &str) -> Result<Value, String> {
-    let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        if value.is_object() {
-            return Ok(value);
-        }
-    }
-
-    if let Some(candidate) = extract_first_json_object(trimmed) {
-        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-            if value.is_object() {
-                return Ok(value);
-            }
-        }
-    }
-
-    Err(format!(
-        "llm content is not a valid json object; excerpt={:?}",
-        stable_truncate(trimmed, 320)
-    ))
-}
-
-fn extract_first_json_object(text: &str) -> Option<&str> {
-    let start = text.find('{')?;
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (idx, ch) in text[start..].char_indices() {
-        let absolute_idx = start + idx;
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(&text[start..=absolute_idx]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn supports_max_tokens_fallback(error_text: &str) -> bool {
-    let lowered = error_text.to_ascii_lowercase();
-    lowered.contains("max_completion_tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("response_format")
-        || lowered.contains("json_object")
-        || lowered.contains("unknown field")
-        || lowered.contains("unrecognized field")
-        || lowered.contains("invalid request")
-        || lowered.contains("unsupported parameter")
-        || lowered.contains("unsupported field")
-        || lowered.contains("unexpected field")
-}
-
-fn normalize_text_field(input: Option<String>) -> Option<String> {
-    input.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
+    protocol::call_openai_chat_with_retry(
+        &ChatProtocolSettings {
+            endpoint: &endpoint,
+            api_key,
+            timeout_secs: config.timeout_secs,
+            model: &config.model,
+            temperature: config.temperature,
+            max_output_tokens: config.max_output_tokens,
+        },
+        config.retry_max_attempts.max(1),
+        config.retry_backoff_ms,
+        system_prompt,
+        user_prompt,
+    )
 }
 
 fn normalize_list(items: &[String], max: usize) -> Vec<String> {
@@ -2068,31 +1858,12 @@ fn normalize_token(input: &str) -> String {
         .join("_")
 }
 
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
-fn stable_truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text.chars().take(max_chars).collect::<String>();
-    out.push_str("...");
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         collect_graph_covered_record_ids, count_batches, format_llm_stage_progress,
-        merge_wiki_notes, normalize_batch_size, normalize_token, parse_json_object_from_text,
-        recalc_graph_diff_counters, supports_max_tokens_fallback, LlmFileConcept, LlmFileRelation,
-        LlmFileTag, LlmGraphEnrichmentPayload, LlmWikiPageNote,
+        merge_wiki_notes, normalize_batch_size, normalize_token, recalc_graph_diff_counters,
+        LlmFileConcept, LlmFileRelation, LlmFileTag, LlmGraphEnrichmentPayload, LlmWikiPageNote,
     };
     use kb_core::domain::{GraphEdge, GraphEdgeType, GraphEvidence, GraphSnapshot};
     use std::collections::{BTreeMap, BTreeSet};
@@ -2253,19 +2024,8 @@ mod tests {
         assert!(!notes.contains_key("source:docs/z"));
     }
 
-    #[test]
-    fn response_format_errors_are_provider_compatibility_fallbacks() {
-        assert!(supports_max_tokens_fallback(
-            "http status 400 from llm provider: unsupported parameter: response_format"
-        ));
-    }
-
-    #[test]
-    fn json_parse_error_includes_safe_excerpt() {
-        let err = parse_json_object_from_text("not json at all").expect_err("expected parse error");
-        assert!(err.contains("not json at all"));
-        assert!(err.contains("valid json object"));
-    }
+    // 说明：parse_json_object_from_text / supports_max_tokens_fallback 等共享
+    // 协议助手的测试已随实现迁移至 crate::protocol::tests。
 
     #[test]
     fn llm_stage_progress_includes_round_batch_and_focus() {

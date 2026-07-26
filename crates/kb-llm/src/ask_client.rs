@@ -8,6 +8,11 @@
 //!
 //! 后续可以在此基础上引入 `AskAgent::run(executor)` 一体化 API，把 agent loop
 //! 也移到 kb-llm。
+//!
+//! Stage 5 去重之后，纯协议逻辑（endpoint 规范化、兼容性错误分类、请求体的
+//! 兼容字段写入）委托 `crate::protocol` 的共享实现；本模块保留的是 ask 路径
+//! **有意**与 semantic/graph/wiki 路径不同的部分：reqwest 传输栈、相反的兼容
+//! 变体顺序、以及 `DomainError` 错误分类的重试循环（详见 protocol.rs 模块文档）。
 
 use std::thread;
 use std::time::Duration;
@@ -17,37 +22,27 @@ use serde_json::{json, Value};
 
 use crate::config::LlmRuntimeConfig;
 use crate::http::{block_on_with_timeout, HttpClient};
+use crate::protocol;
 
 /// 把任意 base_url 规范化为 OpenAI-compatible chat completions endpoint。
 ///
 /// - 用户配 `https://api.openai.com/v1` → 补 `/chat/completions`
 /// - 用户配 `https://api.openai.com/v1/chat/completions` → 原样返回
 /// - 末尾多余 `/` 会被去掉。
+///
+/// 实现与 semantic/graph/wiki 路径共享（`crate::protocol`）；此处保留公开
+/// 包装以维持 `kb-cli` 依赖的既有 API。
 pub fn ask_chat_completion_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/chat/completions") {
-        trimmed.to_string()
-    } else {
-        format!("{}/chat/completions", trimmed)
-    }
+    protocol::build_chat_completion_endpoint(base_url)
 }
 
 /// 判断 provider 返回的错误是否值得换一种请求变体重试（比如换 max_tokens 字段、
 /// 去掉 response_format）。
 ///
 /// 这个判定避免和"鉴权失败 / 限流 / 网络故障"等无法用变体绕过的错误混淆。
+/// 分类关键字与 blocking 路径共享（`crate::protocol`）。
 pub fn supports_ask_provider_fallback(error_text: &str) -> bool {
-    let lowered = error_text.to_ascii_lowercase();
-    lowered.contains("max_completion_tokens")
-        || lowered.contains("max_tokens")
-        || lowered.contains("response_format")
-        || lowered.contains("json_object")
-        || lowered.contains("unknown field")
-        || lowered.contains("unrecognized field")
-        || lowered.contains("invalid request")
-        || lowered.contains("unsupported parameter")
-        || lowered.contains("unsupported field")
-        || lowered.contains("unexpected field")
+    protocol::supports_max_tokens_fallback(error_text)
 }
 
 /// `final_answer` 工具的 JSON Schema。
@@ -144,15 +139,12 @@ pub fn build_ask_chat_completion_body(
         "tools": tools,
         "tool_choice": "auto",
     });
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
-        if include_response_format {
-            obj.insert(
-                "response_format".to_string(),
-                json!({ "type": "json_object" }),
-            );
-        }
-    }
+    protocol::apply_compat_body_fields(
+        &mut body,
+        max_tokens_key,
+        max_output_tokens,
+        include_response_format,
+    );
     body
 }
 
@@ -171,21 +163,23 @@ pub fn build_final_answer_body(
         "messages": messages,
         "temperature": temperature,
     });
-    if let Some(obj) = body.as_object_mut() {
-        obj.insert(max_tokens_key.to_string(), json!(max_output_tokens));
-        if include_response_format {
-            obj.insert(
-                "response_format".to_string(),
-                json!({ "type": "json_object" }),
-            );
-        }
-    }
+    protocol::apply_compat_body_fields(
+        &mut body,
+        max_tokens_key,
+        max_output_tokens,
+        include_response_format,
+    );
     body
 }
 
 /// 对一次请求"轮询"四种 OpenAI 协议变体（max_completion_tokens / max_tokens 各两种
 /// 是否带 response_format），只在 provider 明确表示"字段不认识"时切换；其他错误
 /// 直接终止，避免无意义重试。
+///
+/// 注意：变体顺序与 `crate::protocol::call_openai_chat_once`（semantic/graph/wiki
+/// 路径）**有意相反**——ask 路径优先不带 `response_format`，因为 tool calling 与
+/// `json_object` response_format 的组合在部分 provider 上不兼容。此循环还使用
+/// reqwest 传输栈与 `DomainError` 错误分类，因此整体留在本地，不并入 protocol。
 fn send_with_compat_variants(
     endpoint: &str,
     api_key: &str,

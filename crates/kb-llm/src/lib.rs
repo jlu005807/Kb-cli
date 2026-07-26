@@ -4,6 +4,7 @@ pub mod config;
 pub mod http;
 mod openai_graph_wiki;
 pub mod openai_semantic;
+mod protocol;
 
 pub use agent_tools::{
     AgentGraphEdgeDetail, AgentGraphOverview, AgentGraphRelation, AgentRawChunkItem,
