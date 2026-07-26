@@ -2074,3 +2074,291 @@ fn env_list_text_is_human_readable_multiline() {
         "text output should not be rendered as raw JSON"
     );
 }
+
+#[test]
+fn mv_renames_alias_in_kb_md_and_pipeline_converges() {
+    let dir = unique_temp_dir("mv-kbmd");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./notes.md", "# Notes\n\nsome body text\n");
+    let (ok, _) = run_json(&["add", "./notes.md", "notes"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["mv", "notes", "docs"], &dir);
+    assert!(ok, "mv should succeed: {body}");
+    assert_eq!(body["data"]["old_alias"], "notes");
+    assert_eq!(body["data"]["new_alias"], "docs");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(
+        kb_md.contains("[docs](./notes.md)"),
+        "kb.md declaration should carry the new alias: {kb_md}"
+    );
+    assert!(
+        !kb_md.contains("[notes](./notes.md)"),
+        "old alias must be gone from kb.md: {kb_md}"
+    );
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+    let (ok, listed) = run_json(&["list"], &dir);
+    assert!(ok);
+    let items = listed["data"]["items"].as_array().expect("items array");
+    assert!(
+        items.iter().any(|x| x["alias"] == "docs"),
+        "list should surface the renamed alias after update: {listed}"
+    );
+    assert!(
+        !items.iter().any(|x| x["alias"] == "notes"),
+        "old alias must not survive update: {listed}"
+    );
+}
+
+#[test]
+fn mv_preserves_explicit_perm_and_comment_in_kb_md() {
+    let dir = unique_temp_dir("mv-perm-comment");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./secret.md", "classified\n");
+    let kb_md_path = dir.join("kb.md");
+    let mut kb_md = fs::read_to_string(&kb_md_path).expect("read kb.md");
+    kb_md.push_str("[secret](./secret.md):rw # keep this comment\n");
+    fs::write(&kb_md_path, kb_md).expect("write kb.md");
+
+    let (ok, body) = run_json(&["mv", "secret", "hidden"], &dir);
+    assert!(ok, "mv of kb.md-declared alias should succeed: {body}");
+
+    let kb_md = fs::read_to_string(&kb_md_path).expect("read kb.md");
+    assert!(
+        kb_md.contains("[hidden](./secret.md):rw # keep this comment"),
+        "explicit perm and comment must survive the rename: {kb_md}"
+    );
+}
+
+#[test]
+fn mv_missing_alias_returns_e5002_and_conflict_returns_e2003() {
+    let dir = unique_temp_dir("mv-errors");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./a.md", "A\n");
+    mk_file(&dir, "./b.md", "B\n");
+    let (ok, _) = run_json(&["add", "./a.md", "a"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["add", "./b.md", "b"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["mv", "ghost", "phantom"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E5002");
+
+    let (ok, body) = run_json(&["mv", "a", "b"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E2003");
+}
+
+#[test]
+fn path_updates_kb_md_declaration_and_supports_query() {
+    let dir = unique_temp_dir("path-kbmd");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./a.md", "old home\n");
+    mk_file(&dir, "./b.md", "new home\n");
+    let (ok, _) = run_json(&["add", "./a.md", "doc"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["path", "doc", "./b.md"], &dir);
+    assert!(ok, "path update should succeed: {body}");
+    assert_eq!(body["data"]["old_path"], "./a.md");
+    assert_eq!(body["data"]["new_path"], "./b.md");
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(
+        kb_md.contains("[doc](./b.md)"),
+        "kb.md declaration should point at the new path: {kb_md}"
+    );
+    assert!(!kb_md.contains("[doc](./a.md)"));
+
+    let (ok, body) = run_json(&["path", "doc"], &dir);
+    assert!(ok);
+    assert_eq!(body["data"]["path"], "./b.md");
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+    let (ok, listed) = run_json(&["list"], &dir);
+    assert!(ok);
+    let items = listed["data"]["items"].as_array().expect("items array");
+    assert!(
+        items.iter().any(|x| x["path"] == "./b.md"),
+        "pipeline should converge to the new path after update: {listed}"
+    );
+}
+
+#[test]
+fn path_to_missing_target_returns_e5001() {
+    let dir = unique_temp_dir("path-missing-target");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./a.md", "A\n");
+    let (ok, _) = run_json(&["add", "./a.md", "doc"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["path", "doc", "./nowhere.md"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E5001");
+}
+
+#[test]
+fn path_rejects_unrepresentable_characters_with_e2010() {
+    let dir = unique_temp_dir("path-unrepresentable");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./a.md", "A\n");
+    mk_file(&dir, "./b (draft).md", "B\n");
+    let (ok, _) = run_json(&["add", "./a.md", "doc"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["path", "doc", "./b (draft).md"], &dir);
+    assert!(!ok, "path containing ')' must be rejected: {body}");
+    assert_eq!(body["error"]["code"], "E2010");
+
+    // kb.md 必须保持可解析
+    let (ok, _) = run_json(&["check"], &dir);
+    assert!(ok, "kb.md must remain parseable after rejected path update");
+}
+
+#[test]
+fn add_rejects_unrepresentable_path_with_e2010() {
+    let dir = unique_temp_dir("add-unrepresentable");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./report (final).md", "R\n");
+
+    let (ok, body) = run_json(&["add", "./report (final).md"], &dir);
+    assert!(!ok, "add of a ')' path must be rejected: {body}");
+    assert_eq!(body["error"]["code"], "E2010");
+}
+
+#[test]
+fn path_refuses_to_rewrite_pattern_declarations_with_e2011() {
+    let dir = unique_temp_dir("path-pattern-guard");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/one.md", "1\n");
+    mk_file(&dir, "./docs/two.md", "2\n");
+    mk_file(&dir, "./single.md", "S\n");
+    let kb_md_path = dir.join("kb.md");
+    let mut kb_md = fs::read_to_string(&kb_md_path).expect("read kb.md");
+    kb_md.push_str("[docs](./docs/**)\n");
+    fs::write(&kb_md_path, kb_md).expect("write kb.md");
+
+    let (ok, body) = run_json(&["path", "docs", "./single.md"], &dir);
+    assert!(!ok, "glob declaration must not be rewritten: {body}");
+    assert_eq!(body["error"]["code"], "E2011");
+
+    let kb_md = fs::read_to_string(&kb_md_path).expect("read kb.md");
+    assert!(kb_md.contains("[docs](./docs/**)"), "pattern must be intact");
+}
+
+#[test]
+fn path_to_occupied_path_returns_e2006() {
+    let dir = unique_temp_dir("path-occupied");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./x.md", "X\n");
+    mk_file(&dir, "./y.md", "Y\n");
+    let (ok, _) = run_json(&["add", "./x.md", "a"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["add", "./y.md", "b"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["path", "b", "./x.md"], &dir);
+    assert!(!ok, "pointing b at a's path must fail: {body}");
+    assert_eq!(body["error"]["code"], "E2006");
+}
+
+#[test]
+fn mv_by_path_target_syncs_workset_and_reports_real_alias() {
+    let dir = unique_temp_dir("mv-by-path");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./a.md", "A\n");
+    let (ok, _) = run_json(&["add", "./a.md", "doc"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["mv", "./a.md", "renamed"], &dir);
+    assert!(ok, "mv by path target should succeed: {body}");
+    assert_eq!(
+        body["data"]["old_alias"], "doc",
+        "output must report the real old alias, not the path target"
+    );
+
+    // 工作集必须同步：旧别名不可再被幻影改名
+    let (ok, body) = run_json(&["mv", "doc", "other"], &dir);
+    assert!(!ok, "stale workset alias must not be phantom-renamed: {body}");
+    assert_eq!(body["error"]["code"], "E5002");
+}
+
+#[test]
+fn mv_alias_missing_from_kb_md_is_not_silently_renamed() {
+    let dir = unique_temp_dir("mv-stale-workset");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./a.md", "A\n");
+    let (ok, _) = run_json(&["add", "./a.md", "doc"], &dir);
+    assert!(ok);
+
+    // 手工把声明从 kb.md 删除，模拟 stale 工作集
+    let kb_md_path = dir.join("kb.md");
+    let kb_md = fs::read_to_string(&kb_md_path).expect("read kb.md");
+    let filtered: String = kb_md
+        .lines()
+        .filter(|line| !line.contains("[doc]"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    fs::write(&kb_md_path, filtered).expect("write kb.md");
+
+    let (ok, body) = run_json(&["mv", "doc", "doc2"], &dir);
+    assert!(!ok, "declaration truth must win over stale workset: {body}");
+    assert_eq!(body["error"]["code"], "E5002");
+}
+
+#[test]
+fn add_copy_conflicting_raw_target_returns_e2006() {
+    let dir = unique_temp_dir("add-copy-conflict");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./x.md", "first content\n");
+    mk_file(&dir, "./sub/x.md", "second content\n");
+    let (ok, _) = run_json(&["add", "./x.md", "first", "--mode", "copy"], &dir);
+    assert!(ok);
+
+    let (ok, body) = run_json(&["add", "./sub/x.md", "second", "--mode", "copy"], &dir);
+    assert!(!ok, "copy landing on an already-declared raw path must fail: {body}");
+    assert_eq!(body["error"]["code"], "E2006");
+
+    let raw = fs::read_to_string(dir.join(".kb/raw/x.md")).expect("read raw copy");
+    assert_eq!(raw, "first content\n", "first copy must not be overwritten");
+}
+
+#[test]
+fn add_detects_conflicts_against_manual_kb_md_declarations() {
+    let dir = unique_temp_dir("add-kbmd-conflicts");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./x.md", "X\n");
+    mk_file(&dir, "./y.md", "Y\n");
+
+    // 手工在 kb.md 声明一条引用（文档宣称的主工作流），不经过 kb add
+    let kb_md_path = dir.join("kb.md");
+    let mut kb_md = fs::read_to_string(&kb_md_path).expect("read kb.md");
+    kb_md.push_str("[dup](./x.md)\n");
+    fs::write(&kb_md_path, kb_md).expect("write kb.md");
+
+    let (ok, body) = run_json(&["add", "./y.md", "dup"], &dir);
+    assert!(!ok, "alias declared manually in kb.md must conflict: {body}");
+    assert_eq!(body["error"]["code"], "E2003");
+
+    let (ok, body) = run_json(&["add", "./x.md", "other"], &dir);
+    assert!(!ok, "path declared manually in kb.md must conflict: {body}");
+    assert_eq!(body["error"]["code"], "E2006");
+}

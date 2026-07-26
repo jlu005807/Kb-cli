@@ -19,6 +19,8 @@ pub enum CoreErrorKind {
     PathMissing,
     PathAlreadyRegistered,
     PathForbidden,
+    PathUnrepresentable,
+    PatternNotRewritable,
     InvalidPermission,
     CategoryNotFound,
     NoRelevantContext,
@@ -134,6 +136,22 @@ pub fn map_core_error(kind: CoreErrorKind, details: Value) -> CliError {
             suggestion: Some(
                 "Use normal content paths or ./.kb/raw/*, avoid kb.md and .kb config files",
             ),
+            details,
+            exit_code: 2,
+        },
+        CoreErrorKind::PathUnrepresentable => CliError {
+            code: "E2010",
+            message: "Path contains characters that cannot be declared in kb.md",
+            suggestion: Some(
+                "Rename the target to avoid ')', '#', or control characters in the path",
+            ),
+            details,
+            exit_code: 2,
+        },
+        CoreErrorKind::PatternNotRewritable => CliError {
+            code: "E2011",
+            message: "Declaration is a directory or glob pattern and cannot be rewritten via CLI",
+            suggestion: Some("Edit the pattern declaration in kb.md manually"),
             details,
             exit_code: 2,
         },

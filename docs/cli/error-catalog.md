@@ -78,13 +78,15 @@ KB-CLI 按 `--output` 模式输出错误：
 | `E2002` | `2` | `Invalid glob pattern` | glob 过滤模式非法 | `Verify the filter string is a valid glob pattern` | `list` |
 | `E2003` | `2` | `Alias conflict` | 别名冲突 | `Choose another alias or cancel` | `add`, `mv` |
 | `E2004` | `2` | `Invalid permission string` | 权限串非法 | `Use a valid combination of r, w, x, d, c, or -` | `chmod` |
-| `E2006` | `2` | `Path already registered` | 路径已被登记 | `Use a different path or remove existing registration first` | `add` |
+| `E2006` | `2` | `Path already registered` | 路径已被登记 | `Use a different path or remove existing registration first` | `add`, `path` |
 | `E2007` | `2` | `Category not found` | 分类不存在 | `Run 'kb list --tree' to view available categories and try again` | `add --category`, `check --category` |
 | `E2008` | `2` | `Configuration file not found` | 指定配置文件不存在 | `Pass a valid --config path or remove the flag` | 使用 `--config` 的任意命令 |
 | `E2009` | `2` | `Path is protected and cannot be indexed` | 受保护路径不可索引 | `Use normal content paths or ./.kb/raw/*, avoid kb.md and .kb config files` | `add` |
+| `E2010` | `2` | `Path contains characters that cannot be declared in kb.md` | 路径含 `)`、`#` 或控制字符，无法安全写入 kb.md 引用行 | `Rename the target to avoid ')', '#', or control characters in the path` | `add`, `path` |
+| `E2011` | `2` | `Declaration is a directory or glob pattern and cannot be rewritten via CLI` | 目录/glob 声明展开为多条记录，单行改写会静默注销全部展开条目 | `Edit the pattern declaration in kb.md manually` | `path` |
 | `E3001` | `3` | `Knowledge base is not initialized` | 未初始化知识库 | `Run \`kb init\` in current directory` | 除 `init/env/completion` 外大多数命令 |
 | `E3002` | `3` | `Knowledge base already initialized` | 知识库已初始化 | `Use --force to overwrite or run in a different directory` | `init` |
-| `E3003` | `3` | `Invalid kb.md format` | `kb.md` 格式非法 | `Fix kb.md syntax and run kb check again` | `check`, `update` |
+| `E3003` | `3` | `Invalid kb.md format` | `kb.md` 格式非法 | `Fix kb.md syntax and run kb check again` | `check`, `update`, `mv`, `path`, `rm`, `chmod` |
 | `E5001` | `5` | `Path does not exist` | 路径不存在 | `Verify the file or directory exists at the provided path` | `add`, `path` |
 | `E5002` | `5` | `Alias does not exist` | 别名不存在 | `Run 'kb list' to see available aliases` | `mv`, `rm`, `path`, `chmod` |
 | `E5003` | `5` | `No relevant context found` | 没有可用上下文 | `Try a different question or add more files to the knowledge base` | `ask` |

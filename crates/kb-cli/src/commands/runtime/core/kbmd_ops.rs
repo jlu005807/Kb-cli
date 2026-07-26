@@ -1,7 +1,3 @@
-fn parse_categories(kb_md: &Path) -> Result<Vec<String>, CliError> {
-    parse_kb_document_file(kb_md).map(|doc| doc.categories)
-}
-
 fn append_to_kb_md(
     kb_md: &Path,
     category: &str,
@@ -116,6 +112,103 @@ fn resolve_rm_target(kb_doc: &crate::kb_md::KbDocument, target: &str) -> Option<
             None
         }
     })
+}
+
+/// kb.md 引用行无法安全承载的路径：')' 会截断 markdown 引用语法，
+/// '#' 会被 chmod 的行内注释提取截断，控制字符会破坏行结构。
+fn path_declaration_unrepresentable(path: &str) -> bool {
+    path.contains(')') || path.contains('#') || path.chars().any(|ch| ch.is_control())
+}
+
+/// 在保留缩进、显式权限后缀与行内注释的前提下，替换引用行的 alias/path 部分。
+/// 支持 markdown 形式 `[alias](path):perm # comment` 与 legacy 形式 `- alias|path`；
+/// 无法识别的行返回 None，由调用方决定回退策略。
+fn rewrite_reference_line(
+    line: &str,
+    new_alias: Option<&str>,
+    new_path: Option<&str>,
+) -> Option<String> {
+    let leading_ws: String = line.chars().take_while(|ch| ch.is_whitespace()).collect();
+    let trimmed = &line[leading_ws.len()..];
+
+    if trimmed.starts_with('[') {
+        let alias_end = trimmed.find(']')?;
+        let after_alias = &trimmed[alias_end + 1..];
+        let open_offset = after_alias.find('(')?;
+        let path_end = after_alias[open_offset + 1..].find(')')? + open_offset + 1;
+        let alias_part = trimmed[1..alias_end].trim();
+        let path_part = after_alias[open_offset + 1..path_end].trim();
+        let tail = &after_alias[path_end + 1..];
+        let alias_out = new_alias.unwrap_or(alias_part);
+        let path_out = new_path.unwrap_or(path_part);
+        return Some(format!("{leading_ws}[{alias_out}]({path_out}){tail}"));
+    }
+
+    if let Some(body) = trimmed.strip_prefix("- ") {
+        let (alias_part, path_part) = body.split_once('|')?;
+        let alias_out = new_alias.unwrap_or_else(|| alias_part.trim());
+        let path_out = new_path.unwrap_or_else(|| path_part.trim());
+        return Some(format!("{leading_ws}- {alias_out}|{path_out}"));
+    }
+
+    None
+}
+
+/// 把 kb.md 中 target 对应引用行的 alias 改名。返回 Some((旧 alias, path)) 表示已改写；
+/// target 不在 kb.md 或该行无法安全改写时返回 None（不落盘）。
+fn apply_mv_to_kb_md(
+    kb_md: &Path,
+    kb_doc: &crate::kb_md::KbDocument,
+    target: &str,
+    new_alias: &str,
+) -> Result<Option<(String, String)>, std::io::Error> {
+    let Some(reference) = resolve_rm_target(kb_doc, target) else {
+        return Ok(None);
+    };
+    let raw = fs::read_to_string(kb_md)?;
+    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let idx = reference.line.saturating_sub(1);
+    if idx >= lines.len() {
+        return Ok(None);
+    }
+    let Some(new_line) = rewrite_reference_line(&lines[idx], Some(new_alias), None) else {
+        return Ok(None);
+    };
+    lines[idx] = new_line;
+    let mut out = lines.join("\n");
+    if raw.ends_with('\n') {
+        out.push('\n');
+    }
+    fs::write(kb_md, out)?;
+    Ok(Some(reference.identity()))
+}
+
+/// 把 kb.md 中 target 对应引用行的 path 替换为 new_path。返回 Some((alias, 旧 path))。
+fn apply_path_to_kb_md(
+    kb_md: &Path,
+    kb_doc: &crate::kb_md::KbDocument,
+    target: &str,
+    new_path: &str,
+) -> Result<Option<(String, String)>, std::io::Error> {
+    let Some(reference) = resolve_rm_target(kb_doc, target) else {
+        return Ok(None);
+    };
+    let raw = fs::read_to_string(kb_md)?;
+    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let idx = reference.line.saturating_sub(1);
+    if idx >= lines.len() {
+        return Ok(None);
+    }
+    let Some(new_line) = rewrite_reference_line(&lines[idx], None, Some(new_path)) else {
+        return Ok(None);
+    };
+    lines[idx] = new_line;
+    let mut out = lines.join("\n");
+    if raw.ends_with('\n') {
+        out.push('\n');
+    }
+    fs::write(kb_md, out)?;
+    Ok(Some(reference.identity()))
 }
 
 fn apply_chmod_to_kb_md(
@@ -344,5 +437,44 @@ fn metadata_summary(abs: &Path) -> (u64, String) {
             (size, mtime)
         }
         Err(_) => (0, "0".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod kbmd_ops_tests {
+    use super::rewrite_reference_line;
+
+    #[test]
+    fn rewrite_alias_preserves_perm_suffix_and_comment() {
+        let line = "  [old](./a.md):rw # keep me";
+        let out = rewrite_reference_line(line, Some("new"), None).expect("rewrite");
+        assert_eq!(out, "  [new](./a.md):rw # keep me");
+    }
+
+    #[test]
+    fn rewrite_path_preserves_alias_and_tail() {
+        let line = "[doc](./a.md):r";
+        let out = rewrite_reference_line(line, None, Some("./b.md")).expect("rewrite");
+        assert_eq!(out, "[doc](./b.md):r");
+    }
+
+    #[test]
+    fn rewrite_gives_alias_to_path_only_reference() {
+        let line = "[](./.kb/raw/x.md)";
+        let out = rewrite_reference_line(line, Some("raw-x"), None).expect("rewrite");
+        assert_eq!(out, "[raw-x](./.kb/raw/x.md)");
+    }
+
+    #[test]
+    fn rewrite_supports_legacy_pipe_form() {
+        let line = "- old|./a.md";
+        let out = rewrite_reference_line(line, Some("new"), Some("./b.md")).expect("rewrite");
+        assert_eq!(out, "- new|./b.md");
+    }
+
+    #[test]
+    fn rewrite_rejects_non_reference_lines() {
+        assert!(rewrite_reference_line("# heading", Some("x"), None).is_none());
+        assert!(rewrite_reference_line("plain text", None, Some("./b.md")).is_none());
     }
 }

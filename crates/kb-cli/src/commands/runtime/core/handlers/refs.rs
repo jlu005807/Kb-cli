@@ -18,6 +18,13 @@ pub(crate) fn run_add(
         ));
     }
 
+    if path_declaration_unrepresentable(&normalized_path) {
+        return Err(map_core_error(
+            CoreErrorKind::PathUnrepresentable,
+            json!({"path": normalized_path}),
+        ));
+    }
+
     let source_exists = src_path.exists();
 
     let ignore_rules = load_ignore_rules(&cwd);
@@ -37,8 +44,24 @@ pub(crate) fn run_add(
     }
 
     let mut state = load_state(&cwd)?;
-    let categories =
-        parse_categories(&cwd.join("kb.md")).unwrap_or_else(|_| vec!["raw".to_string()]);
+    // 冲突检测以声明真值 kb.md 为准（手工维护的引用同样参与），refs.json 工作集作补充。
+    let kb_doc = parse_kb_document_file(&cwd.join("kb.md")).ok();
+    let categories = kb_doc
+        .as_ref()
+        .map(|doc| doc.categories.clone())
+        .unwrap_or_else(|| vec!["raw".to_string()]);
+    let mut existing_aliases: Vec<String> = state.refs.iter().map(|r| r.alias.clone()).collect();
+    let mut existing_paths: Vec<String> =
+        state.refs.iter().map(|r| normalize_path(&r.path)).collect();
+    if let Some(doc) = &kb_doc {
+        for item in &doc.references {
+            if let Some(alias_value) = &item.alias {
+                existing_aliases.push(alias_value.clone());
+            }
+            existing_paths.push(normalize_path(&item.path));
+        }
+    }
+    let declared_paths: HashSet<String> = existing_paths.iter().cloned().collect();
     let plan = plan_add(AddPlanInput {
         normalized_path: normalized_path.clone(),
         alias,
@@ -49,8 +72,8 @@ pub(crate) fn run_add(
         },
         requested_category: category,
         available_categories: categories,
-        existing_aliases: state.refs.iter().map(|r| r.alias.clone()).collect(),
-        existing_paths: state.refs.iter().map(|r| r.path.clone()).collect(),
+        existing_aliases,
+        existing_paths,
         ignored: false,
         source_exists,
     })
@@ -60,11 +83,19 @@ pub(crate) fn run_add(
     let chosen_category = plan.category;
 
     let final_path = if matches!(mode, AddMode::Copy) {
-    let file_name = src_path
+        let file_name = src_path
             .file_name()
             .and_then(|x| x.to_str())
             .unwrap_or("copied");
         let target_rel = format!("{RAW_PREFIX}{file_name}");
+        // copy 模式的落点也参与冲突检测：同名文件已被声明时拒绝，
+        // 避免静默覆盖 ./.kb/raw/ 内容并留下重复声明。
+        if declared_paths.contains(&normalize_path(&target_rel)) {
+            return Err(map_core_error(
+                CoreErrorKind::PathAlreadyRegistered,
+                json!({"path": target_rel}),
+            ));
+        }
         let target_abs = cwd.join(target_rel.trim_start_matches("./"));
         if src_path.is_file() {
             fs::copy(&src_path, &target_abs).map_err(|_| write_config_error())?;
@@ -121,14 +152,6 @@ fn map_add_plan_error(err: AddPlanError) -> CliError {
     }
 }
 
-fn map_mv_plan_error(err: MovePlanError) -> CliError {
-    match err {
-        MovePlanError::InvalidAlias { alias } => alias_invalid_error(alias),
-        MovePlanError::AliasConflict { alias } => alias_conflict_error(alias),
-        MovePlanError::NotFoundAlias { alias } => alias_not_found_error(alias),
-    }
-}
-
 fn map_path_plan_error(err: PathPlanError) -> CliError {
     match err {
         PathPlanError::NotFoundAlias { alias } => alias_not_found_error(alias),
@@ -146,11 +169,47 @@ fn map_category_filter_error(err: CategoryFilterError) -> CliError {
 
 pub(crate) fn run_mv(alias: String, new_alias: String) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
+    if Alias::parse(&new_alias).is_err() {
+        return Err(alias_invalid_error(new_alias));
+    }
+
+    let kb_md = cwd.join("kb.md");
+    let kb_doc = parse_kb_document_file(&kb_md)?;
     let store = FsStateStore::new(cwd);
     let state = load_state_snapshot(&store)?;
-    let next = apply_mv(&state, &alias, &new_alias).map_err(map_mv_plan_error)?;
-    save_state_snapshot(&store, &next)?;
-    let data = json!({"old_alias": alias, "new_alias": new_alias});
+
+    // 冲突命名空间 = kb.md 显式 alias ∪ 无别名引用的 path 派生 id ∪ 工作集 alias。
+    let conflict_in_kb_md = kb_doc.references.iter().any(|item| match &item.alias {
+        Some(existing) => existing == &new_alias,
+        None => normalize_path(&item.path) == new_alias,
+    });
+    let conflict_in_state = state.refs.iter().any(|r| r.alias == new_alias);
+    if conflict_in_kb_md || conflict_in_state {
+        return Err(alias_conflict_error(new_alias));
+    }
+
+    // 声明真值必须命中：kb.md 无该目标时报 E5002，不做工作集独走的幻影改名。
+    let Some((old_alias, target_path)) = apply_mv_to_kb_md(&kb_md, &kb_doc, &alias, &new_alias)
+        .map_err(|_| write_config_error())?
+    else {
+        return Err(alias_not_found_error(alias));
+    };
+
+    // refs.json 工作集 best-effort 同步：按解析出的旧 alias 或 path 匹配，
+    // kb.md 已生效，同步失败不再冒硬错误（与 chmod 策略一致）。
+    let mut next = state.clone();
+    let mut touched = false;
+    for item in next.refs.iter_mut() {
+        if item.alias == old_alias || normalize_path(&item.path) == target_path {
+            item.alias = new_alias.clone();
+            touched = true;
+        }
+    }
+    if touched {
+        let _ = save_state_snapshot(&store, &next);
+    }
+
+    let data = json!({"old_alias": old_alias, "new_alias": new_alias});
     let mut text = String::new();
     text.push_str("Alias renamed\n");
     let _ = writeln!(
@@ -241,6 +300,8 @@ pub(crate) fn run_rm(alias: String, force: bool) -> Result<Value, CliError> {
 
 pub(crate) fn run_path(alias: String, new_path: Option<String>) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
+    let kb_md = cwd.join("kb.md");
+    let kb_doc = parse_kb_document_file(&kb_md)?;
     let store = FsStateStore::new(cwd.clone());
     let state = load_state_snapshot(&store)?;
     if let Some(new_path_value) = new_path {
@@ -251,13 +312,62 @@ pub(crate) fn run_path(alias: String, new_path: Option<String>) -> Result<Value,
                 json!({"path": new_path_value}),
             ));
         }
-        let plan =
-            apply_path(&state, &alias, Some(normalized.clone())).map_err(map_path_plan_error)?;
-        if let Some(next) = plan.state {
-            save_state_snapshot(&store, &next)?;
+        if path_declaration_unrepresentable(&normalized) {
+            return Err(map_core_error(
+                CoreErrorKind::PathUnrepresentable,
+                json!({"path": normalized}),
+            ));
         }
-        let data =
-            json!({"alias": alias, "old_path": plan.old_path.unwrap_or_default(), "new_path": normalized});
+
+        // 声明真值必须命中：kb.md 无该目标时报 E5002。
+        let Some(target_ref) = resolve_rm_target(&kb_doc, &alias) else {
+            return Err(alias_not_found_error(alias));
+        };
+        // 目录/glob 声明会展开成多条记录，单行改写等于静默注销全部展开条目。
+        if is_pattern_reference(&target_ref.path) {
+            return Err(map_core_error(
+                CoreErrorKind::PatternNotRewritable,
+                json!({"alias": target_ref.alias, "pattern": target_ref.path}),
+            ));
+        }
+        // 与 add 一致的路径占用检查：新路径已被其他声明持有时拒绝，
+        // 避免 update 时 by_path 收敛静默丢掉其中一个别名。
+        let occupied_in_kb_md = kb_doc
+            .references
+            .iter()
+            .any(|item| item.line != target_ref.line && normalize_path(&item.path) == normalized);
+        let occupied_in_state = state
+            .refs
+            .iter()
+            .any(|r| r.alias != target_ref.alias && normalize_path(&r.path) == normalized);
+        if occupied_in_kb_md || occupied_in_state {
+            return Err(map_core_error(
+                CoreErrorKind::PathAlreadyRegistered,
+                json!({"path": normalized}),
+            ));
+        }
+
+        let Some((resolved_alias, old_path)) =
+            apply_path_to_kb_md(&kb_md, &kb_doc, &alias, &normalized)
+                .map_err(|_| write_config_error())?
+        else {
+            return Err(alias_not_found_error(alias));
+        };
+
+        // refs.json 工作集 best-effort 同步：按解析出的 alias 或旧 path 匹配。
+        let mut next = state.clone();
+        let mut touched = false;
+        for item in next.refs.iter_mut() {
+            if item.alias == resolved_alias || normalize_path(&item.path) == old_path {
+                item.path = normalized.clone();
+                touched = true;
+            }
+        }
+        if touched {
+            let _ = save_state_snapshot(&store, &next);
+        }
+
+        let data = json!({"alias": alias, "old_path": old_path, "new_path": normalized});
         let mut text = String::new();
         text.push_str("Alias path updated\n");
         let _ = writeln!(text, "alias: {}", data["alias"].as_str().unwrap_or_default());
@@ -273,8 +383,15 @@ pub(crate) fn run_path(alias: String, new_path: Option<String>) -> Result<Value,
         );
         Ok(with_text(data, text))
     } else {
-        let plan = apply_path(&state, &alias, None).map_err(map_path_plan_error)?;
-        let data = json!({"alias": alias, "path": plan.path});
+        // 查询模式：kb.md 声明优先，refs.json 工作集兜底。
+        let path_value = if let Some(reference) = resolve_rm_target(&kb_doc, &alias) {
+            reference.identity().1
+        } else {
+            apply_path(&state, &alias, None)
+                .map_err(map_path_plan_error)?
+                .path
+        };
+        let data = json!({"alias": alias, "path": path_value});
         let mut text = String::new();
         text.push_str("Alias path\n");
         let _ = writeln!(text, "alias: {}", data["alias"].as_str().unwrap_or_default());
@@ -298,6 +415,24 @@ pub(crate) fn run_chmod(alias: String, perms: String) -> Result<Value, CliError>
         .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
     if !changed {
         return Err(alias_not_found_error(alias));
+    }
+
+    // refs.json 工作集的 perms 同步为 best-effort：kb.md 已是权限真值。
+    // 按解析出的引用身份（alias 或 path）匹配，覆盖以路径/id 寻址的情形；
+    // 分类标题 chmod 解析不到单条引用，跳过同步。
+    if let Some(target_ref) = resolve_rm_target(&kb_doc, &alias) {
+        if let Ok(mut state) = load_state(&cwd) {
+            let mut touched = false;
+            for item in state.refs.iter_mut() {
+                if item.alias == target_ref.alias || normalize_path(&item.path) == target_ref.path {
+                    item.perms = perms.clone();
+                    touched = true;
+                }
+            }
+            if touched {
+                let _ = save_state(&cwd, &state);
+            }
+        }
     }
 
     let data = json!({"alias": alias, "permissions": perms});

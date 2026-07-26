@@ -1,11 +1,11 @@
 use clap::CommandFactory;
 use clap_complete::generate;
-use kb_core::domain::{CheckResult, IndexConfig, IndexEngine, IndexRecord, IndexSnapshot, Permission};
+use kb_core::domain::{Alias, CheckResult, IndexConfig, IndexEngine, IndexRecord, IndexSnapshot, Permission};
 use kb_core::usecases::{
-    apply_mv, apply_path, compile_l2, compile_l3, compile_l4, compile_l5, normalize_top,
+    apply_path, compile_l2, compile_l3, compile_l4, compile_l5, normalize_top,
     plan_add, plan_init, plan_list_output,
     validate_category_filter, AddModePlan, AddPlanError, AddPlanInput, CategoryFilterError,
-    InitPlanError, ListRow, MovePlanError, PathPlanError,
+    InitPlanError, ListRow, PathPlanError,
 };
 use kb_core::{AnswerEngine, Retriever, SemanticExtractor, StateStore};
 use serde_json::{json, Value};
