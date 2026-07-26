@@ -111,6 +111,9 @@ impl KnowledgeEntry {
     /// 业务调用者继续填基础字段（record_id / path / status / chunks / ...），
     /// 不必关心新加的记忆字段。需要写入 agent / user 来源时改用
     /// [`Self::with_source`]。
+    // 9 个参数是历史签名，测试与 compile_l2 大量依赖；引入 builder 属于
+    // 破坏性重构，收益不抵成本，这里定点豁免 clippy::too_many_arguments。
+    #[allow(clippy::too_many_arguments)]
     pub fn from_file(
         record_id: String,
         path: String,

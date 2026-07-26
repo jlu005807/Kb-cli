@@ -3,7 +3,7 @@
 /// 错误映射回 io::Error 以保持既有函数签名不变。
 fn write_kb_md_atomic(kb_md: &Path, content: &str) -> Result<(), std::io::Error> {
     kb_storage_fs::atomic_write_bytes(kb_md, content.as_bytes())
-        .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))
+        .map_err(|err| std::io::Error::other(err.to_string()))
 }
 
 fn append_to_kb_md(
@@ -81,7 +81,7 @@ fn apply_rm_to_kb_md(
     if raw.ends_with('\n') {
         out.push('\n');
     }
-    write_kb_md_atomic(&kb_md, &out)?;
+    write_kb_md_atomic(kb_md, &out)?;
 
     Ok(Some(reference.identity()))
 }
@@ -187,7 +187,7 @@ fn apply_mv_to_kb_md(
     if raw.ends_with('\n') {
         out.push('\n');
     }
-    write_kb_md_atomic(&kb_md, &out)?;
+    write_kb_md_atomic(kb_md, &out)?;
     Ok(Some(reference.identity()))
 }
 
@@ -215,7 +215,7 @@ fn apply_path_to_kb_md(
     if raw.ends_with('\n') {
         out.push('\n');
     }
-    write_kb_md_atomic(&kb_md, &out)?;
+    write_kb_md_atomic(kb_md, &out)?;
     Ok(Some(reference.identity()))
 }
 
@@ -260,7 +260,7 @@ fn apply_chmod_to_kb_md(
             if raw.ends_with('\n') {
                 out.push('\n');
             }
-            write_kb_md_atomic(&kb_md, &out)?;
+            write_kb_md_atomic(kb_md, &out)?;
             return Ok(true);
         }
     }
@@ -273,7 +273,7 @@ fn apply_chmod_to_kb_md(
                 if raw.ends_with('\n') {
                     out.push('\n');
                 }
-                write_kb_md_atomic(&kb_md, &out)?;
+                write_kb_md_atomic(kb_md, &out)?;
                 return Ok(true);
             }
         }

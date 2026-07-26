@@ -79,6 +79,10 @@ fn merge_retrieved_contexts(
     }
 }
 
+// 10 个参数：answer 摘要要拼接的独立来源本来就多（engine/provider/trace/
+// citations/...）。与 agent.rs::bootstrap_overview_context 同理，等 ask.rs
+// 整体拆分时再分组，这里定点豁免。
+#[allow(clippy::too_many_arguments)]
 fn format_answer_text(
     engine_status: &str,
     provider: Option<&str>,

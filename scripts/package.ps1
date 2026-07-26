@@ -33,7 +33,9 @@ function Get-WorkspaceVersion {
     if ($WorkspaceToml -match '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
         return $Matches[1]
     }
-    return "0.1.4"
+    # No silent fallback: packaging an artifact with a wrong/stale version is
+    # worse than a failed build.
+    throw "Failed to parse version from [workspace.package] in the workspace Cargo.toml. Refusing to package with an unknown version."
 }
 
 function Get-ArchLabel {

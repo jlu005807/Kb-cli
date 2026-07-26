@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::AgentId;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum KnowledgeSource {
     /// 文件编译产物，没有 agent 归属。
+    #[default]
     FromFile,
     /// agent 运行时写入。携带 agent_id，便于审计与过滤。
     FromAgent { agent_id: AgentId },
@@ -54,12 +55,6 @@ impl KnowledgeSource {
             Self::FromFile => 2,
             Self::FromAgent { .. } => 1,
         }
-    }
-}
-
-impl Default for KnowledgeSource {
-    fn default() -> Self {
-        Self::FromFile
     }
 }
 

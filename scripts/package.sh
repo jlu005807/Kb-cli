@@ -142,7 +142,11 @@ fi
 
 VERSION="$(get_workspace_version)"
 if [[ -z "$VERSION" ]]; then
-  VERSION="0.1.4"
+  # No silent fallback: packaging an artifact with a wrong/stale version is
+  # worse than a failed build.
+  printf '[package.sh] Failed to parse version from [workspace.package] in %s\n' "$WORKSPACE_TOML" >&2
+  printf '[package.sh] Refusing to package with an unknown version.\n' >&2
+  exit 1
 fi
 ARCH_LABEL="$(get_arch_label "$TARGET")"
 

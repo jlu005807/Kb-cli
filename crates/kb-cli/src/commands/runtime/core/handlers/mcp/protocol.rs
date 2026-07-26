@@ -79,9 +79,7 @@ fn handle_mcp_line(line: &str) -> Option<Value> {
     let params = request.get("params").cloned().unwrap_or(json!({}));
 
     // notification（无 id）：消费但不回复。
-    let Some(id) = id else {
-        return None;
-    };
+    let id = id?;
 
     match method {
         "initialize" => Some(jsonrpc_result(id, mcp_initialize_result())),
