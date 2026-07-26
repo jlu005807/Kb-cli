@@ -30,7 +30,7 @@
 # Linux: kb-cli-<version>-linux-x86_64.tar.gz
 
 # 解压并安装
-./install.sh  # Linux/macOS
+./install.sh  # Linux
 .\install.cmd # Windows
 
 # 验证

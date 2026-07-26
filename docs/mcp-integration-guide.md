@@ -102,8 +102,8 @@ MCP server 暴露以下 8 个 tools：
 | `verify_citation` | 验证引用 | `quote`, `chunk_id` |
 | `list_episodes` | 列出时间线 | `agent_id`, `limit` |
 | `consolidate` | 固化记忆 | `dry_run` |
-| `read_summary` | 读取摘要 | `record_id` |
-| `read_neighbors` | 读取图谱邻接 | `node_id` |
+| `read_summary` | 读取摘要 | `record_id_or_path` |
+| `read_neighbors` | 读取图谱邻接 | `record_id` |
 
 ### 工具详细说明
 
@@ -258,7 +258,7 @@ MCP server 暴露以下 8 个 tools：
 **输入：**
 ```json
 {
-  "record_id": "test-doc.md"
+  "record_id_or_path": "test-doc.md"
 }
 ```
 
@@ -271,25 +271,35 @@ MCP server 暴露以下 8 个 tools：
 }
 ```
 
+未命中时返回 `{"found": false, "target": "..."}`。
+
+> **sqlite 后端注意**：`read_summary` / `read_neighbors` / `verify_citation`
+> 直接读取 `.kb/knowledge.json` 等 fs 文件布局。当 `storage.backend` 为
+> `sqlite` 时（L2/L4/L5 落在 `store.sqlite3`），这些工具可能报告数据缺失，
+> 响应中会附带 `warning` 字段说明原因；`recall`/`remember`/`correct`/
+> `list_episodes`/`consolidate` 不受影响。
+
 #### `read_neighbors`
 
-读取知识图谱中某个节点的邻接关系（L4 层）。
+读取知识图谱中某条记录的邻接关系（L4 层）。
 
 **输入：**
 ```json
 {
-  "node_id": "concept:hexagonal-architecture"
+  "record_id": "docs/architecture.md"
 }
 ```
 
 **输出：**
 ```json
 {
+  "record_id": "docs/architecture.md",
   "neighbors": [
     {
-      "node_id": "file:kb-core",
-      "edge_type": "implements",
-      "evidence": "..."
+      "edge_id": "file:docs/architecture.md->file:docs/design.md",
+      "edge_type": "file_related_to_file",
+      "related_node_id": "file:docs/design.md",
+      "reason": "..."
     }
   ]
 }

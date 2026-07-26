@@ -136,9 +136,20 @@ cargo fmt --check
 # 格式化代码
 cargo fmt
 
-# 运行 Clippy
-cargo clippy -- -D warnings
+# 运行 Clippy（CI 同款命令）
+cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+### 持续集成
+
+推送到 `main` 或提交 PR 时，`.github/workflows/ci.yml` 会在
+ubuntu + windows 两个平台自动运行：
+
+1. `cargo clippy --workspace --all-targets -- -D warnings`（零警告门禁）
+2. `cargo test --workspace`
+3. `node tests/tools/validate-doc-fixture-diff.js`（文档示例与 fixture 一致性）
+
+提交前请在本地跑通上述命令；发布打包仍由 `v*` tag 触发的 `release.yml` 负责。
 
 ### 本地测试
 

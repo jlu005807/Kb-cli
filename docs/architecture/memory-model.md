@@ -160,13 +160,17 @@ Layer 5: Wiki Markdown View Layer
 2. provider 由 `base_url + model + key` 决定，不在 core 写死厂商分支。
 3. DeepSeek、Mimo、OpenAI 等通过配置切换，不改核心流程。
 
-### 6.2 三层配置优先级（已确认）
+### 6.2 配置优先级（已确认）
 
 优先级从高到低：
 
 1. **当前进程环境变量**（手动覆盖）
-2. **当前知识库** `<kb_root>/.kb/config.json`
-3. **全局配置**（默认 `~/.kb-cli/config.json`，可被 `KB_GLOBAL_CONFIG` 覆盖）
+2. **系统 keyring**（仅 `key` 一个敏感字段；Windows Credential Manager /
+   macOS Keychain / Secret Service，service 默认 `kb-cli`、user 默认
+   `default`，可用 `KB_LLM_KEYRING_SERVICE`/`KB_LLM_KEYRING_USER` 覆盖，
+   `KB_LLM_DISABLE_KEYRING=1` 关闭；不可用时静默降级到下层）
+3. **当前知识库** `<kb_root>/.kb/config.json`
+4. **全局配置**（默认 `~/.kb-cli/config.json`，可被 `KB_GLOBAL_CONFIG` 覆盖）
 
 必需键：
 
@@ -198,6 +202,16 @@ Layer 5: Wiki Markdown View Layer
 2. 无有效 LLM 配置时，系统自动回退 deterministic 路径。
 3. `--llm` 会在本次 `kb update` 强制尝试 L2/L4/L5 的 LLM 路径；缺 key 时按层回退规则路径并给 warning。
 4. `key/model/base_url` 之外的超时/重试可放在 `.kb/config.json` 或全局 config。
+
+调优参数中有两个语义不同的循环轮数（完整清单见 `kb init` 生成的
+`.kb/.env.template`）：
+
+- `KB_LLM_AGENT_LOOP_MAX_ROUNDS`（config 键 `agent_loop_max_rounds`，默认
+  2，clamp `[1, 4]`）：L2/L4/L5 编译的反思轮数，覆盖率不达标时按缺失项
+  重跑。
+- `KB_LLM_ASK_LOOP_MAX_ROUNDS`（config 键 `ask_loop_max_rounds`，默认 8，
+  clamp `[4, 12]`）：`kb ask --answer` 的工具调用轮数；证据步态
+  （search → summary → raw → graph）至少需要 4 轮，故独立于上一项。
 
 ## 7. `kb ask` 的上下文连接与检索路径
 
