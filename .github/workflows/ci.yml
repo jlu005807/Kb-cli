@@ -24,6 +24,8 @@ jobs:
           - ubuntu-latest
           - windows-latest
     runs-on: ${{ matrix.os }}
+    # A hung test must not burn the 6-hour runner default.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -46,6 +48,7 @@ jobs:
   doc-fixtures:
     name: Doc Fixture Consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v5

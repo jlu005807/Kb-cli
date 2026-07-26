@@ -65,14 +65,16 @@ echo "[4/6] Testing memory commands..."
 export KB_AGENT_ID="test-agent"
 export KB_SESSION_ID="test-session-001"
 
+# NOTE: --output json is pretty-printed ("key": "value" with a space) —
+# the greps below must tolerate optional whitespace after the colon.
 REMEMBER_RESULT=$("$KB_PATH" remember "项目使用 Rust workspace + 六边形架构" --output json)
-echo "$REMEMBER_RESULT" | grep -q '"status":"success"' || fail "kb remember failed: $REMEMBER_RESULT"
-EPISODE_ID=$(echo "$REMEMBER_RESULT" | grep -o '"episode_id":"[^"]*"' | cut -d'"' -f4)
+echo "$REMEMBER_RESULT" | grep -q '"status": *"success"' || fail "kb remember failed: $REMEMBER_RESULT"
+EPISODE_ID=$(echo "$REMEMBER_RESULT" | grep -o '"episode_id": *"[^"]*"' | cut -d'"' -f4)
 [ -n "$EPISODE_ID" ] || fail "kb remember returned no episode_id"
 echo "✓ kb remember: episode_id = $EPISODE_ID"
 
 CORRECT_RESULT=$("$KB_PATH" correct "存储后端默认是 fs 不是 sqlite" --output json)
-echo "$CORRECT_RESULT" | grep -q '"status":"success"' || fail "kb correct failed: $CORRECT_RESULT"
+echo "$CORRECT_RESULT" | grep -q '"status": *"success"' || fail "kb correct failed: $CORRECT_RESULT"
 echo "✓ kb correct: confidence = 1.0"
 
 "$KB_PATH" remember "MCP server 通过 stdio 暴露 8 个 tools" --output json > /dev/null || fail "kb remember (2) failed"
@@ -82,12 +84,13 @@ echo ""
 # 5. Test consolidate
 echo "[5/6] Testing consolidate..."
 CONSOLIDATE_RESULT=$("$KB_PATH" consolidate --dry-run --output json)
-echo "$CONSOLIDATE_RESULT" | grep -q '"status":"success"' || fail "kb consolidate --dry-run failed: $CONSOLIDATE_RESULT"
+echo "$CONSOLIDATE_RESULT" | grep -q '"status": *"success"' || fail "kb consolidate --dry-run failed: $CONSOLIDATE_RESULT"
 echo "✓ kb consolidate --dry-run succeeded"
 
 "$KB_PATH" consolidate --output json > /dev/null || fail "kb consolidate failed"
 [ -d ".kb/raw/agent-memory" ] || fail "consolidate did not create .kb/raw/agent-memory"
-FILE_COUNT=$(ls -1 .kb/raw/agent-memory/*.md 2>/dev/null | wc -l)
+# find (not ls|wc): an empty glob must not abort the script under pipefail.
+FILE_COUNT=$(find .kb/raw/agent-memory -maxdepth 1 -name '*.md' | wc -l)
 [ "$FILE_COUNT" -ge 1 ] || fail "consolidate produced no memory files"
 echo "✓ kb consolidate: created memory files ($FILE_COUNT files)"
 echo ""

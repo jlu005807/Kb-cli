@@ -389,14 +389,45 @@ fn mcp_server_stdio_end_to_end() {
     // Dropping stdin closes the pipe -> server sees EOF -> clean exit(0).
     drop(child.stdin.take());
 
-    let output = child.wait_with_output().expect("wait for server exit");
+    // Watchdog: a hung server must fail this test in seconds, not stall the
+    // whole CI job until the runner-level timeout. Drain the pipes on helper
+    // threads (so the child never blocks on a full pipe) and poll try_wait
+    // with a hard deadline, killing the child on overrun.
+    let mut stdout_pipe = child.stdout.take().expect("child stdout");
+    let mut stderr_pipe = child.stderr.take().expect("child stderr");
+    let stdout_thread = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        match child.try_wait().expect("try_wait on mcp server") {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("kb serve --mcp did not exit within 60s after stdin EOF (killed)");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(25)),
+        }
+    };
+    let stdout_bytes = stdout_thread.join().expect("join stdout reader");
+    let stderr_bytes = stderr_thread.join().expect("join stderr reader");
     assert!(
-        output.status.success(),
+        status.success(),
         "server should exit 0 on stdin EOF; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&stderr_bytes)
     );
 
-    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    let stdout = String::from_utf8(stdout_bytes).expect("utf8 stdout");
     let responses: Vec<Value> = stdout
         .lines()
         .map(str::trim)
