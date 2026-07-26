@@ -401,7 +401,7 @@ kb check --output=json
 }
 ```
 
-## 8. `kb update [--dry-run] [--prune] [--yes] [--full] [--strict] [--llm]`
+## 8. `kb update [--dry-run] [--prune] [--full] [--strict] [--llm]`
 
 > 实现说明（2026-04-18）：`update` 会把 `check` 差异写入 `./.kb/regs.json`，移除过期/已删除/不存在条目，并刷新后端索引文件。
 > 当 `check` 确认为 `to_remove` 时，`update` 也会清理匹配的陈旧索引记录，即使这些路径已不在 `regs.json` 中。

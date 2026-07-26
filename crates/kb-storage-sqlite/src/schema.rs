@@ -42,7 +42,8 @@ use crate::connection::SqliteConnection;
 ///   source_json / created_at / last_verified_at / provenance_json），
 ///   SQLite 后端自此与 fs 后端一样完整 round-trip `KnowledgeEntry`。
 ///   默认值兼容 pre-v4 旧行：source_json='' 表示旧行（读端回退默认
-///   source），时间戳 0 表示无时间锚 / 从未验证。
+///   source），created_at=0 表示无时间锚；last_verified_at 为可空列，
+///   NULL 表示从未验证（保证 Some(0) 与 None 精确 round-trip）。
 pub const SCHEMA_VERSION: i64 = 4;
 
 /// 确保数据库处于最新 schema。幂等：多次调用安全。
@@ -284,16 +285,17 @@ fn up_v4(tx: &rusqlite::Transaction<'_>) -> Result<(), DomainError> {
     // 执行一次，因此裸 ALTER TABLE ADD COLUMN 是安全的（不会重复加列）。
     //
     // 默认值与读端回退语义配套：
-    // - source_json=''      → pre-v4 旧行，读端回退默认 source（FromFile）
-    // - created_at=0        → 历史数据没有时间锚（与 serde default 一致）
-    // - last_verified_at=0  → 从未验证过（读端映射为 None）
+    // - source_json=''         → pre-v4 旧行，读端回退默认 source（FromFile）
+    // - created_at=0           → 历史数据没有时间锚（与 serde default 一致）
+    // - last_verified_at=NULL  → 从未验证过（None）；可空列保证 Some(0) 与
+    //                            None 不合流，与 fs 后端的 serde round-trip 一致
     // 时间戳沿用 episodes.timestamp 的约定：unix nanos 存 i64。
     tx.execute_batch(
         r#"
 ALTER TABLE knowledge_entries ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
 ALTER TABLE knowledge_entries ADD COLUMN source_json TEXT NOT NULL DEFAULT '';
 ALTER TABLE knowledge_entries ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE knowledge_entries ADD COLUMN last_verified_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE knowledge_entries ADD COLUMN last_verified_at INTEGER;
 ALTER TABLE knowledge_entries ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '[]';
 "#,
     )

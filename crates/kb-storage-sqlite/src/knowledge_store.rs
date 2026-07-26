@@ -6,9 +6,10 @@
 //! - `knowledge_entries`：每个 record_id 一行，tags/key_concepts 序列化为 JSON
 //!   数组保存在 `_json` 列。这两类字段是变长 vec，没必要再单独建表，落 JSON
 //!   足够高效。schema v4 起同一行还携带 Phase 0 记忆字段：confidence（REAL）、
-//!   source_json（KnowledgeSource 的 serde_json）、created_at / last_verified_at
-//!   （unix nanos 存 i64，与 episodes.timestamp 同一约定；0 表示无时间锚 /
-//!   从未验证）、provenance_json（episode id 的 JSON 数组）。
+//!   source_json（KnowledgeSource 的 serde_json）、created_at（unix nanos 存
+//!   i64，与 episodes.timestamp 同一约定；0 表示无时间锚）、last_verified_at
+//!   （可空列，NULL 表示从未验证，数值含 0 均精确还原）、provenance_json
+//!   （episode id 的 JSON 数组）。
 //! - `knowledge_chunks`：每行一个 chunk，`(record_id, chunk_id)` 复合主键，
 //!   `record_id` 外键 ON DELETE CASCADE，保证 entry 被替换/删除时 chunk 自动清。
 //!
@@ -111,12 +112,10 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                 let provenance: Vec<String> =
                     serde_json::from_str(&row.provenance_json).unwrap_or_default();
                 let created_at = Timestamp(row.created_at as u64);
-                // 0 表示"从未验证过"（up_v4 的列默认值），映射回 None。
-                let last_verified_at = if row.last_verified_at == 0 {
-                    None
-                } else {
-                    Some(Timestamp(row.last_verified_at as u64))
-                };
+                // 可空列：NULL = 从未验证（None）；任何数值（含 0）都精确还原。
+                let last_verified_at = row
+                    .last_verified_at
+                    .map(|nanos| Timestamp(nanos as u64));
                 entries.push(KnowledgeEntry {
                     record_id,
                     path: row.path,
@@ -232,11 +231,8 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                             entry.confidence as f64,
                             source_json,
                             entry.created_at.as_nanos() as i64,
-                            // None（从未验证）落 0，与列默认值 / 读端映射对齐。
-                            entry
-                                .last_verified_at
-                                .map(|t| t.as_nanos() as i64)
-                                .unwrap_or(0),
+                            // None（从未验证）落 NULL，Some(0) 与 None 不合流。
+                            entry.last_verified_at.map(|t| t.as_nanos() as i64),
                             provenance_json,
                         ])
                         .map_err(|err| {
@@ -300,7 +296,7 @@ struct EntryRow {
     confidence: f64,
     source_json: String,
     created_at: i64,
-    last_verified_at: i64,
+    last_verified_at: Option<i64>,
     provenance_json: String,
 }
 
@@ -507,6 +503,24 @@ mod tests {
         assert_eq!(entry.created_at, Timestamp::ZERO);
         assert_eq!(entry.last_verified_at, None);
         assert!(entry.provenance.is_empty());
+    }
+
+    #[test]
+    fn some_zero_last_verified_at_survives_roundtrip() {
+        let conn = SqliteConnection::in_memory().expect("open");
+        ensure_schema(&conn).expect("migrate");
+        let store = SqliteKnowledgeStore::new(conn);
+
+        let mut snapshot = sample_snapshot();
+        snapshot.entries[0].last_verified_at = Some(Timestamp::ZERO);
+        store.write_knowledge(&snapshot).expect("write");
+
+        let got = store.read_knowledge().expect("read").expect("some");
+        assert_eq!(
+            got.entries[0].last_verified_at,
+            Some(Timestamp::ZERO),
+            "Some(ZERO) must not collapse into None (nullable column semantics)"
+        );
     }
 
     #[test]
