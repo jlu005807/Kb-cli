@@ -11,7 +11,6 @@
 //!
 //! 该模块**不**关心 OpenAI Chat Completions 的协议字段，仅负责传输层。
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use once_cell::sync::OnceCell;
@@ -154,9 +153,6 @@ fn truncate_for_error(raw: &str, max_chars: usize) -> String {
     out.push_str("...<truncated>");
     out
 }
-
-/// 用于把任意 `Send` 闭包提交到共享 runtime 上的便捷类型别名。
-pub type SharedRuntime = Arc<()>;
 
 #[cfg(test)]
 mod tests {

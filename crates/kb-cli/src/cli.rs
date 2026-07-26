@@ -111,8 +111,6 @@ pub enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         prune: bool,
         #[arg(long, action = ArgAction::SetTrue)]
-        yes: bool,
-        #[arg(long, action = ArgAction::SetTrue)]
         full: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         strict: bool,

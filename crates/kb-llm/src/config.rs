@@ -18,6 +18,7 @@ const KB_LLM_ANALYSIS_MAX_OUTPUT_TOKENS_ENV: &str = "KB_LLM_ANALYSIS_MAX_OUTPUT_
 const KB_LLM_RETRY_MAX_ATTEMPTS_ENV: &str = "KB_LLM_RETRY_MAX_ATTEMPTS";
 const KB_LLM_RETRY_BACKOFF_MS_ENV: &str = "KB_LLM_RETRY_BACKOFF_MS";
 const KB_LLM_AGENT_LOOP_MAX_ROUNDS_ENV: &str = "KB_LLM_AGENT_LOOP_MAX_ROUNDS";
+const KB_LLM_ASK_LOOP_MAX_ROUNDS_ENV: &str = "KB_LLM_ASK_LOOP_MAX_ROUNDS";
 const KB_LLM_AGENT_REFLECTION_ENABLED_ENV: &str = "KB_LLM_AGENT_REFLECTION_ENABLED";
 const KB_LLM_AGENT_MIN_CHUNK_COVERAGE_ENV: &str = "KB_LLM_AGENT_MIN_CHUNK_COVERAGE";
 
@@ -36,6 +37,10 @@ const DEFAULT_ANALYSIS_MAX_OUTPUT_TOKENS: u32 = 700;
 const DEFAULT_RETRY_MAX_ATTEMPTS: usize = 3;
 const DEFAULT_RETRY_BACKOFF_MS: u64 = 600;
 const DEFAULT_AGENT_LOOP_MAX_ROUNDS: usize = 2;
+// ask agent 的工具循环与 semantic/graph/wiki 的反思循环量级不同：
+// 证据步态（search -> summary -> raw -> graph）至少需要 4 轮，故独立成配置项，
+// 消费端（kb ask --answer）再 clamp 到 [4, 12]。
+const DEFAULT_ASK_LOOP_MAX_ROUNDS: usize = 8;
 const DEFAULT_AGENT_REFLECTION_ENABLED: bool = true;
 const DEFAULT_AGENT_MIN_CHUNK_COVERAGE: f64 = 0.6;
 
@@ -87,6 +92,7 @@ pub struct LlmRuntimeConfig {
     pub retry_max_attempts: usize,
     pub retry_backoff_ms: u64,
     pub agent_loop_max_rounds: usize,
+    pub ask_loop_max_rounds: usize,
     pub agent_reflection_enabled: bool,
     pub agent_min_chunk_coverage: f64,
     pub source: LlmConfigSourceMap,
@@ -111,6 +117,7 @@ struct LlmConfigPartial {
     retry_max_attempts: Option<usize>,
     retry_backoff_ms: Option<u64>,
     agent_loop_max_rounds: Option<usize>,
+    ask_loop_max_rounds: Option<usize>,
     agent_reflection_enabled: Option<bool>,
     agent_min_chunk_coverage: Option<f64>,
 }
@@ -446,6 +453,24 @@ fn resolve_from_layers(
         DEFAULT_AGENT_LOOP_MAX_ROUNDS,
     )
     .clamp(1, 4);
+    let ask_loop_max_rounds = pick_usize(
+        &[
+            (
+                &process_env.ask_loop_max_rounds,
+                LlmConfigSource::ProcessEnv,
+            ),
+            (
+                &project_config.ask_loop_max_rounds,
+                LlmConfigSource::ProjectConfig,
+            ),
+            (
+                &global_config.ask_loop_max_rounds,
+                LlmConfigSource::GlobalConfig,
+            ),
+        ],
+        DEFAULT_ASK_LOOP_MAX_ROUNDS,
+    )
+    .clamp(4, 12);
     let agent_reflection_enabled = pick_bool(
         &[
             (
@@ -488,7 +513,7 @@ fn resolve_from_layers(
         base_url: base_url_source,
     };
     let trace = format!(
-        "key={}; model={}; base_url={}; semantic_enabled={}; graph_enabled={}; wiki_enabled={}; semantic_flow={}; timeout_secs={}; temperature={}; max_output_tokens={}; analysis_max_output_tokens={}; max_input_chars={}; max_chunks={}; retry_max_attempts={}; retry_backoff_ms={}; agent_loop_max_rounds={}; agent_reflection_enabled={}; agent_min_chunk_coverage={}",
+        "key={}; model={}; base_url={}; semantic_enabled={}; graph_enabled={}; wiki_enabled={}; semantic_flow={}; timeout_secs={}; temperature={}; max_output_tokens={}; analysis_max_output_tokens={}; max_input_chars={}; max_chunks={}; retry_max_attempts={}; retry_backoff_ms={}; agent_loop_max_rounds={}; ask_loop_max_rounds={}; agent_reflection_enabled={}; agent_min_chunk_coverage={}",
         source.key.as_str(),
         source.model.as_str(),
         source.base_url.as_str(),
@@ -505,6 +530,7 @@ fn resolve_from_layers(
         retry_max_attempts,
         retry_backoff_ms,
         agent_loop_max_rounds,
+        ask_loop_max_rounds,
         agent_reflection_enabled,
         agent_min_chunk_coverage
     );
@@ -526,6 +552,7 @@ fn resolve_from_layers(
         retry_max_attempts,
         retry_backoff_ms,
         agent_loop_max_rounds,
+        ask_loop_max_rounds,
         agent_reflection_enabled,
         agent_min_chunk_coverage,
         source,
@@ -573,6 +600,9 @@ fn read_process_env() -> LlmConfigPartial {
             .ok()
             .and_then(|value| value.trim().parse::<u64>().ok()),
         agent_loop_max_rounds: std::env::var(KB_LLM_AGENT_LOOP_MAX_ROUNDS_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok()),
+        ask_loop_max_rounds: std::env::var(KB_LLM_ASK_LOOP_MAX_ROUNDS_ENV)
             .ok()
             .and_then(|value| value.trim().parse::<usize>().ok()),
         agent_reflection_enabled: std::env::var(KB_LLM_AGENT_REFLECTION_ENABLED_ENV)
@@ -647,6 +677,12 @@ fn load_json_config(path: &Path) -> LlmConfigPartial {
         "agent_loop_max_rounds",
         KB_LLM_AGENT_LOOP_MAX_ROUNDS_ENV,
     );
+    let ask_loop_max_rounds = read_usize(
+        llm_obj,
+        &parsed,
+        "ask_loop_max_rounds",
+        KB_LLM_ASK_LOOP_MAX_ROUNDS_ENV,
+    );
     let agent_reflection_enabled = read_bool(
         llm_obj,
         &parsed,
@@ -677,6 +713,7 @@ fn load_json_config(path: &Path) -> LlmConfigPartial {
         retry_max_attempts,
         retry_backoff_ms,
         agent_loop_max_rounds,
+        ask_loop_max_rounds,
         agent_reflection_enabled,
         agent_min_chunk_coverage,
     }

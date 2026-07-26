@@ -1,7 +1,6 @@
 pub(crate) fn run_update(
     dry_run: bool,
     prune: bool,
-    _yes: bool,
     full: bool,
     strict: bool,
     llm: bool,
@@ -39,6 +38,7 @@ pub(crate) fn run_update(
     apply_registry_diff(&mut registry, &diff);
 
     let backend_sync = build_backend_sync_backend();
+    let mut raw_category_created = false;
     if !dry_run {
         let kb_md = cwd.join("kb.md");
         let kb_doc_for_prune = parse_kb_document_file(&kb_md)?;
@@ -48,8 +48,10 @@ pub(crate) fn run_update(
         dedupe_raw_refs_in_kb_md(&cwd, &kb_doc_for_dedupe)
             .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
         let kb_doc_for_append = parse_kb_document_file(&kb_md)?;
-        append_missing_raw_refs_to_kb_md(&cwd, &kb_doc_for_append, &desired)
+        let had_raw_category = kb_doc_for_append.categories.iter().any(|c| c == "raw");
+        let appended_raw = append_missing_raw_refs_to_kb_md(&cwd, &kb_doc_for_append, &desired)
             .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
+        raw_category_created = appended_raw > 0 && !had_raw_category;
         backend_sync.sync(&build_backend_sync_items(&diff)).map_err(|_| {
             map_core_error(CoreErrorKind::PersistIndexFailed, json!({"target":"backend"}))
         })?;
@@ -457,7 +459,7 @@ pub(crate) fn run_update(
         added: diff.add_entries.len(),
         updated: diff.to_update.len() + outcome.updated,
         removed: diff.removed_paths.len(),
-        marked_invalid: 0,
+        marked_invalid: outcome.marked_invalid,
         duration_ms,
         dry_run,
         prune: effective_prune,
@@ -484,10 +486,10 @@ pub(crate) fn run_update(
         "added": diff.add_entries.len(),
         "updated": diff.to_update.len() + outcome.updated,
         "removed": diff.removed_paths.len(),
-        "marked_invalid": 0,
+        "marked_invalid": outcome.marked_invalid,
         "duration_ms": duration_ms,
         "full": full,
-        "raw_category_created": false,
+        "raw_category_created": raw_category_created,
         "strict": strict,
         "layer_status": layer_status,
         "l2_compilation": l2_compilation,

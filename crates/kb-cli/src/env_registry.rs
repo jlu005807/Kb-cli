@@ -194,6 +194,9 @@ fn ensure_global_config_shape(config: &mut Value) {
     if !llm.contains_key("agent_loop_max_rounds") {
         llm.insert("agent_loop_max_rounds".to_string(), json!(2));
     }
+    if !llm.contains_key("ask_loop_max_rounds") {
+        llm.insert("ask_loop_max_rounds".to_string(), json!(8));
+    }
     if !llm.contains_key("agent_reflection_enabled") {
         llm.insert("agent_reflection_enabled".to_string(), Value::Bool(true));
     }

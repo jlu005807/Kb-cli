@@ -651,7 +651,9 @@ fn run_live_ask_agent(
         retrieved_context.len()
     ));
 
-    let max_rounds = llm.agent_loop_max_rounds.clamp(4, 12);
+    // ask 工具循环使用独立的 ask_loop_max_rounds（config 已 clamp 到 [4,12]）；
+    // agent_loop_max_rounds 只管 semantic/graph/wiki 的反思轮（clamp [1,4]），两者语义不同。
+    let max_rounds = llm.ask_loop_max_rounds.clamp(4, 12);
     for round in 1..=max_rounds {
         emit_ask_trace(&format!("round {} request", round));
         let response =
@@ -873,13 +875,25 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
             ));
         }
         let default_search_top_k = normalize_top(top, 3);
-        let answer_out = run_minimal_ask_agent(
+        let mut answer_out = run_minimal_ask_agent(
             &cwd,
             &question,
             &[],
             default_search_top_k,
             meta.provider.as_deref(),
         )?;
+        // sqlite 后端下 SemanticAgentToolbox 仍直接读 .kb/*.json 文件布局，
+        // L2/L4/L5 落在 store.sqlite3 时读侧工具会拿不到数据——显式提醒而非静默退化。
+        if matches!(
+            crate::storage_backend::resolve_storage_backend(&cwd),
+            crate::storage_backend::StorageBackend::Sqlite
+        ) {
+            let note = "storage.backend=sqlite: semantic toolbox reads the fs JSON layout (.kb/knowledge.json etc.); summary/graph/wiki read tools may report missing data".to_string();
+            answer_out.agent_warning = Some(match answer_out.agent_warning.take() {
+                Some(existing) => format!("{existing}; {note}"),
+                None => note,
+            });
+        }
         let retrieval_trace = build_retrieval_trace(&answer_out.retrieved_context);
         let reasoning_context = build_reasoning_context(&question, &answer_out.retrieved_context);
         let text = format_answer_text(

@@ -95,16 +95,39 @@ fn mcp_tool_list_episodes(args: &Value) -> Result<Value, String> {
     Ok(json!({ "count": items.len(), "episodes": items }))
 }
 
+/// sqlite 后端下 SemanticAgentToolbox 直接读 .kb/*.json 文件布局，L2/L4/L5
+/// 数据实际落在 store.sqlite3 —— 读不到时给出显式提示而不是让调用方猜。
+fn mcp_sqlite_toolbox_warning(cwd: &std::path::Path) -> Option<String> {
+    if matches!(
+        crate::storage_backend::resolve_storage_backend(cwd),
+        crate::storage_backend::StorageBackend::Sqlite
+    ) {
+        Some(
+            "storage.backend=sqlite: this tool reads the fs JSON layout (.kb/knowledge.json etc.) and may report missing data"
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 fn mcp_tool_read_summary(args: &Value) -> Result<Value, String> {
     let target = args
         .get("record_id_or_path")
         .and_then(Value::as_str)
         .ok_or_else(|| "read_summary requires record_id_or_path".to_string())?;
     let cwd = mcp_cwd()?;
+    let warning = mcp_sqlite_toolbox_warning(&cwd);
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd));
     match toolbox.read_file_summary(target) {
         Some(item) => serde_json::to_value(item).map_err(|e| e.to_string()),
-        None => Ok(json!({ "found": false, "target": target })),
+        None => {
+            let mut data = json!({ "found": false, "target": target });
+            if let (Some(obj), Some(warning)) = (data.as_object_mut(), warning) {
+                obj.insert("warning".to_string(), Value::String(warning));
+            }
+            Ok(data)
+        }
     }
 }
 
@@ -114,11 +137,15 @@ fn mcp_tool_read_neighbors(args: &Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "read_neighbors requires record_id".to_string())?;
     let cwd = mcp_cwd()?;
+    let warning = mcp_sqlite_toolbox_warning(&cwd);
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd));
     let relations = toolbox.read_graph_neighbors(record_id);
-    serde_json::to_value(json!({
+    let mut data = json!({
         "record_id": record_id,
         "neighbors": relations,
-    }))
-    .map_err(|e| e.to_string())
+    });
+    if let (Some(obj), Some(warning)) = (data.as_object_mut(), warning) {
+        obj.insert("warning".to_string(), Value::String(warning));
+    }
+    Ok(data)
 }

@@ -43,11 +43,10 @@ pub fn dispatch(cli: Cli) -> Result<Value, CliError> {
         Commands::Update {
             dry_run,
             prune,
-            yes,
             full,
             strict,
             llm,
-        } => cmd_update::handle(dry_run, prune, yes, full, strict, llm),
+        } => cmd_update::handle(dry_run, prune, full, strict, llm),
         Commands::Ask {
             question,
             top,
