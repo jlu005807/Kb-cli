@@ -9,12 +9,14 @@
 - 固定路径：`./.kb/.kbignore`
 - `kb init` 会自动创建该文件，并写入默认规则（包含 `kb.md` 与 `.kb` 内部配置文件）
 
-默认规则示例（当前实现）：
+默认规则示例（当前实现，`refs.json` 为历史格式、`regs.json` 为当前登记快照，两者均被忽略）：
 
 ```text
+# KB internal files (auto-generated)
 ./kb.md
 ./.kb/.kbignore
 ./.kb/refs.json
+./.kb/regs.json
 ./.kb/index.json
 ./.kb/index.errors.json
 ./.kb/index.meta.json
@@ -54,7 +56,7 @@
 
 - 如果输入路径命中规则：
   - 返回成功包（`ignored=true`）
-  - 不写入 refs 状态
+  - 不写入声明与登记状态
   - 不作为错误
 - 额外保护：
    - `kb.md` 与 `./.kb/` 下除 `./.kb/raw/` 外的内部文件属于受保护路径
@@ -62,7 +64,7 @@
 
 ### 4.2 `kb check` / `kb update`
 
-- 在差异计算前对 `.kb/refs.json` 投影记录进行过滤
+- 在差异计算前对 `.kb/regs.json` 登记快照的投影记录进行过滤
 - 命中规则的路径不进入变更统计
 - 对受保护路径执行强制过滤（`kb.md` 与 `./.kb/` 非 raw 文件）
 

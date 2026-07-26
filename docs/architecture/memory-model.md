@@ -61,7 +61,7 @@ Layer 2: Semantic Knowledge Layer
         | search projection compile
         v
 Layer 3: Search Projection Layer
-  └─ .kb/search/*
+  └─ .kb/search.json
         |
         | graph compile
         v
@@ -222,7 +222,7 @@ Layer 5: Wiki Markdown View Layer
 
 1. `.kb/index*.json`
 2. `.kb/knowledge.json`
-3. `.kb/search/*`
+3. `.kb/search.json`
 4. `.kb/graph.json`
 5. `.kb/wiki/*`
 
@@ -266,11 +266,11 @@ Layer 5: Wiki Markdown View Layer
 ## 10. Agent 记忆系统扩展（L0 Episode Layer）
 
 > 状态：2026-05-31  
-> 实现阶段：Phase 0-3 已完成并合并到主分支
+> 实现阶段：Phase 0-4 已完成并合并到主分支
 
 ### 10.1 设计动机
 
-KB-CLI 的核心是”知识库编译”，但在 agent 交互场景中，还需要一个**时间线记忆层**来：
+KB-CLI 的核心是“知识库编译”，但在 agent 交互场景中，还需要一个**时间线记忆层**来：
 
 1. 记录 agent 观察到的事实（Observation）
 2. 接受用户纠错（UserCorrection，最高优先级）
@@ -301,18 +301,19 @@ L0 Declaration → L1 Index → L2-L5 (existing layers)
 
 每个 episode 包含：
 
-- `episode_id`：唯一标识（`ep_<timestamp_nanos>_<random>`）
+- `episode_id`：唯一标识（`ep-<timestamp_nanos>-<hash16>`；unix 纳秒 + 内容稳定哈希，不依赖随机源，保证可重放）
 - `agent_id`：调用方标识（从 `KB_AGENT_ID` 环境变量读取，默认 `kb-cli`）
 - `session_id`：会话 ID（可选，从 `KB_SESSION_ID` 读取）
-- `kind`：类型枚举
-  - `Observation`：agent 观察到的事实（confidence 默认 0.8）
-  - `UserCorrection`：用户纠错（confidence 固定 1.0，最高优先级）
+- `kind`：类型枚举（wire format 为 snake_case，如 `user_correction`）
+  - `Query`：agent 发起了一次检索/提问（`kb ask` 自动记录）
+  - `Answer`：agent 产出了一次回答（`kb ask --answer` 成功后记录，`refs` 挂 citations 命中的 chunk）
   - `ToolCall`：工具调用记录（保留，未启用）
-  - `AgentThought`：agent 推理过程（保留，未启用）
+  - `Observation`：agent 观察到的事实（`kb remember`，confidence 默认 0.8）
+  - `UserCorrection`：用户纠错（`kb correct`，confidence 固定 1.0，最高优先级）
 - `content`：记忆内容（纯文本）
+- `refs`：引用的 `chunk_id` 列表（指向 L1/L2 的稳定内容地址，可为空）
 - `confidence`：置信度（0.0-1.0）
 - `timestamp`：Unix 纳秒时间戳
-- `metadata`：可选元数据（JSON）
 
 ### 10.4 记忆命令
 
@@ -354,12 +355,12 @@ kb serve --mcp
 #### 配置示例（Claude Desktop）
 ```json
 {
-  “mcpServers”: {
-    “kb-memory”: {
-      “command”: “kb”,
-      “args”: [“serve”, “--mcp”],
-      “env”: {
-        “KB_AGENT_ID”: “claude-desktop”
+  "mcpServers": {
+    "kb-memory": {
+      "command": "kb",
+      "args": ["serve", "--mcp"],
+      "env": {
+        "KB_AGENT_ID": "claude-desktop"
       }
     }
   }
@@ -374,7 +375,7 @@ kb serve --mcp
    - 冲突可见但不覆写（provenance 链保留历史）
 
 2. **轻量无依赖**
-   - 不用向量嵌入（保持”无 LLM 也能跑”）
+   - 不用向量嵌入（保持“无 LLM 也能跑”）
    - 手写 stdio JSON-RPC（零额外依赖）
    - Append-only episode store（JSONL 或 sqlite）
 
@@ -392,8 +393,8 @@ kb serve --mcp
 
 L0 Episode Layer 是对现有 L0-L5 模型的**正交扩展**：
 
-- **现有 L0-L5**：面向”知识库编译”，输入是用户声明的文件/目录
-- **L0 Episode**：面向”agent 记忆”，输入是 agent 交互时间线
+- **现有 L0-L5**：面向“知识库编译”，输入是用户声明的文件/目录
+- **L0 Episode**：面向“agent 记忆”，输入是 agent 交互时间线
 - **连接点**：`kb consolidate` 将 episodes 固化为 `.kb/raw/agent-memory/*.md`，然后通过 `kb update` 编译进 L1-L5
 
 这样设计的好处：
@@ -407,7 +408,7 @@ L0 Episode Layer 是对现有 L0-L5 模型的**正交扩展**：
 - ✅ Phase 1：Episode store（fs + sqlite 后端）
 - ✅ Phase 2：记忆命令（remember / correct / consolidate）
 - ✅ Phase 3：MCP server（kb serve --mcp，8 tools）
-- 🚧 Phase 4：文档 + 真实集成验证（进行中）
+- ✅ Phase 4：文档 + 真实集成验证（详见 `docs/phase-4-completion-report.md`）
 
 ## 11. 非目标
 
@@ -416,4 +417,4 @@ L0 Episode Layer 是对现有 L0-L5 模型的**正交扩展**：
 1. 让 LLM 直接改写 `kb.md` 或用户源文件。
 2. 把 L5 当作唯一问答真值层。
 3. 在未验证性能瓶颈前强制引入外部向量库。
-4. 以”模型可用”为前提阻断 L0/L1 基础更新流程。
+4. 以“模型可用”为前提阻断 L0/L1 基础更新流程。

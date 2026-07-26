@@ -199,7 +199,7 @@
 - `kb.md` 格式非法：`E3003`（退出码 3）
 - 指定分类不存在：`E2007`（退出码 2）
 
-### 4.9 `kb update [--dry-run] [--prune] [--yes] [--full] [--strict] [--llm]`
+### 4.9 `kb update [--dry-run] [--prune] [--full] [--strict] [--llm]`
 
 行为：
 - 把 `check` 差异应用到 `regs.json`。
@@ -211,8 +211,7 @@
 
 选项：
 - `--dry-run`：仅预览，不写入
-- `--prune`：显式清理无效/缺失条目
-- `--yes`：保留兼容参数
+- `--prune`：显式清理无效/缺失条目（注意：registry diff 存在 `to_remove` 时即使不带 `--prune` 也会以 prune 语义执行）
 - `--full`：全量重建索引
 - `--strict`：L2-L5 任一失败时整体失败（非 0 退出）
 - `--llm`：本次更新强制尝试启用 L2/L4/L5 的 LLM 路径（若缺少 `KB_LLM_KEY` 会回退到规则路径并给 warning）
@@ -393,18 +392,32 @@ MCP Tools：
 - JSON-RPC 协议错误：写入错误响应到 stdout，继续运行
 - 内部错误：写入错误响应到 stdout，继续运行
 
-### 4.15 `kb env [--list]`
+### 4.15 `kb env [--list] [--doctor]`
 
 行为：
-- 读取全局注册表并返回当前仍存在的 KB 根目录。
-- 未传 `--list` 时，模式为 `list(default)`。
+- 默认 / `--list`：读取全局注册表并返回当前仍存在的 KB 根目录。未传 `--list` 时，模式为 `list(default)`。
+- `--doctor`：诊断模式，打印 LLM 配置解析链路，用于排查“key 究竟从哪里读到 / 为什么 LLM 没启用”：
+  - `key` / `model` / `base_url` 各自最终生效的来源（`process_env` / `keyring` / `project_config` / `global_config` / `defaults`）
+  - `semantic/graph/wiki` 开关的生效值
+  - keyring 状态：当前 `service` / `user` 名（含环境变量覆盖影响）、是否被 `KB_LLM_DISABLE_KEYRING=1` 关闭、对应记录是否存在（不打印 key 本身）
+  - 配置解析 trace（逐层解析摘要）
+- `--doctor` 与 `--list` 同时传入时，`--doctor` 优先（此时列表信息无意义）。
 
-主要输出字段：
+主要输出字段（默认 / `--list` 模式）：
 - `mode`
 - `items[].path`
 - `count`
 - `recorded_total`
 - `config_path`
+
+主要输出字段（`--doctor` 模式）：
+- `mode`（固定 `doctor`）
+- `cwd`
+- `llm.model` / `llm.base_url` / `llm.key_present` / `llm.semantic_enabled` / `llm.graph_enabled` / `llm.wiki_enabled`
+- `key_source`
+- `source_map.key` / `source_map.model` / `source_map.base_url`
+- `keyring.service` / `keyring.user` / `keyring.disabled` / `keyring.key_present`
+- `trace`
 
 ### 4.16 `kb completion <SHELL>`
 

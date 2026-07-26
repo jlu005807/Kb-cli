@@ -9,7 +9,7 @@
 ### 🚀 新手入门
 
 - [README](../README.md) - 项目概览和快速开始
-- [安装指南](cli/install-and-package.md) - 详细的安装步骤
+- [安装与打包指南](cli/install-and-package.md) - Release 安装、源码构建、打包脚本与发布流程
 - [5 分钟教程](#5-分钟教程) - 快速上手指南
 
 ### 📖 用户指南
@@ -36,9 +36,11 @@
 - [开发者工作流](cli/developer-workflow.md) - 编译、测试、打包、发布
 - [状态差异契约](cli/state-diff-contract.md) - 状态管理规范
 
-### 📊 项目报告
+### 📊 项目报告与历史资料
 
 - [Phase 4 完成报告](phase-4-completion-report.md) - Agent 记忆系统实现总结
+- [文档工作日志](history/documentation-work-log.md) - 文档优化与清理的合并纪要（历史记录）
+- [superpowers 规格与计划](superpowers/) - 各阶段设计规格与实施计划（历史文档，按当时状态保留）
 
 ---
 
@@ -97,7 +99,7 @@ kb ask "如何使用"
 启用 LLM 增强功能，提升语义理解和知识图谱质量。
 
 **相关文档：**
-- [README - LLM 配置](../README.md#llm-配置说明简版) - 配置说明
+- [README - LLM 配置](../README.md#llm-配置可选) - 配置说明
 - [记忆模型 - LLM 接入](architecture/memory-model.md#6-llm-接入策略与配置优先级) - 接入策略
 
 **快速开始：**
@@ -118,8 +120,8 @@ kb env --doctor
 选择合适的存储后端（fs 或 sqlite）。
 
 **相关文档：**
-- [README - 存储后端切换](../README.md#存储后端切换) - 配置说明
-- [CLI 架构](architecture/cli-architecture.md) - 架构设计
+- [README - 架构（含存储后端切换）](../README.md) - 配置说明（`.kb/config.json` 的 `storage.backend`，取值 `fs` / `sqlite`）
+- [CLI 架构](architecture/cli-architecture.md) - 架构设计（历史文档，含时点标注）
 
 **快速开始：**
 ```json
@@ -162,6 +164,14 @@ kb env --doctor
 |------|------|
 | [mcp-integration-guide.md](mcp-integration-guide.md) | MCP 集成完整指南 |
 | [phase-4-completion-report.md](phase-4-completion-report.md) | Phase 4 完成报告 |
+
+### 历史文档 (`docs/history/`、`docs/superpowers/`)
+
+| 目录 / 文档 | 描述 |
+|------|------|
+| [history/documentation-work-log.md](history/documentation-work-log.md) | 文档优化与项目清理工作日志（由 4 份历史报告合并而来） |
+| [superpowers/specs/](superpowers/specs/) | 历史设计规格（2026-05，L2-L5 / 记忆模型 / wiki 视图等，按当时状态保留，不再随代码更新） |
+| [superpowers/plans/](superpowers/plans/) | 历史实施计划（2026-05，与上述规格配套，已执行完毕） |
 
 ---
 
@@ -215,7 +225,7 @@ export KB_LLM_MODEL="gpt-4o-mini"
 }
 ```
 
-参考：[README - LLM 配置](../README.md#llm-配置说明简版)
+参考：[README - LLM 配置](../README.md#llm-配置可选)
 </details>
 
 <details>
@@ -344,6 +354,7 @@ kb --version
 
 ## 🔄 文档更新日志
 
+- **2026-07-27**: 文档一致性修复（episode id / `search.json` / `regs.json`），重写安装与打包指南，历史优化报告合并至 `docs/history/`
 - **2026-05-31**: Phase 4 完成，添加 MCP 集成指南和完成报告
 - **2026-05-02**: 添加记忆模型架构文档
 - **2026-04-19**: 更新命令手册和示例

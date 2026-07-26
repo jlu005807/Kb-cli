@@ -893,7 +893,7 @@ kb remember "项目使用 Rust workspace + 六边形架构"
 **输出（text）：**
 ```text
 Episode recorded
-episode_id: ep_1748707200000000000_abc123
+episode_id: ep-1748707200000000000-ab12cd34ef56ab12
 kind: Observation
 confidence: 0.8
 ```
@@ -929,7 +929,7 @@ kb correct "存储后端默认是 fs 不是 sqlite"
 **输出（text）：**
 ```text
 User correction recorded
-episode_id: ep_1748707260000000000_def456
+episode_id: ep-1748707260000000000-de45fa67bc89de45
 kind: UserCorrection
 confidence: 1.0 (highest priority)
 ```

@@ -1,8 +1,9 @@
 # KB-CLI 状态差异契约（当前实现）
 
-本文档描述 `kb check` / `kb update` 的**当前实现行为**（截至 2026-04-16）。
+本文档描述 `kb check` / `kb update` 的**当前实现行为**。
 
-> 适用范围：本地索引链路（`.kb/refs.json` + `./.kb/.kbignore` + `.kb/index*.json`）。
+> 适用范围：本地索引链路（`.kb/regs.json` + `./.kb/.kbignore` + `.kb/index*.json`）。
+> 说明：登记快照现为 `.kb/regs.json`；`.kb/refs.json` 仅作为历史格式的迁移读取来源。
 
 ---
 
@@ -10,9 +11,9 @@
 
 ### 1.1 当前快照（Current Snapshot）
 
-当前快照由 `.kb/refs.json` 投影得到：
+当前快照由 `.kb/regs.json` 投影得到（`regs.json` 不存在时回退读取历史 `refs.json`）：
 
-1. 读取 refs 条目（alias/path/category/perms）
+1. 读取登记条目（alias/path/category/perms）
 2. 应用过滤条件：
    - `--category`
    - `--raw-only`（仅保留 `path` 以 `./.kb/raw/` 开头）
@@ -76,7 +77,7 @@
 - `marked_invalid`
 - `duration_ms`
 - `full`
-- `raw_category_created`（当前固定 `false`）
+- `raw_category_created`（`update` 在自动回填 raw 声明时若新建了 `# raw` 分类则为 `true`）
 
 ---
 
@@ -84,7 +85,7 @@
 
 ### 5.1 `--raw-only`（仅 check）
 
-- 仅保留 `path` 以 `./.kb/raw/` 开头的 refs 记录参与比较
+- 仅保留 `path` 以 `./.kb/raw/` 开头的登记记录参与比较
 
 ### 5.2 `--category`（仅 check）
 

@@ -1,186 +1,179 @@
-﻿# KB-CLI 瀹夎涓庢墦鍖呮寚鍗楋紙Windows / Linux锛?
-鏈枃妗ｈ鏄庡浣曟妸 `kb-cli` 鎵撳寘涓哄彲鍒嗗彂瀹夎鍖咃紝骞跺湪鐢ㄦ埛鏈哄櫒涓婁竴閿畨瑁咃紝鍚屾椂鑷姩閰嶇疆鐜鍙橀噺锛圥ATH锛夈€?
-## 1. 浜х墿涓庣洰褰曠害瀹?
-- Windows 鎵撳寘鑴氭湰锛歚scripts/package.ps1`
-- Linux 鎵撳寘鑴氭湰锛歚scripts/package.sh`
-- Windows 瀹夎妯℃澘锛歚packaging/windows/*`
-- Linux 瀹夎妯℃澘锛歚packaging/linux/*`
-- 榛樿杈撳嚭鐩綍锛歚dist/`
+# KB-CLI 安装与打包指南（Windows / Linux）
 
-## 2. Windows 鎵撳寘涓庡畨瑁?
-### 2.1 鏈湴鎵撳寘
+本文说明如何获取并安装 `kb`，以及如何把 `kb-cli` 打包成可分发的安装包。安装脚本会自动完成二进制落盘与用户级 `PATH` 配置。
 
-鍦ㄤ粨搴撴牴鐩綍鎵ц锛?
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
-```
+相关文件（本文的事实来源）：
 
-鍙€夊弬鏁帮細
+- 打包脚本：`scripts/package.ps1`（Windows）、`scripts/package.sh`（Linux）
+- 安装脚本模板：`packaging/windows/`（`install.ps1`、`install.cmd`、`uninstall.ps1`、`uninstall.cmd`）、`packaging/linux/`（`install.sh`、`uninstall.sh`）
+- Release 流水线：`.github/workflows/release.yml`
+- 默认输出目录：`dist/`
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1 `
-  -Target x86_64-pc-windows-msvc `
-  -Profile release `
-  -DistDir dist
-```
+## 1. 产物命名约定
 
-### 2.2 鎵撳寘浜х墿
+安装包统一命名为：
 
-绀轰緥锛?
 ```text
-dist/
-鈹斺攢 kb-cli-0.1.4-windows-x86_64.zip
-   鈹斺攢 kb-cli-0.1.4-windows-x86_64/
-      鈹溾攢 kb.exe
-      鈹溾攢 install.cmd
-      鈹溾攢 install.ps1
-      鈹溾攢 uninstall.cmd
-      鈹斺攢 uninstall.ps1
+kb-cli-{version}-{os}-{arch}
 ```
 
-### 2.3 涓€閿畨瑁?
-- 鍙屽嚮 `install.cmd`锛堟帹鑽愶紝宸插唴缃?`ExecutionPolicy Bypass`锛?- 鎴栧懡浠よ鎵ц锛?
+- `version`：取自工作区 `Cargo.toml` 的 `[workspace.package].version`（如 `0.1.4`）
+- `os`：`windows` 或 `linux`
+- `arch`：`x86_64` / `aarch64` / `x86`（由 target triple 或宿主机架构推断）
+
+示例：
+
+- Windows：`kb-cli-0.1.4-windows-x86_64.zip`
+- Linux：`kb-cli-0.1.4-linux-x86_64.tar.gz`
+
+## 2. 从 Release 安装（推荐）
+
+从 GitHub Release 下载对应平台的安装包并解压。
+
+### 2.1 Windows
+
+压缩包内容：
+
+```text
+kb-cli-<version>-windows-x86_64/
+├─ kb.exe
+├─ install.cmd / install.ps1
+├─ uninstall.cmd / uninstall.ps1
+└─ INSTALL.md
+```
+
+安装方式（二选一）：
+
+- 双击 `install.cmd`（内部以 `ExecutionPolicy Bypass` 调用 `install.ps1`）
+- 命令行执行：
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-瀹夎琛屼负锛?
-- 灏嗗彲鎵ц鏂囦欢瀹夎鍒扮敤鎴风洰褰曪細`%LOCALAPPDATA%\kb-cli\bin\kb.exe`
-- 鑷姩鍐欏叆鐢ㄦ埛绾?`PATH`
-- 褰撳墠浼氳瘽鍐呭皾璇曞嵆鏃舵敞鍏?PATH锛堟柊缁堢涓€瀹氱敓鏁堬級
+安装行为（`install.ps1`）：
 
-### 2.4 鍗歌浇
+1. 把 `kb.exe` 复制到 `%USERPROFILE%\.kb-cli\bin\kb.exe`（`USERPROFILE` 缺失时回退到 `%LOCALAPPDATA%`；可用 `-InstallDir` 覆盖安装目录）。
+2. 确保全局配置 `%USERPROFILE%\.kb-cli\config.json` 存在：若已存在则**合并保留**已有的 `knowledge_bases` 与 `llm` 字段，缺失的 `llm` 键补默认值（`model=gpt-4o-mini`、`base_url=https://api.openai.com/v1`、`enable_semantic=false` 等）。
+3. 把安装目录写入**用户级** `PATH`（已存在则跳过），并尝试在当前会话立即生效。
 
-- 鍙屽嚮 `uninstall.cmd`
-- 鎴栨墽琛岋細
+验证：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
+kb --help
+# 若提示找不到 kb，重新打开终端让 PATH 生效
 ```
 
-鍗歌浇琛屼负锛?
-- 鍒犻櫎宸插畨瑁呬簩杩涘埗
-- 娓呯悊鐢ㄦ埛绾?PATH 涓殑瀹夎鐩綍
-- 瀹夎鐩綍涓虹┖鏃惰嚜鍔ㄥ垹闄?
-## 3. Linux 鎵撳寘涓庡畨瑁?
-### 3.1 鏈湴鎵撳寘
+卸载：双击 `uninstall.cmd` 或执行 `uninstall.ps1`。会删除 `kb.exe`、从用户级 `PATH` 移除安装目录，并在目录为空时删除该目录（`config.json` 所在目录非空时会保留）。
 
-鍦ㄤ粨搴撴牴鐩綍鎵ц锛?
-```bash
-bash ./scripts/package.sh
-```
+### 2.2 Linux
 
-鍙€夊弬鏁帮細
+压缩包内容：
 
-```bash
-bash ./scripts/package.sh \
-  --target x86_64-unknown-linux-gnu \
-  --profile release \
-  --dist-dir dist
-```
-
-### 3.1.1 鍦?Git Bash锛圵indows锛変腑鎵?Linux 鍖?
-鍙互锛屼絾寤鸿鏄惧紡鎸囧畾 Linux target锛屽苟鍏堝畨瑁呭搴?Rust target锛?
-```bash
-rustup target add x86_64-unknown-linux-gnu
-bash ./scripts/package.sh --target x86_64-unknown-linux-gnu
-```
-
-璇存槑锛?
-- `scripts/package.sh` 鍦?Git Bash/MSYS/Cygwin 鐜涓嬶紝鑻ユ湭浼?`--target` 浼氱洿鎺ユ姤閿欏苟缁欏嚭鎻愮ず銆?- 璇ヨ剼鏈彧鐢ㄤ簬 Linux 浜х墿鎵撳寘锛沇indows 浜х墿璇蜂娇鐢?`scripts/package.ps1`銆?
-### 3.2 鎵撳寘浜х墿
-
-绀轰緥锛?
 ```text
-dist/
-鈹斺攢 kb-cli-0.1.4-linux-x86_64.tar.gz
-   鈹斺攢 kb-cli-0.1.4-linux-x86_64/
-      鈹溾攢 kb
-      鈹溾攢 install.sh
-      鈹斺攢 uninstall.sh
+kb-cli-<version>-linux-x86_64/
+├─ kb
+├─ install.sh
+├─ uninstall.sh
+└─ INSTALL.md
 ```
 
-### 3.3 涓€閿畨瑁?
+安装：
+
 ```bash
 bash ./install.sh
 ```
 
-瀹夎琛屼负锛?
-- 灏嗕簩杩涘埗瀹夎鍒?`~/.local/bin/kb`锛堥粯璁わ級
-- 鑻ュ綋鍓?`PATH` 鏈寘鍚畨瑁呯洰褰曪紝鑷姩杩藉姞鍒帮細
-  - `~/.bashrc`
-  - `~/.zshrc`
-  - `~/.profile`
-- 閬垮厤閲嶅鍐欏叆鍚屼竴琛?PATH 閰嶇疆
+安装行为（`install.sh`）：
 
-### 3.4 鍗歌浇
+1. 把 `kb` 安装到 `~/.local/bin/kb`（可用环境变量 `KB_INSTALL_DIR` / `KB_BIN_NAME` 覆盖），权限 `0755`。
+2. 若当前 `PATH` 未包含安装目录，则向已存在的 `~/.bashrc`、`~/.zshrc`、`~/.profile` 追加一行 `export PATH="$HOME/.local/bin:$PATH"`（都不存在时写入 `~/.profile`；重复执行不会重复追加）。
 
-```bash
-bash ./uninstall.sh
-```
-
-鍗歌浇琛屼负锛?
-- 鍒犻櫎瀹夎鐨?`kb` 浜岃繘鍒?- 浠?shell 閰嶇疆鏂囦欢涓竻鐞嗗畨瑁呮椂杩藉姞鐨?PATH 琛?- 瀹夎鐩綍涓虹┖鏃惰嚜鍔ㄥ垹闄?
-## 4. 鑷畾涔夊畨瑁呯洰褰曪紙楂樼骇锛?
-### 4.1 Linux
-
-閫氳繃鐜鍙橀噺瑕嗙洊瀹夎鐩綍/鍛戒护鍚嶏細
-
-```bash
-KB_INSTALL_DIR="$HOME/tools/bin" KB_BIN_NAME="kb" bash ./install.sh
-```
-
-### 4.2 Windows
-
-閫氳繃鍙傛暟瑕嗙洊瀹夎鐩綍/鍛戒护鍚嶏細
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
-  -InstallDir "$env:LOCALAPPDATA\kb-cli\bin" `
-  -BinaryName "kb.exe"
-```
-
-## 5. 楠岃瘉瀹夎
+验证：
 
 ```bash
 kb --help
-kb --version
+# 若未识别，执行 source ~/.profile 或重开终端
 ```
 
-鑻ュ懡浠ゆ湭鐢熸晥锛岃閲嶅紑缁堢鍚庨噸璇曘€?
-## 6. GitHub 鑷姩鎵撳寘骞跺彂甯?Release
+卸载：`bash ./uninstall.sh`。会删除二进制、清理 rc 文件中由安装脚本追加的 PATH 行，并在安装目录为空时删除该目录。
 
-浠撳簱宸叉彁渚?workflow锛歚.github/workflows/release.yml`銆?
-瑙﹀彂鏂瑰紡锛?
-- 鎺ㄩ€?tag锛坄v*`锛夋椂鑷姩瑙﹀彂锛屼緥濡?`v0.1.4`
-- 涔熷彲鍦?GitHub Actions 椤甸潰鎵嬪姩瑙﹀彂锛坄workflow_dispatch`锛?
-娴佺▼鍐呭锛?
-- Ubuntu runner 鏋勫缓骞舵墦鍖?Linux 浜х墿锛坄.tar.gz`锛?- Windows runner 鏋勫缓骞舵墦鍖?Windows 浜х墿锛坄.zip`锛?- 鑷姩鍒涘缓/鏇存柊瀵瑰簲 GitHub Release锛屽苟涓婁紶涓婅堪浜х墿闄勪欢
-
-### 6.1 鎺ㄨ崘鍙戝竷姝ラ
+## 3. 从源码构建
 
 ```bash
+git clone <repo-url>
+cd Kb-cli
+
+# 构建 release 二进制
+cargo build -p kb-cli --release
+
+# 产物位置
+# Windows: target/release/kb-cli.exe
+# Linux:   target/release/kb-cli
+```
+
+可以直接把产物改名为 `kb`（或 `kb.exe`）放入自己的 PATH，也可以继续走第 4 节的打包脚本生成标准安装包。
+
+提示：在仓库内直接运行 `packaging/windows/install.ps1` 也能安装——它会自动从 `target/release/` 或最新的 `dist/kb-cli-*-windows-*/` 目录发现二进制。
+
+## 4. 本地打包
+
+### 4.1 Windows：`scripts/package.ps1`
+
+```powershell
+# 使用宿主默认 target
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
+
+# 显式指定 target / profile / 输出目录
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1 `
+  -Target x86_64-pc-windows-msvc `
+  -Profile release `
+  -DistDir dist
+
+# 跳过构建，直接打包已有二进制
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1 -SkipBuild
+```
+
+行为要点：
+
+- **只接受 Windows target**（triple 含 `-windows-`；传入其他 target 直接报错并提示改用 `package.sh`）。
+- 传入 `-Target` 时会校验该 target 已通过 `rustup target add` 安装。
+- 执行 `cargo build -p kb-cli --profile <profile>`，把 `kb-cli.exe` 重命名为 `kb.exe`，连同 `packaging/windows/` 四个安装/卸载脚本与生成的 `INSTALL.md` 一起放入 `dist/kb-cli-<version>-windows-<arch>/`，并压缩为同名 `.zip`。
+
+### 4.2 Linux：`scripts/package.sh`
+
+```bash
+# 常规用法（推荐显式指定 target）
+bash ./scripts/package.sh --target x86_64-unknown-linux-gnu
+
+# 其他选项
+bash ./scripts/package.sh --profile release --dist-dir dist --skip-build
+```
+
+行为要点：
+
+- **只接受 Linux target**（triple 含 `-linux-`；否则报错并提示改用 `package.ps1`）。
+- 在 Git Bash / MSYS / Cygwin 环境下运行时必须显式传 `--target <linux triple>`。
+- 执行 `cargo build -p kb-cli --profile <profile>`，把二进制重命名为 `kb`，连同 `packaging/linux/install.sh`、`uninstall.sh` 与生成的 `INSTALL.md` 打入 `dist/kb-cli-<version>-linux-<arch>/`，并归档为同名 `.tar.gz`。
+
+## 5. Release 自动发布（GitHub Actions）
+
+工作流：`.github/workflows/release.yml`，在推送 `v*` 格式（`vMAJOR.MINOR.PATCH`）的 tag 时触发：
+
+1. `prepare-release`：校验 tag 格式，创建（或复用）对应 GitHub Release。
+2. `build-linux`：在 `ubuntu-latest` 上执行 `bash ./scripts/package.sh --target x86_64-unknown-linux-gnu`，上传 `dist/*.tar.gz`。
+3. `build-windows`：在 `windows-latest` 上执行 `./scripts/package.ps1 -Target x86_64-pc-windows-msvc`，上传 `dist/*.zip`。
+
+发布步骤：
+
+```bash
+git push origin main
 git tag v0.1.4
 git push origin v0.1.4
 ```
 
-鎺ㄩ€佸畬鎴愬悗锛岀瓑寰?Actions 鎵ц鎴愬姛锛屽嵆鍙湪 Releases 椤甸潰鐪嬪埌瀵瑰簲鐗堟湰涓庨檮浠躲€?
-## 7. 甯歌闂锛圵indows锛?
-### 7.1 杩愯 `.\scripts\package.ps1` 鎻愮ず鈥滀笉鑳藉 Null 鍊艰〃杈惧紡璋冪敤鏂规硶鈥?
-宸插湪褰撳墠鑴氭湰瀹炵幇涓鍔犱互涓嬮槻鎶わ細
+## 6. 关联文档
 
-- 鏋舵瀯鎺㈡祴鏀寔澶氶噸鍥為€€锛坄RuntimeInformation` -> `PROCESSOR_ARCHITECTURE` -> 榛樿鍊硷級
-- 缂哄け渚濊禆锛坄cargo` / `rustup`锛変細缁欏嚭鍙閿欒锛岃€屼笉鏄┖寮曠敤寮傚父
-- 缂哄け瀹夎妯℃澘鏂囦欢浼氬湪鎵撳寘鍓嶆樉寮忔姤閿?
-寤鸿鎺掓煡姝ラ锛?
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package.ps1
-```
-
-鑻ヤ粛澶辫触锛岃鍏堟墽琛岋細
-
-```powershell
-cargo --version
-rustup --version
-```
-
+- 开发者工作流：`docs/cli/developer-workflow.md`
+- 命令手册：`docs/cli/command-manual.md`
+- 项目主页安装说明：`README.md`

@@ -1,12 +1,15 @@
 # KB-CLI 架构文档（CLI Architecture）
 
+> ⚠️ 历史文档（2026-04-17）：部分内容已过时，当前事实以 docs/architecture/memory-model.md 与 docs/cli/command-manual.md 为准。
+> 主要过时点：kb-llm crate 已落地（真实 LLM 调用已实现）、`kb ask --answer` 已接入 ask-agent、命令集合已扩展到 16 个（新增 `remember/correct/consolidate/serve`）、登记快照已从 `.kb/refs.json` 迁移为 `.kb/regs.json`。
+
 ## Overview
 
-本文件描述 KB-CLI 当前**已落地实现**与稳定架构边界。
+本文件描述 KB-CLI 在 2026-04-17 时点的**已落地实现**与稳定架构边界。
 
 - 架构风格：Rust Workspace + Hexagonal（Ports / Adapters）
 - 核心目标：低耦合、可测试、契约先行（docs/fixtures）
-- 命令集合：`init/add/mv/rm/path/chmod/list/check/update/ask/env/completion`
+- 命令集合（当前实现）：`init/add/mv/rm/path/chmod/list/check/update/ask/remember/correct/consolidate/serve/env/completion`
 
 ---
 
@@ -92,20 +95,22 @@
 - `kb init`：成功后会尝试写入全局知识库注册表（失败不阻断 init）
 - `kb env --list`：读取全局注册表并仅返回仍存在且有效的知识库根目录
 - `kb list --long`：`mtime` 字段当前输出 Unix 秒字符串（而非 ISO 时间）
-- `kb check` / `kb update`：当前快照来源为 `.kb/refs.json` 投影记录，而非目录全量扫描
+- `kb check` / `kb update`：当前快照来源为 `.kb/regs.json` 登记快照（`.kb/refs.json` 仅作历史迁移读取），而非目录全量扫描
 
 ---
 
 ## ask Retrieval Architecture (Phase 3~3.6)
 
-当前 ask 路径：
+> ⚠️ 已过时：`kb ask` 现已支持 `--answer`（最小只读 ask-agent，配置 LLM 凭据后 `engine_status=configured`），检索链路也已升级为 L3 -> L2 -> L4 -> L1 分层回退。以下为 2026-04-17 时点描述，最新行为见 `docs/cli/command-manual.md` §4.10 与 `docs/architecture/memory-model.md` §7。
+
+当时的 ask 路径：
 
 1. `commands.rs::run_ask` 加载 snapshot
 2. `kb-core::usecases::execute_ask` 编排
 3. `DefaultRetriever` 执行本地检索（无外部 LLM）
 4. `DisabledAnswerEngine` 返回 `engine_status="disabled"`
 
-### 检索能力（当前）
+### 检索能力（当时）
 
 - 基于 `IndexSnapshot.records` 的 top-k 结果
 - `IndexRecord.excerpt` 持久化并参与检索
@@ -113,10 +118,10 @@
 - 显式 tie-break：同分按 `start` 最小，再按 `end` 最小
 - grapheme cluster 边界安全切片（`unicode-segmentation`）
 
-### 当前约束
+### 当时的约束（现已解除）
 
-- 不接真实外部 LLM/provider（保持 `engine_status="disabled"`）
-- 优先保证 deterministic 输出与可测试性
+- 不接真实外部 LLM/provider（保持 `engine_status="disabled"`）——现由 `kb-llm` crate 提供 OpenAI-compatible 调用
+- 优先保证 deterministic 输出与可测试性——无 LLM 配置时仍保持该行为
 
 ---
 
@@ -180,9 +185,9 @@
 
 ---
 
-## Out of Scope（当前）
+## Out of Scope（2026-04-17 时点）
 
-1. 真实 LLM / 外部 AI provider 调用
+1. ~~真实 LLM / 外部 AI provider 调用~~（已实现：`kb-llm` crate，`kb update --llm` / `kb ask --answer`）
 2. 远程向量数据库强耦合
 3. 动态插件系统
 4. 为“性能优化”破坏现有契约稳定性
