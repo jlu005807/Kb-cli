@@ -3,9 +3,11 @@
 //! 与 `kb-storage-fs` 的关系：两者都实现 `kb-core` 定义的存储 ports，可以
 //! 在配置层选择一个挂入运行时。当前阶段：
 //!
-//! - `state` 表已落地，对应 [`SqliteStateStore`]，作为 SQLite 后端的"第一站"。
-//!   其它 store（index/knowledge/search/graph/wiki）的表结构已在初始化时
-//!   预先建好，但 Rust 端实现尚未补齐——参见 schema 内的注释。
+//! - 所有 store 均已实现：[`SqliteIndexStore`] / [`SqliteKnowledgeStore`] /
+//!   [`SqliteSearchStore`] / [`SqliteGraphStore`] / [`SqliteWikiStore`] /
+//!   [`SqliteEpisodeStore`]，并已在 CLI 侧通过 `StorageHandles` 按
+//!   `storage.backend=sqlite` 配置挂入运行时；[`SqliteStateStore`] 也已实现，
+//!   但 CLI 侧尚未挂接（L0 声明仍走 fs），是单独的迁移项。
 //!
 //! 选择 SQLite 的动机详见 `docs/architecture/memory-model.md` 与项目根 README：
 //!

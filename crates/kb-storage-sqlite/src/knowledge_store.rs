@@ -5,7 +5,10 @@
 //!   base_index_signature——读端用它来判断"snapshot 是否存在"。
 //! - `knowledge_entries`：每个 record_id 一行，tags/key_concepts 序列化为 JSON
 //!   数组保存在 `_json` 列。这两类字段是变长 vec，没必要再单独建表，落 JSON
-//!   足够高效。
+//!   足够高效。schema v4 起同一行还携带 Phase 0 记忆字段：confidence（REAL）、
+//!   source_json（KnowledgeSource 的 serde_json）、created_at / last_verified_at
+//!   （unix nanos 存 i64，与 episodes.timestamp 同一约定；0 表示无时间锚 /
+//!   从未验证）、provenance_json（episode id 的 JSON 数组）。
 //! - `knowledge_chunks`：每行一个 chunk，`(record_id, chunk_id)` 复合主键，
 //!   `record_id` 外键 ON DELETE CASCADE，保证 entry 被替换/删除时 chunk 自动清。
 //!
@@ -13,7 +16,8 @@
 //! 我们只关心"原子落最新版本"。
 
 use kb_core::domain::{
-    KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SemanticProviderInfo,
+    KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeSource, KnowledgeStatus,
+    SemanticProviderInfo, Timestamp,
 };
 use kb_core::error::DomainError;
 use kb_core::ports::KnowledgeStore;
@@ -50,7 +54,9 @@ impl KnowledgeStore for SqliteKnowledgeStore {
             let mut entry_stmt = c
                 .prepare(
                     "SELECT record_id, path, input_signature, status, summary, \
-                            tags_json, key_concepts_json, provider_kind, provider_name \
+                            tags_json, key_concepts_json, provider_kind, provider_name, \
+                            confidence, source_json, created_at, last_verified_at, \
+                            provenance_json \
                      FROM knowledge_entries ORDER BY record_id ASC",
                 )
                 .map_err(|err| {
@@ -58,18 +64,22 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                 })?;
             let entry_rows = entry_stmt
                 .query_map([], |row| {
-                    let status_raw: String = row.get(3)?;
-                    Ok((
-                        row.get::<_, String>(0)?, // record_id
-                        row.get::<_, String>(1)?, // path
-                        row.get::<_, String>(2)?, // input_signature
-                        status_raw,
-                        row.get::<_, String>(4)?, // summary
-                        row.get::<_, String>(5)?, // tags_json
-                        row.get::<_, String>(6)?, // key_concepts_json
-                        row.get::<_, String>(7)?, // provider_kind
-                        row.get::<_, String>(8)?, // provider_name
-                    ))
+                    Ok(EntryRow {
+                        record_id: row.get(0)?,
+                        path: row.get(1)?,
+                        input_signature: row.get(2)?,
+                        status_raw: row.get(3)?,
+                        summary: row.get(4)?,
+                        tags_json: row.get(5)?,
+                        key_concepts_json: row.get(6)?,
+                        provider_kind: row.get(7)?,
+                        provider_name: row.get(8)?,
+                        confidence: row.get(9)?,
+                        source_json: row.get(10)?,
+                        created_at: row.get(11)?,
+                        last_verified_at: row.get(12)?,
+                        provenance_json: row.get(13)?,
+                    })
                 })
                 .map_err(|err| {
                     DomainError::io(format!("query knowledge_entries failed: {err}"))
@@ -80,48 +90,51 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                 })?;
 
             let mut entries = Vec::with_capacity(entry_rows.len());
-            for (
-                record_id,
-                path,
-                input_signature,
-                status_raw,
-                summary,
-                tags_json,
-                key_concepts_json,
-                provider_kind,
-                provider_name,
-            ) in entry_rows
-            {
-                let status = decode_status(&status_raw)?;
-                let tags: Vec<String> = serde_json::from_str(&tags_json).map_err(|err| {
+            for row in entry_rows {
+                let status = decode_status(&row.status_raw)?;
+                let record_id = row.record_id;
+                let tags: Vec<String> = serde_json::from_str(&row.tags_json).map_err(|err| {
                     DomainError::serialization(format!(
                         "decode tags_json for '{record_id}' failed: {err}"
                     ))
                 })?;
                 let key_concepts: Vec<String> =
-                    serde_json::from_str(&key_concepts_json).map_err(|err| {
+                    serde_json::from_str(&row.key_concepts_json).map_err(|err| {
                         DomainError::serialization(format!(
                             "decode key_concepts_json for '{record_id}' failed: {err}"
                         ))
                     })?;
                 let chunks = read_chunks_for(c, &record_id)?;
+                // 记忆字段的宽松解码：pre-v4 旧行（source_json=''）或历史脏
+                // 数据不应让整次读取失败，统一回退到 serde default 同款语义。
+                let source = decode_source(&row.source_json);
+                let provenance: Vec<String> =
+                    serde_json::from_str(&row.provenance_json).unwrap_or_default();
+                let created_at = Timestamp(row.created_at as u64);
+                // 0 表示"从未验证过"（up_v4 的列默认值），映射回 None。
+                let last_verified_at = if row.last_verified_at == 0 {
+                    None
+                } else {
+                    Some(Timestamp(row.last_verified_at as u64))
+                };
                 entries.push(KnowledgeEntry {
                     record_id,
-                    path,
-                    input_signature,
+                    path: row.path,
+                    input_signature: row.input_signature,
                     status,
-                    summary,
+                    summary: row.summary,
                     tags,
                     key_concepts,
                     chunks,
                     provider: SemanticProviderInfo {
-                        kind: provider_kind,
-                        name: provider_name,
+                        kind: row.provider_kind,
+                        name: row.provider_name,
                     },
-                    // Phase 0 schema bump：SQLite 后端尚未持久化 confidence /
-                    // source / timestamps / provenance，临时走 default 占位。
-                    // 等 Phase 1（Episode 层）一起做 schema migration。
-                    ..KnowledgeEntry::default()
+                    confidence: row.confidence as f32,
+                    source,
+                    created_at,
+                    last_verified_at,
+                    provenance,
                 });
             }
 
@@ -155,8 +168,10 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                     .prepare(
                         "INSERT INTO knowledge_entries \
                          (record_id, path, input_signature, status, summary, \
-                          tags_json, key_concepts_json, provider_kind, provider_name) \
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                          tags_json, key_concepts_json, provider_kind, provider_name, \
+                          confidence, source_json, created_at, last_verified_at, \
+                          provenance_json) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                     )
                     .map_err(|err| {
                         DomainError::io(format!(
@@ -190,6 +205,19 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                                 entry.record_id
                             ))
                         })?;
+                    let source_json = serde_json::to_string(&entry.source).map_err(|err| {
+                        DomainError::serialization(format!(
+                            "encode source for '{}' failed: {err}",
+                            entry.record_id
+                        ))
+                    })?;
+                    let provenance_json =
+                        serde_json::to_string(&entry.provenance).map_err(|err| {
+                            DomainError::serialization(format!(
+                                "encode provenance for '{}' failed: {err}",
+                                entry.record_id
+                            ))
+                        })?;
                     entry_stmt
                         .execute(rusqlite::params![
                             entry.record_id,
@@ -201,6 +229,15 @@ impl KnowledgeStore for SqliteKnowledgeStore {
                             key_concepts_json,
                             entry.provider.kind,
                             entry.provider.name,
+                            entry.confidence as f64,
+                            source_json,
+                            entry.created_at.as_nanos() as i64,
+                            // None（从未验证）落 0，与列默认值 / 读端映射对齐。
+                            entry
+                                .last_verified_at
+                                .map(|t| t.as_nanos() as i64)
+                                .unwrap_or(0),
+                            provenance_json,
                         ])
                         .map_err(|err| {
                             DomainError::conflict(format!(
@@ -246,6 +283,35 @@ impl KnowledgeStore for SqliteKnowledgeStore {
             Ok(())
         })
     }
+}
+
+/// `knowledge_entries` 单行的原始列值（解码前）。
+/// 列多到超过 tuple 可读性的临界点，用具名结构体承接。
+struct EntryRow {
+    record_id: String,
+    path: String,
+    input_signature: String,
+    status_raw: String,
+    summary: String,
+    tags_json: String,
+    key_concepts_json: String,
+    provider_kind: String,
+    provider_name: String,
+    confidence: f64,
+    source_json: String,
+    created_at: i64,
+    last_verified_at: i64,
+    provenance_json: String,
+}
+
+/// 宽松解码 source_json：
+/// - `''`（up_v4 列默认值，即 pre-v4 旧行）→ 默认 source（FromFile）
+/// - 反序列化失败（历史脏数据）→ 同样回退默认，不让整次读取失败
+fn decode_source(raw: &str) -> KnowledgeSource {
+    if raw.is_empty() {
+        return KnowledgeSource::default();
+    }
+    serde_json::from_str(raw).unwrap_or_default()
 }
 
 fn read_chunks_for(
@@ -301,7 +367,8 @@ mod tests {
     use super::*;
     use crate::schema::ensure_schema;
     use kb_core::domain::{
-        KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SemanticProviderInfo,
+        KnowledgeChunk, KnowledgeEntry, KnowledgeSnapshot, KnowledgeSource, KnowledgeStatus,
+        SemanticProviderInfo, Timestamp,
     };
 
     fn fresh_store() -> SqliteKnowledgeStore {
@@ -361,6 +428,85 @@ mod tests {
         store.write_knowledge(&snapshot).expect("write");
         let loaded = store.read_knowledge().expect("read").expect("snapshot");
         assert_eq!(loaded, snapshot);
+    }
+
+    /// Phase 0 记忆字段（confidence / source / timestamps / provenance）
+    /// 必须在 SQLite 后端完整 round-trip——此前它们在读端被 default 覆盖，
+    /// 造成 storage.backend=sqlite 下静默丢数据。
+    #[test]
+    fn memory_fields_roundtrip_exactly() {
+        let store = fresh_store();
+        let mut snapshot = sample_snapshot();
+        snapshot.entries[0] = KnowledgeEntry {
+            confidence: 0.6,
+            source: KnowledgeSource::from_agent("cursor"),
+            created_at: Timestamp(1_748_300_000_000_000_123),
+            last_verified_at: Some(Timestamp(1_748_300_100_000_000_456)),
+            provenance: vec!["ep-1".to_string(), "ep-2".to_string()],
+            ..snapshot.entries[0].clone()
+        };
+
+        store.write_knowledge(&snapshot).expect("write");
+        let loaded = store.read_knowledge().expect("read").expect("snapshot");
+
+        assert_eq!(loaded.entries.len(), 1);
+        let got = &loaded.entries[0];
+        let want = &snapshot.entries[0];
+        // 逐字段断言，直接暴露具体丢的是哪一个字段。
+        assert_eq!(got.confidence, 0.6);
+        assert_eq!(got.source, KnowledgeSource::from_agent("cursor"));
+        assert_eq!(
+            got.source.agent_id().map(|id| id.as_str()),
+            Some("cursor")
+        );
+        assert_eq!(got.created_at, Timestamp(1_748_300_000_000_000_123));
+        assert_eq!(
+            got.last_verified_at,
+            Some(Timestamp(1_748_300_100_000_000_456))
+        );
+        assert_eq!(got.provenance, vec!["ep-1", "ep-2"]);
+        // 基础字段没有被顺带弄坏。
+        assert_eq!(got, want);
+        assert_eq!(loaded, snapshot);
+    }
+
+    /// pre-v4 旧行（source_json='' 等列默认值）读出来应等于 serde default 语义，
+    /// 而不是报错——对应从 v3 库迁移上来的存量数据。
+    #[test]
+    fn pre_v4_row_reads_back_with_defaults() {
+        let conn = SqliteConnection::in_memory().expect("open");
+        ensure_schema(&conn).expect("migrate");
+        conn.with(|c| {
+            // 只写 v1 时代就存在的列，让 v4 新列吃 ALTER TABLE 的默认值。
+            c.execute(
+                "INSERT INTO knowledge_entries \
+                 (record_id, path, input_signature, status, summary, \
+                  tags_json, key_concepts_json, provider_kind, provider_name) \
+                 VALUES ('docs/old', './docs/old.md', 'sig', 'active', 's', \
+                         '[]', '[]', 'rule', 'default')",
+                [],
+            )
+            .expect("insert legacy row");
+            c.execute(
+                "INSERT INTO knowledge_meta \
+                 (id, schema_version, generated_at, base_index_signature) \
+                 VALUES (1, 1, 'unix:0', 'idx-sig')",
+                [],
+            )
+            .expect("insert meta");
+            Ok(())
+        })
+        .expect("with");
+
+        let store = SqliteKnowledgeStore::new(conn);
+        let loaded = store.read_knowledge().expect("read").expect("snapshot");
+        assert_eq!(loaded.entries.len(), 1);
+        let entry = &loaded.entries[0];
+        assert_eq!(entry.confidence, 1.0);
+        assert_eq!(entry.source, KnowledgeSource::FromFile);
+        assert_eq!(entry.created_at, Timestamp::ZERO);
+        assert_eq!(entry.last_verified_at, None);
+        assert!(entry.provenance.is_empty());
     }
 
     #[test]

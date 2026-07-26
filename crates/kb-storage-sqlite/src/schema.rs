@@ -1,22 +1,25 @@
 //! Schema 定义与迁移。
 //!
-//! 当前 schema_version = 1。
+//! 当前 schema_version = 4（版本历史见 [`SCHEMA_VERSION`]）。
 //!
 //! 表结构概览（按 memory-model.md 的分层语义命名）：
 //!
 //! - `kb_meta`：单行的 schema version + 创建/最近迁移时间，幂等迁移的锚点。
 //! - `state_refs`：L0 声明对应的 ref 条目（alias / path / category / perms）。
-//!   对应 `kb_core::StateSnapshot`，由 [`crate::SqliteStateStore`] 读写。
+//!   对应 `kb_core::StateSnapshot`，由 [`crate::SqliteStateStore`] 读写
+//!   （store 已实现，但 CLI 侧尚未挂接，L0 声明仍走 fs）。
+//! - `episodes`：L0 Episodic 交互时间线，由 [`crate::SqliteEpisodeStore`] 读写。
 //! - `index_records`：L1 index 行集；`alias` 主键，`signature` 与 `present` 配合
-//!   做 check/update 增量计算。预留，未接入。
+//!   做 check/update 增量计算。由 [`crate::SqliteIndexStore`] 读写。
 //! - `knowledge_entries` + `knowledge_chunks`：L2 语义层。前者携带 summary /
-//!   tags / key_concepts JSON 列，后者每行一个 chunk。预留。
-//! - `search_hits`：L3 投影。预留。
-//! - `graph_nodes` + `graph_edges`：L4 图谱。预留。
-//! - `wiki_pages` + `wiki_manifest`：L5 wiki 派生层。预留。
+//!   tags / key_concepts JSON 列，v4 起还带 confidence / source / timestamps /
+//!   provenance 记忆列；后者每行一个 chunk。由 [`crate::SqliteKnowledgeStore`] 读写。
+//! - `search_hits`：L3 投影。由 [`crate::SqliteSearchStore`] 读写。
+//! - `graph_nodes` + `graph_edges`：L4 图谱。由 [`crate::SqliteGraphStore`] 读写。
+//! - `wiki_pages` + `wiki_manifest`：L5 wiki 派生层。由 [`crate::SqliteWikiStore`] 读写。
 //!
-//! 所有预留表都已建好，避免后续接入时再写一次 `CREATE TABLE`；Rust 端的 store
-//! 实现按需逐步补齐。
+//! 各层 store（index/knowledge/search/graph/wiki/episode）均已实现，并在 CLI 侧
+//! 通过 `StorageHandles` 接入 sqlite 后端；仅 state 层的 store 实现完毕但未挂接。
 
 use kb_core::error::DomainError;
 
@@ -35,7 +38,12 @@ use crate::connection::SqliteConnection;
 /// - v3：新增 L0 Episodic 层 `episodes` 表（append-only 交互时间线），
 ///   对应 `kb_core::Episode` / [`crate::SqliteEpisodeStore`]。refs 序列化为
 ///   JSON 数组列；按 (timestamp, id) 排序提供时间升序读取。
-pub const SCHEMA_VERSION: i64 = 3;
+/// - v4：`knowledge_entries` 补齐 Phase 0 引入的记忆字段列（confidence /
+///   source_json / created_at / last_verified_at / provenance_json），
+///   SQLite 后端自此与 fs 后端一样完整 round-trip `KnowledgeEntry`。
+///   默认值兼容 pre-v4 旧行：source_json='' 表示旧行（读端回退默认
+///   source），时间戳 0 表示无时间锚 / 从未验证。
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// 确保数据库处于最新 schema。幂等：多次调用安全。
 ///
@@ -73,6 +81,9 @@ pub fn ensure_schema(conn: &SqliteConnection) -> Result<(), DomainError> {
         }
         if starting < 3 {
             up_v3(&tx)?;
+        }
+        if starting < 4 {
+            up_v4(&tx)?;
         }
 
         if starting < SCHEMA_VERSION {
@@ -267,6 +278,29 @@ CREATE INDEX IF NOT EXISTS idx_episodes_kind ON episodes(kind);
     Ok(())
 }
 
+fn up_v4(tx: &rusqlite::Transaction<'_>) -> Result<(), DomainError> {
+    // Phase 0 记忆字段落库：knowledge_entries 增加 confidence / source /
+    // timestamps / provenance 列。ensure_schema 的版本门槛保证 up_v4 至多
+    // 执行一次，因此裸 ALTER TABLE ADD COLUMN 是安全的（不会重复加列）。
+    //
+    // 默认值与读端回退语义配套：
+    // - source_json=''      → pre-v4 旧行，读端回退默认 source（FromFile）
+    // - created_at=0        → 历史数据没有时间锚（与 serde default 一致）
+    // - last_verified_at=0  → 从未验证过（读端映射为 None）
+    // 时间戳沿用 episodes.timestamp 的约定：unix nanos 存 i64。
+    tx.execute_batch(
+        r#"
+ALTER TABLE knowledge_entries ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
+ALTER TABLE knowledge_entries ADD COLUMN source_json TEXT NOT NULL DEFAULT '';
+ALTER TABLE knowledge_entries ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE knowledge_entries ADD COLUMN last_verified_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE knowledge_entries ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '[]';
+"#,
+    )
+    .map_err(|err| DomainError::io(format!("up_v4 DDL failed: {err}")))?;
+    Ok(())
+}
+
 fn now_string() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -279,16 +313,75 @@ fn now_string() -> String {
 mod tests {
     use super::*;
 
+    /// PRAGMA table_info 拿到的列名集合。
+    fn table_columns(c: &rusqlite::Connection, table: &str) -> Vec<String> {
+        let mut stmt = c
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .expect("prepare pragma");
+        stmt.query_map([], |row| row.get::<_, String>(1))
+            .expect("query pragma")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect columns")
+    }
+
     #[test]
     fn ensure_schema_is_idempotent() {
         let conn = SqliteConnection::in_memory().expect("open");
         ensure_schema(&conn).expect("first migrate");
         ensure_schema(&conn).expect("second migrate should be no-op");
+        // 第三次也应无副作用——重点是 up_v4 的 ALTER TABLE 不会被重复执行
+        // （否则 duplicate column 直接报错）。
+        ensure_schema(&conn).expect("third migrate should be no-op");
         conn.with(|c| {
             let v: i64 = c
                 .query_row("SELECT schema_version FROM kb_meta", [], |row| row.get(0))
                 .expect("read version");
             assert_eq!(v, SCHEMA_VERSION);
+            // 反复迁移后 v4 列仍然齐备且未重复。
+            let columns = table_columns(c, "knowledge_entries");
+            for col in [
+                "confidence",
+                "source_json",
+                "created_at",
+                "last_verified_at",
+                "provenance_json",
+            ] {
+                assert_eq!(
+                    columns.iter().filter(|name| name.as_str() == col).count(),
+                    1,
+                    "expected exactly one '{col}' column, got {columns:?}"
+                );
+            }
+            Ok(())
+        })
+        .expect("with");
+    }
+
+    #[test]
+    fn fresh_database_migrates_to_v4_with_memory_columns() {
+        let conn = SqliteConnection::in_memory().expect("open");
+        ensure_schema(&conn).expect("migrate");
+        conn.with(|c| {
+            let v: i64 = c
+                .query_row("SELECT schema_version FROM kb_meta WHERE id = 1", [], |row| {
+                    row.get(0)
+                })
+                .expect("read version");
+            assert_eq!(v, 4, "fresh db should land on schema v4");
+
+            let columns = table_columns(c, "knowledge_entries");
+            for col in [
+                "confidence",
+                "source_json",
+                "created_at",
+                "last_verified_at",
+                "provenance_json",
+            ] {
+                assert!(
+                    columns.iter().any(|name| name == col),
+                    "missing v4 column '{col}' in knowledge_entries: {columns:?}"
+                );
+            }
             Ok(())
         })
         .expect("with");
