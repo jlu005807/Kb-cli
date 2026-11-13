@@ -19,7 +19,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::{AddMode, Cli};
 use crate::core_adapters::{ConfiguredAnswerEngine, DisabledAnswerEngine, FsStateStore};
-use crate::env_registry::{list_existing_kb_roots, register_kb_root, resolve_global_config_path};
+use crate::env_registry::{
+    list_existing_kb_roots, register_kb_root, resolve_global_config_path,
+    resolve_global_config_selection,
+};
 use crate::errors::{map_core_error, CliError, CoreErrorKind};
 use crate::kb_md::parse_kb_document;
 use crate::llm_config::resolve_llm_config;

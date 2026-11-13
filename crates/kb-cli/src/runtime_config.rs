@@ -28,6 +28,15 @@ struct FileConfig {
 /// 解析并合并运行时配置。
 /// 优先级：flags > env > project > global > defaults。
 pub fn resolve_runtime_config(cli: &Cli, cwd: &Path) -> RuntimeConfig {
+    let global_path = crate::env_registry::resolve_global_config_selection().path;
+    resolve_runtime_config_with_global_path(cli, cwd, &global_path)
+}
+
+fn resolve_runtime_config_with_global_path(
+    cli: &Cli,
+    cwd: &Path,
+    global_path: &Path,
+) -> RuntimeConfig {
     let defaults = RuntimeConfigDto::default();
 
     let flags = Some(RuntimeConfigDto {
@@ -51,9 +60,7 @@ pub fn resolve_runtime_config(cli: &Cli, cwd: &Path) -> RuntimeConfig {
     };
 
     let project = load_file_config(&cwd.join(".kb/config.json"));
-    let global = std::env::var("KB_GLOBAL_CONFIG")
-        .ok()
-        .and_then(|p| load_file_config(Path::new(&p)));
+    let global = load_file_config(global_path);
 
     let merged = ConfigLayers::from_layers(flags, env, project, global, defaults).merge();
     RuntimeConfig {
@@ -80,5 +87,36 @@ fn read_env_bool(key: &str) -> Option<bool> {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_runtime_config_with_global_path;
+    use clap::Parser;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn runtime_config_reads_the_selected_global_config_path() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "kb-runtime-config-global-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("create test directory");
+        let global_path: PathBuf = directory.join("selected-global.json");
+        fs::write(&global_path, r#"{"quiet":true}"#).expect("write global config");
+        let cli = crate::cli::Cli::try_parse_from(["kb", "env", "--doctor"])
+            .expect("parse test command");
+
+        let resolved = resolve_runtime_config_with_global_path(&cli, &directory, &global_path);
+
+        assert!(resolved.trace.contains("source=global decision=ignored"));
+        fs::remove_dir_all(directory).expect("remove test directory");
     }
 }

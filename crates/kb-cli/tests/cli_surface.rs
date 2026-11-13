@@ -30,9 +30,15 @@ fn help_includes_required_global_flags() {
         contains("--output")
             .and(contains("--quiet"))
             .and(contains("--verbose"))
-            .and(contains("--config"))
             .and(contains("--no-color")),
     );
+}
+
+#[test]
+fn root_help_does_not_advertise_config_flag() {
+    let assert = kb_command().arg("--help").assert().success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(!stdout.contains("--config"));
 }
 
 #[test]

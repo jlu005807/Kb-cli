@@ -19,6 +19,13 @@
 /// `.kb/raw/`（RAW_DIR_REL）是声明文件的正常归属地，能被 add + update 正常编译。
 const AGENT_MEMORY_SUBDIR: &str = "raw/agent-memory";
 
+fn storage_unavailable_error(reason: &str, detail: String) -> CliError {
+    map_core_error(
+        CoreErrorKind::StorageUnavailable,
+        json!({ "reason": reason, "detail": detail }),
+    )
+}
+
 fn existing_memory_topics(mem_dir: &std::path::Path) -> Result<std::collections::BTreeMap<String, String>, std::io::Error> {
     let mut existing = std::collections::BTreeMap::new();
     let entries = match std::fs::read_dir(mem_dir) {
@@ -68,7 +75,7 @@ pub(crate) fn run_remember(
 ) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
     let storage = StorageHandles::open(&cwd)
-        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+        .map_err(|err| storage_unavailable_error("open episode storage failed", err.to_string()))?;
 
     let now = kb_core::Timestamp::now();
     let id = make_episode_id(now, &format!("observation|{}", content));
@@ -84,12 +91,10 @@ pub(crate) fn run_remember(
     .with_refs(refs.clone())
     .with_confidence(conf);
 
-    storage.episode.append(&episode).map_err(|err| {
-        map_core_error(
-            CoreErrorKind::InvalidKbFormat,
-            json!({ "reason": "episode append failed", "detail": err.to_string() }),
-        )
-    })?;
+    storage
+        .episode
+        .append(&episode)
+        .map_err(|err| storage_unavailable_error("episode append failed", err.to_string()))?;
 
     let data = json!({
         "command": "remember",
@@ -110,7 +115,7 @@ pub(crate) fn run_remember(
 pub(crate) fn run_correct(content: String, refs: Vec<String>) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
     let storage = StorageHandles::open(&cwd)
-        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+        .map_err(|err| storage_unavailable_error("open episode storage failed", err.to_string()))?;
 
     let now = kb_core::Timestamp::now();
     let id = make_episode_id(now, &format!("correction|{}", content));
@@ -125,12 +130,10 @@ pub(crate) fn run_correct(content: String, refs: Vec<String>) -> Result<Value, C
     .with_refs(refs.clone())
     .with_confidence(1.0);
 
-    storage.episode.append(&episode).map_err(|err| {
-        map_core_error(
-            CoreErrorKind::InvalidKbFormat,
-            json!({ "reason": "episode append failed", "detail": err.to_string() }),
-        )
-    })?;
+    storage
+        .episode
+        .append(&episode)
+        .map_err(|err| storage_unavailable_error("episode append failed", err.to_string()))?;
 
     let data = json!({
         "command": "correct",
@@ -150,17 +153,12 @@ pub(crate) fn run_correct(content: String, refs: Vec<String>) -> Result<Value, C
 pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
     let storage = StorageHandles::open(&cwd)
-        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+        .map_err(|err| storage_unavailable_error("open episode storage failed", err.to_string()))?;
 
     let episodes = storage
         .episode
         .query(&kb_core::EpisodeFilter::default())
-        .map_err(|err| {
-            map_core_error(
-                CoreErrorKind::InvalidKbFormat,
-                json!({ "reason": "episode query failed", "detail": err.to_string() }),
-            )
-        })?;
+        .map_err(|err| storage_unavailable_error("episode query failed", err.to_string()))?;
 
     let now = kb_core::Timestamp::now();
     let plan = kb_core::plan_consolidation(&episodes, min, now);
@@ -169,10 +167,7 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
         std::collections::BTreeMap::new()
     } else {
         existing_memory_topics(&mem_dir).map_err(|err| {
-            map_core_error(
-                CoreErrorKind::InvalidKbFormat,
-                json!({ "reason": "scan agent-memory files failed", "detail": err.to_string() }),
-            )
+            storage_unavailable_error("scan agent-memory files failed", err.to_string())
         })?
     };
     let mut file_names = std::collections::BTreeMap::new();
@@ -180,7 +175,7 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
         let file_name = kb_core::usecases::memory_file_name(&mem.topic, &existing_files)
             .map_err(|err| {
                 map_core_error(
-                    CoreErrorKind::InvalidKbFormat,
+                    CoreErrorKind::StorageUnavailable,
                     json!({ "reason": "select memory file name failed", "topic": mem.topic, "detail": err }),
                 )
             })?;
@@ -195,10 +190,7 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
 
     if !dry_run && !plan.memories.is_empty() {
         std::fs::create_dir_all(&mem_dir).map_err(|err| {
-            map_core_error(
-                CoreErrorKind::InvalidKbFormat,
-                json!({ "reason": "create agent-memory dir failed", "detail": err.to_string() }),
-            )
+            storage_unavailable_error("create agent-memory directory failed", err.to_string())
         })?;
         for mem in &plan.memories {
             let file_name = file_names
@@ -209,9 +201,9 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
             let abs_path = mem_dir.join(&file_name);
             let doc = render_memory_document(mem);
             kb_storage_fs::atomic_write_bytes(&abs_path, doc.as_bytes()).map_err(|err| {
-                map_core_error(
-                    CoreErrorKind::InvalidKbFormat,
-                    json!({ "reason": "write memory file failed", "file": file_name, "detail": err.to_string() }),
+                storage_unavailable_error(
+                    "write memory file failed",
+                    format!("file={file_name}: {err}"),
                 )
             })?;
 

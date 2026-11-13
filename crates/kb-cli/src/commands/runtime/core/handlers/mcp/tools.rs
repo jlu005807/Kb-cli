@@ -62,8 +62,13 @@ fn mcp_tool_verify_citation(args: &Value) -> Result<Value, String> {
 /// list_episodes：按 agent_id（可选）+ limit 拉取最近 episode。
 fn mcp_tool_list_episodes(args: &Value) -> Result<Value, String> {
     let cwd = mcp_cwd()?;
-    let storage =
-        StorageHandles::open(&cwd).map_err(|e| format!("open storage failed: {}", e))?;
+    let storage = StorageHandles::open(&cwd).map_err(|err| {
+        let error = map_core_error(
+            CoreErrorKind::StorageUnavailable,
+            json!({ "reason": "open episode storage failed", "detail": err.to_string() }),
+        );
+        format!("{}: {}", error.code, error.message)
+    })?;
 
     let mut filter = kb_core::EpisodeFilter::default();
     if let Some(agent) = args.get("agent_id").and_then(Value::as_str) {
@@ -81,7 +86,13 @@ fn mcp_tool_list_episodes(args: &Value) -> Result<Value, String> {
     let episodes = storage
         .episode
         .query(&filter)
-        .map_err(|e| format!("episode query failed: {}", e))?;
+        .map_err(|err| {
+            let error = map_core_error(
+                CoreErrorKind::StorageUnavailable,
+                json!({ "reason": "episode query failed", "detail": err.to_string() }),
+            );
+            format!("{}: {}", error.code, error.message)
+        })?;
 
     let items: Vec<Value> = episodes
         .iter()

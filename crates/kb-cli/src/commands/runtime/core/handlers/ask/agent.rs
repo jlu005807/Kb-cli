@@ -22,12 +22,18 @@ fn search_context_for_agent(
     query: &str,
     top_k: usize,
 ) -> Result<Vec<kb_core::RetrievedContext>, String> {
-    let storage = StorageHandles::open(cwd)
-        .map_err(|err| format!("open storage backend failed: {}", err))?;
+    let storage = StorageHandles::open(cwd).map_err(|err| {
+        format!(
+            "E1004: Storage unavailable: open storage backend failed: {}",
+            err
+        )
+    })?;
     let snapshot = storage
         .index
         .read_index()
-        .map_err(|err| format!("failed to read index snapshot: {}", err))?
+        .map_err(|err| {
+            format!("E1004: Storage unavailable: failed to read index snapshot: {}", err)
+        })?
         .ok_or_else(|| "missing index snapshot; run `kb update` first".to_string())?;
     let (retriever, _) = build_ask_stack(cwd);
     retriever

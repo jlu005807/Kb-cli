@@ -1,5 +1,5 @@
 //! `cli.rs` 定义命令行“协议面”：
-//! - 全局选项（输出格式、静默、verbose、配置路径）
+//! - 全局选项（输出格式、静默、verbose）
 //! - 子命令与参数模型
 //!
 //! 该文件不承载业务逻辑，只负责参数结构与帮助信息契约。
@@ -40,9 +40,6 @@ pub struct Cli {
 
     #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
     pub verbose: u8,
-
-    #[arg(long, global = true)]
-    pub config: Option<String>,
 
     #[arg(long = "no-color", global = true, action = ArgAction::SetTrue)]
     pub no_color: bool,

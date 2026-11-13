@@ -2184,11 +2184,17 @@ fn completion_json_contains_script_field() {
 }
 
 #[test]
-fn invalid_config_path_returns_e2008() {
+fn config_flag_is_rejected_by_clap() {
     let dir = unique_temp_dir("invalid-config");
-    let (ok, body) = run_json(&["--config", "./no/such/config.toml", "init", "demo"], &dir);
-    assert!(!ok);
-    assert_eq!(body["error"]["code"], "E2008");
+    let output = kb_command_in(&dir)
+        .args(["--config", "./config.json", "init", "demo"])
+        .assert()
+        .code(2)
+        .get_output()
+        .to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unexpected argument"), "expected Clap rejection: {stderr}");
+    assert!(stderr.contains("--config"));
 }
 
 #[test]
@@ -2269,6 +2275,24 @@ fn env_list_text_is_human_readable_multiline() {
         !stdout.trim_start().starts_with('{'),
         "text output should not be rendered as raw JSON"
     );
+}
+
+#[test]
+fn env_doctor_reports_selected_global_config_path_and_source() {
+    let dir = unique_temp_dir("env-doctor-global-config-selection");
+    write_json_file(
+        &dir,
+        "./global-config.json",
+        &json!({ "llm": { "model": "selected-model" } }),
+    );
+    let (ok, doctor) = run_json(&["env", "--doctor"], &dir);
+    assert!(ok);
+
+    let expected = dir.join("global-config.json").to_string_lossy().to_string();
+    assert_eq!(doctor["data"]["global_config"]["path"], expected);
+    assert_eq!(doctor["data"]["global_config"]["rule"], 1);
+    assert_eq!(doctor["data"]["global_config"]["source"], "KB_GLOBAL_CONFIG");
+    assert_eq!(doctor["data"]["llm"]["model"], "selected-model");
 }
 
 #[test]

@@ -17,7 +17,6 @@
 | `--output <text|json>` | string | `text` | 输出模式 |
 | `--quiet` | flag | false | 抑制非必要输出 |
 | `--verbose` | count | 0 | 日志详细级别（`-v`、`-vv`） |
-| `--config <PATH>` | string | auto | 指定配置文件路径 |
 | `--no-color` | flag | false | 禁用 ANSI 颜色 |
 | `--help` | flag | - | 显示帮助 |
 | `--version` | flag | - | 显示版本 |

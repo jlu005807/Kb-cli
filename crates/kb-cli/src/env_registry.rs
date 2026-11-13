@@ -20,6 +20,68 @@ pub struct EnvRegistryList {
     pub existing_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GlobalConfigSource {
+    Environment,
+    ExecutableDirectory,
+    HomeDirectory,
+}
+
+impl GlobalConfigSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Environment => "KB_GLOBAL_CONFIG",
+            Self::ExecutableDirectory => "executable_directory",
+            Self::HomeDirectory => "home_directory",
+        }
+    }
+
+    pub(crate) fn rule_number(self) -> u8 {
+        match self {
+            Self::Environment => 1,
+            Self::ExecutableDirectory => 2,
+            Self::HomeDirectory => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GlobalConfigSelection {
+    pub path: PathBuf,
+    pub source: GlobalConfigSource,
+}
+
+pub(crate) fn select_global_config_path(
+    env_override: Option<&str>,
+    exe_candidate: Option<&Path>,
+    exe_candidate_exists: bool,
+    home: Option<&Path>,
+) -> GlobalConfigSelection {
+    if let Some(path) = env_override.filter(|path| !path.trim().is_empty()) {
+        return GlobalConfigSelection {
+            path: PathBuf::from(path),
+            source: GlobalConfigSource::Environment,
+        };
+    }
+
+    if exe_candidate_exists {
+        if let Some(path) = exe_candidate {
+            return GlobalConfigSelection {
+                path: path.to_path_buf(),
+                source: GlobalConfigSource::ExecutableDirectory,
+            };
+        }
+    }
+
+    GlobalConfigSelection {
+        path: home
+            .unwrap_or_else(|| Path::new("."))
+            .join(DEFAULT_GLOBAL_CONFIG_DIR)
+            .join(DEFAULT_GLOBAL_CONFIG_FILE),
+        source: GlobalConfigSource::HomeDirectory,
+    }
+}
+
 pub fn register_kb_root(kb_root: &Path) -> Result<(), String> {
     let config_path = global_config_path();
     let mut config = read_global_config(&config_path);
@@ -61,29 +123,33 @@ pub fn list_existing_kb_roots() -> EnvRegistryList {
     }
 }
 
+pub(crate) fn resolve_global_config_selection() -> GlobalConfigSelection {
+    let env_override = std::env::var(GLOBAL_CONFIG_ENV).ok();
+    let exe_candidate = std::env::current_exe()
+        .ok()
+        .and_then(|exe| executable_config_candidate(&exe));
+    let exe_candidate_exists = exe_candidate
+        .as_ref()
+        .map(|path| path.is_file())
+        .unwrap_or(false);
+    let home = user_home_dir();
+    select_global_config_path(
+        env_override.as_deref(),
+        exe_candidate.as_deref(),
+        exe_candidate_exists,
+        home.as_deref(),
+    )
+}
+
 pub(crate) fn resolve_global_config_path() -> PathBuf {
-    global_config_path()
+    resolve_global_config_selection().path
 }
 
 fn global_config_path() -> PathBuf {
-    if let Ok(path) = std::env::var(GLOBAL_CONFIG_ENV) {
-        if !path.trim().is_empty() {
-            return PathBuf::from(path);
-        }
-    }
-
-    if let Some(path) = executable_dir_config_path() {
-        return path;
-    }
-
-    user_home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(DEFAULT_GLOBAL_CONFIG_DIR)
-        .join(DEFAULT_GLOBAL_CONFIG_FILE)
+    resolve_global_config_selection().path
 }
 
-fn executable_dir_config_path() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
+fn executable_config_candidate(exe: &Path) -> Option<PathBuf> {
     let exe_dir = exe.parent()?;
 
     let dir_name = exe_dir
@@ -266,7 +332,83 @@ fn is_existing_kb_root(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_registry_path_str;
+    use super::{
+        executable_config_candidate, normalize_registry_path_str, select_global_config_path,
+        GlobalConfigSource,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn global_config_selection_uses_environment_override_first() {
+        let selected = select_global_config_path(
+            Some("custom/global.json"),
+            Some(Path::new("bin/config.json")),
+            true,
+            Some(Path::new("home")),
+        );
+
+        assert_eq!(selected.path, Path::new("custom/global.json"));
+        assert_eq!(selected.source, GlobalConfigSource::Environment);
+    }
+
+    #[test]
+    fn global_config_selection_uses_existing_executable_candidate() {
+        let selected = select_global_config_path(
+            None,
+            Some(Path::new("install/config.json")),
+            true,
+            Some(Path::new("home")),
+        );
+
+        assert_eq!(selected.path, Path::new("install/config.json"));
+        assert_eq!(selected.source, GlobalConfigSource::ExecutableDirectory);
+    }
+
+    #[test]
+    fn global_config_selection_falls_back_to_home_when_executable_config_is_absent() {
+        let selected = select_global_config_path(
+            None,
+            Some(Path::new("target/debug/config.json")),
+            false,
+            Some(Path::new("home")),
+        );
+
+        assert_eq!(selected.path, Path::new("home/.kb-cli/config.json"));
+        assert_eq!(selected.source, GlobalConfigSource::HomeDirectory);
+    }
+
+    #[test]
+    fn blank_environment_override_is_ignored() {
+        let selected = select_global_config_path(
+            Some("  "),
+            Some(Path::new("target/debug/config.json")),
+            false,
+            Some(Path::new("home")),
+        );
+
+        assert_eq!(selected.path, Path::new("home/.kb-cli/config.json"));
+        assert_eq!(selected.source, GlobalConfigSource::HomeDirectory);
+    }
+
+    #[test]
+    fn executable_candidate_uses_install_root_for_bin_directory() {
+        let executable = Path::new("install").join("bin").join("kb.exe");
+
+        assert_eq!(
+            executable_config_candidate(&executable),
+            Some(Path::new("install").join("config.json"))
+        );
+    }
+
+    #[test]
+    fn executable_candidate_uses_executable_directory_outside_bin() {
+        let executable = Path::new("target").join("debug").join("kb-cli.exe");
+
+        assert_eq!(
+            executable_config_candidate(&executable),
+            Some(Path::new("target").join("debug").join("config.json"))
+        );
+    }
 
     #[test]
     #[cfg(windows)]

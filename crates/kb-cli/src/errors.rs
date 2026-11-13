@@ -11,7 +11,7 @@ pub enum CoreErrorKind {
     NotInitialized,
     InvalidKbFormat,
     WriteConfigFailed,
-    ConfigNotFound,
+    StorageUnavailable,
     Interrupted,
     AliasNotFound,
     AliasInvalid,
@@ -82,12 +82,12 @@ pub fn map_core_error(kind: CoreErrorKind, details: Value) -> CliError {
             details,
             exit_code: 1,
         },
-        CoreErrorKind::ConfigNotFound => CliError {
-            code: "E2008",
-            message: "Configuration file not found",
-            suggestion: Some("Pass a valid --config path or remove the flag"),
+        CoreErrorKind::StorageUnavailable => CliError {
+            code: "E1004",
+            message: "Storage unavailable",
+            suggestion: Some("Check storage files under .kb and retry"),
             details,
-            exit_code: 2,
+            exit_code: 1,
         },
         CoreErrorKind::Interrupted => CliError {
             code: "E9001",

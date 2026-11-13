@@ -65,17 +65,6 @@ fn main() -> ExitCode {
         }
         std::process::exit(130);
     });
-    // 提前校验显式传入的配置路径，避免进入命令执行后才报错。
-    if let Some(config_path) = cli.config.as_ref() {
-        if !std::path::Path::new(config_path).exists() {
-            let err = map_core_error(
-                CoreErrorKind::ConfigNotFound,
-                serde_json::json!({"path": config_path}),
-            );
-            render_error(cli.output, &err);
-            return ExitCode::from(err.exit_code);
-        }
-    }
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let resolved = resolve_runtime_config(&cli, &cwd);
@@ -83,10 +72,9 @@ fn main() -> ExitCode {
     // debug trace 只在 verbose 且非 quiet 时输出，避免污染标准输出契约。
     if resolved.dto.verbose > 0 && !resolved.dto.quiet {
         eprintln!(
-            "verbose={} no_color={} config={} source={}\ntrace:\n{}",
+            "verbose={} no_color={} source={}\ntrace:\n{}",
             resolved.dto.verbose,
             resolved.dto.no_color,
-            cli.config.as_deref().unwrap_or("<none>"),
             resolved.source,
             resolved.trace
         );

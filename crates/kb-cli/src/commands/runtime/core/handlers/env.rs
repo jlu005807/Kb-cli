@@ -33,12 +33,18 @@ pub(crate) fn run_env(list: bool) -> Result<Value, CliError> {
 /// - 已解析的 trace（kb-llm 自己记的层级摘要）。
 pub(crate) fn run_env_doctor() -> Result<Value, CliError> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let global_config = resolve_global_config_selection();
     let llm_runtime = resolve_llm_config(&cwd);
     let keyring = probe_keyring_status();
 
     let data = json!({
         "mode": "doctor",
         "cwd": cwd.to_string_lossy(),
+        "global_config": {
+            "path": global_config.path.to_string_lossy(),
+            "rule": global_config.source.rule_number(),
+            "source": global_config.source.as_str(),
+        },
         "llm": {
             "model": llm_runtime.model,
             "base_url": llm_runtime.base_url,
@@ -62,18 +68,34 @@ pub(crate) fn run_env_doctor() -> Result<Value, CliError> {
         "trace": llm_runtime.trace,
     });
 
-    let text = format_env_doctor_text(&cwd, &llm_runtime, &keyring);
+    let text = format_env_doctor_text(
+        &cwd,
+        &global_config.path,
+        global_config.source.rule_number(),
+        global_config.source.as_str(),
+        &llm_runtime,
+        &keyring,
+    );
     Ok(with_text(data, text))
 }
 
 fn format_env_doctor_text(
     cwd: &Path,
+    global_config_path: &Path,
+    global_config_rule: u8,
+    global_config_source: &str,
     runtime: &kb_llm::LlmRuntimeConfig,
     keyring: &KeyringStatus,
 ) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "KB LLM doctor");
     let _ = writeln!(out, "cwd: {}", cwd.display());
+    let _ = writeln!(out, "global_config_path: {}", global_config_path.display());
+    let _ = writeln!(
+        out,
+        "global_config_rule: {} ({})",
+        global_config_rule, global_config_source
+    );
     let _ = writeln!(out, "model: {}", runtime.model);
     let _ = writeln!(out, "base_url: {}", runtime.base_url);
     let _ = writeln!(

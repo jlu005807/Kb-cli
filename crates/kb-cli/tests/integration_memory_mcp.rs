@@ -182,6 +182,27 @@ fn remember_rejects_non_finite_confidence_without_writing_episode() {
 }
 
 #[test]
+fn memory_commands_map_episode_storage_errors_to_e1004() {
+    for command in ["remember", "correct", "consolidate"] {
+        let dir = unique_temp_dir(&format!("memory-storage-error-{command}"));
+        let (ok, _) = run_json(&["init", "demo"], &dir);
+        assert!(ok);
+        fs::create_dir_all(dir.join(".kb/episodes.jsonl"))
+            .expect("replace episodes file with directory");
+        let args: &[&str] = match command {
+            "remember" => &["remember", "fact"],
+            "correct" => &["correct", "correction"],
+            "consolidate" => &["consolidate", "--min", "1"],
+            _ => unreachable!(),
+        };
+
+        let (ok, result) = run_json(args, &dir);
+        assert!(!ok, "{command} should fail when episode storage is unavailable");
+        assert_eq!(result["error"]["code"], "E1004", "{result}");
+    }
+}
+
+#[test]
 fn correct_writes_user_correction_with_confidence_1() {
     let dir = unique_temp_dir("correct-user-correction");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -826,6 +847,82 @@ fn mcp_consolidate_locks_only_its_tool_call() {
     assert_eq!(responses[3]["result"], serde_json::json!({}));
 
     lock.release().expect("release test writer lock");
+}
+
+#[test]
+fn mcp_list_episodes_maps_storage_error_to_e1004_and_keeps_server_alive() {
+    let dir = unique_temp_dir("mcp-episode-storage-error");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    fs::create_dir_all(dir.join(".kb/episodes.jsonl"))
+        .expect("replace episodes file with directory");
+    let requests = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_episodes","arguments":{}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+    ]
+    .join("\n");
+
+    let output = kb_command_in(&dir)
+        .args(["serve", "--mcp"])
+        .write_stdin(requests)
+        .assert()
+        .success()
+        .get_output()
+        .to_owned();
+    let responses = String::from_utf8(output.stdout)
+        .expect("MCP stdout should be UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("response should be JSON"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["result"]["isError"], true);
+    assert!(responses[0]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("E1004"), "{}", responses[0]);
+    assert_eq!(responses[1]["result"], serde_json::json!({}));
+}
+
+#[test]
+fn mcp_recall_maps_index_storage_error_to_e1004() {
+    let dir = unique_temp_dir("mcp-index-storage-error");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    fs::create_dir_all(dir.join(".kb/index.json"))
+        .expect("replace index snapshot with directory");
+    fs::write(dir.join(".kb/index.errors.json"), "[]").expect("write index errors");
+    fs::write(
+        dir.join(".kb/index.meta.json"),
+        r#"{"full":false,"baseline_size":0,"tracked_size":0}"#,
+    )
+    .expect("write index metadata");
+    let requests = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"recall","arguments":{"query":"query"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+    ]
+    .join("\n");
+
+    let output = kb_command_in(&dir)
+        .args(["serve", "--mcp"])
+        .write_stdin(requests)
+        .assert()
+        .success()
+        .get_output()
+        .to_owned();
+    let responses = String::from_utf8(output.stdout)
+        .expect("MCP stdout should be UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("response should be JSON"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["result"]["isError"], true);
+    assert!(responses[0]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("E1004"), "{}", responses[0]);
+    assert_eq!(responses[1]["result"], serde_json::json!({}));
 }
 
 #[cfg(unix)]
