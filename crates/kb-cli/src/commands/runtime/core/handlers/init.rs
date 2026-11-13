@@ -1,4 +1,4 @@
-pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliError> {
+pub(crate) fn run_init(name: Option<String>, force: bool, verbose: u8) -> Result<Value, CliError> {
     let cwd = std::env::current_dir().map_err(|_| write_config_error())?;
     let kb_md = cwd.join("kb.md");
     let already_initialized = kb_md.exists() && cwd.join(".kb").exists();
@@ -15,6 +15,14 @@ pub(crate) fn run_init(name: Option<String>, force: bool) -> Result<Value, CliEr
         )?;
 
     fs::create_dir_all(cwd.join(".kb")).map_err(|_| write_config_error())?;
+    let writer_lock = crate::commands::acquire_writer_lock(&cwd)?;
+    if writer_lock.unsupported && verbose > 0 {
+        eprintln!("warning: filesystem does not support writer locks; continuing without a lock");
+    }
+    let _writer_lock = writer_lock;
+    if !force && kb_md.exists() && cwd.join(".kb").is_dir() {
+        return Err(map_core_error(CoreErrorKind::AlreadyInitialized, json!({})));
+    }
     fs::create_dir_all(cwd.join(RAW_DIR_REL.trim_start_matches("./")))
         .map_err(|_| write_config_error())?;
     fs::write(cwd.join(KBIGNORE_REL), DEFAULT_KBIGNORE_CONTENT).map_err(|_| write_config_error())?;

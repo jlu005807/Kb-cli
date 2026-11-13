@@ -110,6 +110,7 @@ fn init_creates_kbignore() {
     assert!(ok);
     assert_eq!(body["status"], "success");
     assert!(dir.join(".kb/.kbignore").exists());
+    assert!(dir.join(".kb/writer.lock").is_file());
     let ignore_raw = fs::read_to_string(dir.join(".kb/.kbignore")).expect("read .kbignore");
     assert!(ignore_raw.contains("./kb.md"));
     assert!(ignore_raw.contains("./.kb/refs.json"));
@@ -226,10 +227,7 @@ fn add_inserts_before_child_heading_in_target_category() {
         "# docs:r\n[existing](./docs/existing.md):r\n\n## child\n[child](./docs/child.md):r\n# notes:rw\n",
     );
 
-    let (ok, _) = run_json(
-        &["add", "./docs/new.md", "new", "--category", "docs"],
-        &dir,
-    );
+    let (ok, _) = run_json(&["add", "./docs/new.md", "new", "--category", "docs"], &dir);
     assert!(ok);
     let (ok, _) = run_json(&["update"], &dir);
     assert!(ok);
@@ -237,7 +235,10 @@ fn add_inserts_before_child_heading_in_target_category() {
     let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
     let new_line = kb_md.find("[new](./docs/new.md)").expect("new reference");
     let child_heading = kb_md.find("## child").expect("child heading");
-    assert!(new_line < child_heading, "new reference must remain in docs");
+    assert!(
+        new_line < child_heading,
+        "new reference must remain in docs"
+    );
 
     let (ok, listed) = run_json(&["list", "--long", "--tree"], &dir);
     assert!(ok);
@@ -251,6 +252,60 @@ fn add_inserts_before_child_heading_in_target_category() {
         .as_array()
         .expect("categories array");
     assert!(categories.iter().any(|category| category == "docs"));
+}
+
+#[test]
+fn writer_lock_blocks_cli_writes_but_not_read_or_episode_append_commands() {
+    let dir = unique_temp_dir("writer-lock-cli-boundary");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    let kb_md = fs::read(dir.join("kb.md")).expect("read initial kb.md");
+    let lock = kb_storage_fs::SingleWriterLockManager::new(dir.join(".kb"))
+        .acquire()
+        .expect("acquire test writer lock")
+        .expect("file locks should be supported");
+
+    let (ok, list) = run_json(&["list"], &dir);
+    assert!(
+        ok,
+        "list must remain available while writer lock is held: {list}"
+    );
+    let (ok, ask) = run_json(&["ask", "no context"], &dir);
+    assert!(!ok);
+    assert_eq!(ask["error"]["code"], "E5003");
+    let (ok, remember) = run_json(&["remember", "append-only fact"], &dir);
+    assert!(ok, "remember should remain available: {remember}");
+
+    let (ok, add) = run_json(&["add", "./docs/a.md", "a"], &dir);
+    assert!(!ok, "add must fail while another writer holds the lock");
+    assert_eq!(add["error"]["code"], "E3004");
+    assert_eq!(
+        add["error"]["details"]["pid"],
+        std::process::id(),
+        "writer-lock error should include owner PID: {add}"
+    );
+    assert_eq!(
+        fs::read(dir.join("kb.md")).expect("kb.md after rejected add"),
+        kb_md
+    );
+
+    lock.release().expect("release test lock");
+    let (ok, _) = run_json(&["add", "./docs/a.md", "a"], &dir);
+    assert!(ok, "add should succeed after releasing writer lock");
+}
+
+#[test]
+fn stale_writer_lock_file_does_not_block_cli_write() {
+    let dir = unique_temp_dir("writer-lock-stale-file");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/a.md", "A");
+    fs::write(dir.join(".kb/writer.lock"), "pid=old started=1\n")
+        .expect("write stale lock contents");
+
+    let (ok, body) = run_json(&["add", "./docs/a.md", "a"], &dir);
+    assert!(ok, "a lock file without an OS lock is reusable: {body}");
 }
 
 #[test]

@@ -6,9 +6,11 @@
 
 /// 派发一次 `tools/call`。协议级失败（缺 name / 未知工具）回 JSON-RPC error；
 /// 业务级失败（缺参数 / 未初始化）回 `isError:true` 的 tool content。
-fn mcp_dispatch_tool_call(id: Value, params: &Value) -> Value {
+fn mcp_dispatch_tool_call(id: Value, params: &Value, verbose: u8) -> Value {
     let failure_id = id.clone();
-    mcp_guard(failure_id, || mcp_dispatch_tool_call_inner(id, params))
+    mcp_guard(failure_id, || {
+        mcp_dispatch_tool_call_inner(id, params, verbose)
+    })
 }
 
 fn mcp_guard(id: Value, dispatch: impl FnOnce() -> Value) -> Value {
@@ -20,7 +22,7 @@ fn mcp_guard(id: Value, dispatch: impl FnOnce() -> Value) -> Value {
     })
 }
 
-fn mcp_dispatch_tool_call_inner(id: Value, params: &Value) -> Value {
+fn mcp_dispatch_tool_call_inner(id: Value, params: &Value, verbose: u8) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
@@ -34,7 +36,7 @@ fn mcp_dispatch_tool_call_inner(id: Value, params: &Value) -> Value {
         "correct" => mcp_tool_correct(&args),
         "verify_citation" => mcp_tool_verify_citation(&args),
         "list_episodes" => mcp_tool_list_episodes(&args),
-        "consolidate" => mcp_tool_consolidate(&args),
+        "consolidate" => mcp_tool_consolidate(&args, verbose),
         "read_summary" => mcp_tool_read_summary(&args),
         "read_neighbors" => mcp_tool_read_neighbors(&args),
         other => return jsonrpc_error(id, -32601, &format!("unknown tool: {}", other)),
@@ -91,7 +93,10 @@ fn mcp_tool_remember(args: &Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "remember requires content".to_string())?;
     let refs = mcp_string_array(args, "refs");
-    let confidence = args.get("confidence").and_then(Value::as_f64).map(|v| v as f32);
+    let confidence = args
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .map(|v| v as f32);
     mcp_unwrap_cli(run_remember(content.to_string(), refs, confidence))
 }
 
@@ -104,13 +109,30 @@ fn mcp_tool_correct(args: &Value) -> Result<Value, String> {
     mcp_unwrap_cli(run_correct(content.to_string(), refs))
 }
 
-fn mcp_tool_consolidate(args: &Value) -> Result<Value, String> {
+fn mcp_tool_consolidate(args: &Value, verbose: u8) -> Result<Value, String> {
     let min = args
         .get("min")
         .and_then(Value::as_u64)
         .map(|v| v as usize)
         .unwrap_or(2);
-    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let dry_run = args
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let cwd = mcp_cwd()?;
+    let writer_lock = if dry_run {
+        None
+    } else {
+        let lock = crate::commands::acquire_writer_lock(&cwd)
+            .map_err(|err| format!("{}: {}", err.code, err.message))?;
+        if lock.unsupported && verbose > 0 {
+            eprintln!(
+                "warning: filesystem does not support writer locks; continuing without a lock"
+            );
+        }
+        Some(lock)
+    };
+    let _writer_lock = writer_lock;
     mcp_unwrap_cli(run_consolidate(min, dry_run))
 }
 

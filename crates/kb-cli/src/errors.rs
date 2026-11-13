@@ -18,6 +18,7 @@ pub enum CoreErrorKind {
     AliasConflict,
     PathMissing,
     PathAlreadyRegistered,
+    WriterLockHeld,
     PathForbidden,
     PathUnrepresentable,
     PatternNotRewritable,
@@ -129,6 +130,13 @@ pub fn map_core_error(kind: CoreErrorKind, details: Value) -> CliError {
             suggestion: Some("Use a different path or remove existing registration first"),
             details,
             exit_code: 2,
+        },
+        CoreErrorKind::WriterLockHeld => CliError {
+            code: "E3004",
+            message: "Another kb process is writing this knowledge base",
+            suggestion: Some("Wait for the other kb command to finish and retry"),
+            details,
+            exit_code: 3,
         },
         CoreErrorKind::PathForbidden => CliError {
             code: "E2009",

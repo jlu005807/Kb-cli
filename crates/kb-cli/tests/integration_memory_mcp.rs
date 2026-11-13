@@ -781,3 +781,137 @@ fn mcp_verify_citation_reports_stale_chunk_and_keeps_server_alive() {
     assert_eq!(responses[1]["id"], 2);
     assert!(responses[1]["result"].is_object());
 }
+
+#[test]
+fn mcp_consolidate_locks_only_its_tool_call() {
+    let dir = unique_temp_dir("mcp-consolidate-writer-lock");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["remember", "fact one", "--ref", "docs/a:0001"], &dir);
+    assert!(ok);
+    let (ok, _) = run_json(&["remember", "fact two", "--ref", "docs/a:0002"], &dir);
+    assert!(ok);
+    let lock = kb_storage_fs::SingleWriterLockManager::new(dir.join(".kb"))
+        .acquire()
+        .expect("acquire test writer lock")
+        .expect("file locks should be supported");
+
+    let requests = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"remember","arguments":{"content":"append while writer lock is held"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"consolidate","arguments":{"min":2,"dry_run":true}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"consolidate","arguments":{"min":2}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"ping"}"#,
+    ]
+    .join("\n");
+    let output = kb_command_in(&dir)
+        .args(["serve", "--mcp"])
+        .write_stdin(requests)
+        .assert()
+        .get_output()
+        .to_owned();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("MCP stdout should be UTF-8");
+    let responses = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("response should be JSON"))
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 4);
+    assert_eq!(responses[0]["result"]["isError"], false);
+    assert_eq!(responses[1]["result"]["isError"], false);
+    assert_eq!(responses[2]["result"]["isError"], true);
+    assert!(responses[2]["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("E3004"));
+    assert_eq!(responses[3]["result"], serde_json::json!({}));
+
+    lock.release().expect("release test writer lock");
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_sigint_exits_130_and_writes_interrupt_error_to_stderr() {
+    use std::io::{BufRead, Read, Write};
+    use std::process::{Command as ProcessCommand, Stdio};
+    use std::time::{Duration, Instant};
+
+    let dir = unique_temp_dir("mcp-sigint");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    let mut child = kb_process_command(&dir, &[])
+        .args(["--output", "json", "serve", "--mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn MCP server");
+    let mut stdout_pipe = child.stdout.take().expect("MCP stdout");
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let stdout_thread = std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(&mut stdout_pipe);
+        let mut first_line = String::new();
+        reader.read_line(&mut first_line).expect("read MCP ping response");
+        ready_tx
+            .send(first_line.clone())
+            .expect("signal MCP server readiness");
+        let mut remaining = Vec::new();
+        reader
+            .read_to_end(&mut remaining)
+            .expect("read remaining MCP stdout");
+        (first_line, remaining)
+    });
+    let stdin = child.stdin.as_mut().expect("MCP stdin");
+    writeln!(stdin, "{}", r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        .expect("send readiness ping");
+    stdin.flush().expect("flush readiness ping");
+    let ping_line = match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(line) => line,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            panic!("MCP server should answer readiness ping: {err}");
+        }
+    };
+    let ping: Value = serde_json::from_str(&ping_line).expect("ping response should be JSON");
+    assert_eq!(ping["id"], 1);
+
+    let signal = ProcessCommand::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status();
+    if !signal.map(|status| status.success()).unwrap_or(false) {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = stdout_thread.join();
+        panic!("kill -INT should succeed");
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        match child.try_wait().expect("poll MCP process") {
+            Some(status) => break status,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                panic!("MCP server did not exit after SIGINT within five seconds");
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    drop(child.stdin.take());
+    let (first_line, remaining_stdout) = stdout_thread.join().expect("join stdout reader");
+    let mut stderr = Vec::new();
+    child
+        .stderr
+        .take()
+        .expect("MCP stderr")
+        .read_to_end(&mut stderr)
+        .expect("read MCP stderr");
+
+    assert_eq!(status.code(), Some(130));
+    assert_eq!(first_line, ping_line);
+    assert!(remaining_stdout.is_empty(), "interrupt must not pollute MCP stdout");
+    let error: Value = serde_json::from_slice(&stderr).expect("interrupt JSON on stderr");
+    assert_eq!(error["error"]["code"], "E9001");
+}

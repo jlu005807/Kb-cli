@@ -14,8 +14,6 @@ mod storage_backend;
 
 use clap::Parser;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use crate::cli::Cli;
 use crate::commands::dispatch;
@@ -43,14 +41,30 @@ fn render_error(output: cli::OutputFormat, err: &crate::errors::CliError) {
 // 2) 调用命令分发
 // 3) 将结果统一渲染为 text/json 协议
 fn main() -> ExitCode {
-    let interrupted = Arc::new(AtomicBool::new(false));
-    let signal_flag = Arc::clone(&interrupted);
-    // 仅记录中断标记，不在 signal handler 中执行复杂逻辑。
-    let _ = ctrlc::set_handler(move || {
-        signal_flag.store(true, Ordering::SeqCst);
-    });
-
     let cli = Cli::parse();
+    let output = cli.output;
+    let _ = ctrlc::set_handler(move || {
+        let error = map_core_error(CoreErrorKind::Interrupted, serde_json::json!({}));
+        match output {
+            cli::OutputFormat::Json => {
+                let envelope = serde_json::json!({
+                    "schema_version": "1.0",
+                    "error": {
+                        "code": error.code,
+                        "message": error.message,
+                        "suggestion": error.suggestion,
+                        "details": error.details,
+                    }
+                });
+                eprintln!(
+                    "{}",
+                    serde_json::to_string_pretty(&envelope).unwrap_or_default()
+                );
+            }
+            cli::OutputFormat::Text => print_text_error(&error),
+        }
+        std::process::exit(130);
+    });
     // 提前校验显式传入的配置路径，避免进入命令执行后才报错。
     if let Some(config_path) = cli.config.as_ref() {
         if !std::path::Path::new(config_path).exists() {
@@ -81,11 +95,6 @@ fn main() -> ExitCode {
     let output = cli.output;
     let quiet = resolved.dto.quiet;
     let result = dispatch(cli);
-    if interrupted.load(Ordering::SeqCst) {
-        let err = map_core_error(CoreErrorKind::Interrupted, serde_json::json!({}));
-        render_error(output, &err);
-        return ExitCode::from(err.exit_code);
-    }
     // 统一在入口层封装输出协议，命令层只关心业务数据本身。
     match result {
         Ok(data) => match output {

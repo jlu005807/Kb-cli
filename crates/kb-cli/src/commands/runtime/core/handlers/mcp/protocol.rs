@@ -17,7 +17,7 @@ const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 /// `kb serve --mcp` 入口。读 stdin 的 JSON-RPC 行、派发、写 stdout 响应。
 /// EOF 时 `process::exit(0)`，绕开 main 的输出协议（serve 是终端态命令，
 /// stdout 已被 JSON-RPC 流占用，不能再让 main 追加 success 包）。
-pub(crate) fn run_serve(mcp: bool) -> Result<Value, CliError> {
+pub(crate) fn run_serve(mcp: bool, verbose: u8) -> Result<Value, CliError> {
     if !mcp {
         return Err(map_core_error(
             CoreErrorKind::InvalidKbFormat,
@@ -43,10 +43,9 @@ pub(crate) fn run_serve(mcp: bool) -> Result<Value, CliError> {
             continue;
         }
 
-        let response = handle_mcp_line(trimmed);
+        let response = handle_mcp_line_with_verbose(trimmed, verbose);
         if let Some(resp) = response {
-            let serialized =
-                serde_json::to_string(&resp).unwrap_or_else(|_| "{}".to_string());
+            let serialized = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".to_string());
             // 写一行响应并 flush——stdio 传输要求逐条可读，不能缓冲到退出。
             if writeln!(out, "{}", serialized).is_err() {
                 break;
@@ -61,7 +60,7 @@ pub(crate) fn run_serve(mcp: bool) -> Result<Value, CliError> {
 
 /// 解析一行 JSON-RPC 请求并派发。返回 `None` 表示这是 notification（不回复）
 /// 或无法解析（无 id 可回）。
-fn handle_mcp_line(line: &str) -> Option<Value> {
+fn handle_mcp_line_with_verbose(line: &str, verbose: u8) -> Option<Value> {
     let request: Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(err) => {
@@ -84,7 +83,7 @@ fn handle_mcp_line(line: &str) -> Option<Value> {
     match method {
         "initialize" => Some(jsonrpc_result(id, mcp_initialize_result())),
         "tools/list" => Some(jsonrpc_result(id, json!({ "tools": mcp_tools_schema() }))),
-        "tools/call" => Some(mcp_dispatch_tool_call(id, &params)),
+        "tools/call" => Some(mcp_dispatch_tool_call(id, &params, verbose)),
         "ping" => Some(jsonrpc_result(id, json!({}))),
         other => Some(jsonrpc_error(
             id,
@@ -134,13 +133,13 @@ fn mcp_tool_content(payload: &Value, is_error: bool) -> Value {
 #[cfg(test)]
 mod mcp_protocol_tests {
     // 注意：本测试模块随 protocol.rs 一起 include! 进 core.rs，与其它 MCP
-    // 片段共享平铺命名空间，因此能直接调用 handle_mcp_line / mcp_tools_schema。
+    // 片段共享平铺命名空间，因此能直接调用 line dispatcher / mcp_tools_schema。
     use super::*;
 
     #[test]
     fn initialize_returns_protocol_version_and_server_info() {
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
-        let resp = handle_mcp_line(req).expect("initialize must reply");
+        let resp = handle_mcp_line_with_verbose(req, 0).expect("initialize must reply");
         assert_eq!(resp["jsonrpc"], "2.0");
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
@@ -150,7 +149,7 @@ mod mcp_protocol_tests {
     #[test]
     fn tools_list_exposes_all_tools() {
         let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
-        let resp = handle_mcp_line(req).expect("tools/list must reply");
+        let resp = handle_mcp_line_with_verbose(req, 0).expect("tools/list must reply");
         let tools = resp["result"]["tools"].as_array().expect("tools array");
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         for expected in [
@@ -170,19 +169,19 @@ mod mcp_protocol_tests {
     #[test]
     fn notification_without_id_is_not_answered() {
         let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-        assert!(handle_mcp_line(req).is_none());
+        assert!(handle_mcp_line_with_verbose(req, 0).is_none());
     }
 
     #[test]
     fn unknown_method_returns_method_not_found() {
         let req = r#"{"jsonrpc":"2.0","id":3,"method":"does/not/exist"}"#;
-        let resp = handle_mcp_line(req).expect("must reply");
+        let resp = handle_mcp_line_with_verbose(req, 0).expect("must reply");
         assert_eq!(resp["error"]["code"], -32601);
     }
 
     #[test]
     fn malformed_json_returns_parse_error() {
-        let resp = handle_mcp_line("{not json").expect("must reply");
+        let resp = handle_mcp_line_with_verbose("{not json", 0).expect("must reply");
         assert_eq!(resp["error"]["code"], -32700);
         assert_eq!(resp["id"], serde_json::Value::Null);
     }
@@ -190,14 +189,14 @@ mod mcp_protocol_tests {
     #[test]
     fn tools_call_missing_name_is_invalid_params() {
         let req = r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{}}"#;
-        let resp = handle_mcp_line(req).expect("must reply");
+        let resp = handle_mcp_line_with_verbose(req, 0).expect("must reply");
         assert_eq!(resp["error"]["code"], -32602);
     }
 
     #[test]
     fn tools_call_unknown_tool_is_method_not_found() {
         let req = r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;
-        let resp = handle_mcp_line(req).expect("must reply");
+        let resp = handle_mcp_line_with_verbose(req, 0).expect("must reply");
         assert_eq!(resp["error"]["code"], -32601);
     }
 
