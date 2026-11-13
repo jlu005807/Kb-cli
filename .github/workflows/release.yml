@@ -57,6 +57,9 @@ jobs:
       - name: Build and Package (Linux)
         run: bash ./scripts/package.sh --target x86_64-unknown-linux-gnu
 
+      - name: Test Linux package installation and workflows
+        run: bash ./tests/scripts/test-linux-installer.sh dist/*.tar.gz
+
       - name: Upload Linux Asset To Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -83,6 +86,13 @@ jobs:
       - name: Build and Package (Windows)
         shell: pwsh
         run: ./scripts/package.ps1 -Target x86_64-pc-windows-msvc
+
+      - name: Test Windows package installation and workflows
+        shell: pwsh
+        run: |
+          ./tests/scripts/test-windows-installer.ps1 `
+            -PackageDir (Get-ChildItem dist/*.zip | Select-Object -First 1 -ExpandProperty FullName) `
+            -RunCliSmoke
 
       - name: Upload Windows Asset To Release
         env:

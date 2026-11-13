@@ -130,11 +130,20 @@ if (-not $SkipBuild.IsPresent) {
     }
 }
 
-$binaryPath = if (-not [string]::IsNullOrWhiteSpace($Target)) {
-    Join-Path $repoRoot "target\$Target\$Profile\kb-cli.exe"
+$targetRoot = if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+    Join-Path $repoRoot "target"
+}
+elseif ([IO.Path]::IsPathRooted($env:CARGO_TARGET_DIR)) {
+    $env:CARGO_TARGET_DIR
 }
 else {
-    Join-Path $repoRoot "target\$Profile\kb-cli.exe"
+    Join-Path $repoRoot $env:CARGO_TARGET_DIR
+}
+$binaryPath = if (-not [string]::IsNullOrWhiteSpace($Target)) {
+    Join-Path $targetRoot "$Target\$Profile\kb-cli.exe"
+}
+else {
+    Join-Path $targetRoot "$Profile\kb-cli.exe"
 }
 
 if (-not (Test-Path -LiteralPath $binaryPath)) {

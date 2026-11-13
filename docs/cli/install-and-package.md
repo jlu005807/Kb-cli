@@ -54,7 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 安装行为（`install.ps1`）：
 
 1. 把 `kb.exe` 复制到 `%USERPROFILE%\.kb-cli\bin\kb.exe`（`USERPROFILE` 缺失时回退到 `%LOCALAPPDATA%`；可用 `-InstallDir` 覆盖安装目录）。
-2. 确保全局配置 `%USERPROFILE%\.kb-cli\config.json` 存在：若已存在则**合并保留**已有的 `knowledge_bases` 与 `llm` 字段，缺失的 `llm` 键补默认值（`model=gpt-4o-mini`、`base_url=https://api.openai.com/v1`、`enable_semantic=false` 等）。
+2. 确保全局配置 `%USERPROFILE%\.kb-cli\config.json` 存在：若已存在则保留 `knowledge_bases`、`llm` 及其他未知字段，只补缺少的默认 LLM 键。配置使用不带 BOM 的 UTF-8 保存。已有 JSON 无法解析时安装会报错，不会静默覆盖配置。
 3. 把安装目录写入**用户级** `PATH`（已存在则跳过），并尝试在当前会话立即生效。
 
 验证：

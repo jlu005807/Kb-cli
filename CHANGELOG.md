@@ -7,6 +7,7 @@
 ### 修复
 
 - 精简重复测试覆盖：文档 fixture parity 统一由 CI 已运行的 Node 校验器负责，删除重复 Rust 校验目标及重复 helper 测试；移除依赖日历日期的 `Timestamp::now` 断言，并清理未使用的测试依赖。
+- 发布包验收修复：Windows 安装器使用无 BOM UTF-8 并保留未知用户配置，损坏配置不再静默覆盖；Windows/Linux 打包脚本遵守 `CARGO_TARGET_DIR`，Linux 版本号解析兼容 CRLF。CI 增加打包与安装回归检查。
 - 文档 fixture 校验现在要求每个受检命令都包含成功与失败 JSON 示例；补充了缺失示例的回归测试。
 - 移除 KB 总览路径中恒真的 `Some` 包装及 ask agent 不可达错误分支；memory 文件名的 `.md` 后缀改为显式不变量检查。
 - 移除未使用的存储后端标签 API 和冗余 SQLite connection clone；FS/SQLite 选择测试改为断言实际数据库文件副作用。

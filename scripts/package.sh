@@ -89,6 +89,7 @@ get_workspace_version() {
     /^\[/ && in_workspace_pkg { in_workspace_pkg = 0 }
     in_workspace_pkg && $1 == "version" {
       gsub(/"/, "", $3)
+      gsub(/\r/, "", $3)
       print $3
       exit
     }
@@ -181,10 +182,14 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   )
 fi
 
+TARGET_ROOT="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+if [[ "$TARGET_ROOT" != /* ]]; then
+  TARGET_ROOT="$REPO_ROOT/$TARGET_ROOT"
+fi
 if [[ -n "$TARGET" ]]; then
-  BINARY_PATH="$REPO_ROOT/target/$TARGET/$PROFILE/kb-cli"
+  BINARY_PATH="$TARGET_ROOT/$TARGET/$PROFILE/kb-cli"
 else
-  BINARY_PATH="$REPO_ROOT/target/$PROFILE/kb-cli"
+  BINARY_PATH="$TARGET_ROOT/$PROFILE/kb-cli"
 fi
 
 if [[ ! -f "$BINARY_PATH" ]]; then

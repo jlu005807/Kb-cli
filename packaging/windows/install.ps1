@@ -12,25 +12,6 @@ function Write-Step {
     Write-Host "[kb-cli] $Message"
 }
 
-function Get-PropValue {
-    param(
-        [Parameter(Mandatory = $false)] $Object,
-        [Parameter(Mandatory = $true)] [string]$Name,
-        [Parameter(Mandatory = $false)] $DefaultValue
-    )
-
-    if ($null -eq $Object) {
-        return $DefaultValue
-    }
-
-    $prop = $Object.PSObject.Properties[$Name]
-    if ($null -eq $prop) {
-        return $DefaultValue
-    }
-
-    return $prop.Value
-}
-
 function Resolve-GlobalConfigPath {
     param([Parameter(Mandatory = $true)][string]$InstallDir)
 
@@ -46,17 +27,19 @@ function Resolve-GlobalConfigPath {
 function Ensure-GlobalConfigFile {
     param([Parameter(Mandatory = $true)][string]$ConfigPath)
 
-    $existing = $null
+    $existing = [pscustomobject]@{}
     if (Test-Path -LiteralPath $ConfigPath) {
         try {
-            $existing = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+            $existing = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
         }
         catch {
-            $existing = $null
+            throw "Cannot read existing config: $ConfigPath. The file was left unchanged."
         }
     }
-
-    $knowledgeBasesRaw = Get-PropValue -Object $existing -Name "knowledge_bases" -DefaultValue @()
+    if ($existing -isnot [pscustomobject]) {
+        throw "Existing config must be a JSON object: $ConfigPath"
+    }
+    $knowledgeBasesRaw = $existing.PSObject.Properties["knowledge_bases"].Value
     $knowledgeBases = @()
     if ($knowledgeBasesRaw -is [string]) {
         if (-not [string]::IsNullOrWhiteSpace($knowledgeBasesRaw)) {
@@ -66,8 +49,19 @@ function Ensure-GlobalConfigFile {
     elseif ($knowledgeBasesRaw -is [System.Collections.IEnumerable]) {
         $knowledgeBases = @($knowledgeBasesRaw)
     }
-
-    $llmRaw = Get-PropValue -Object $existing -Name "llm" -DefaultValue $null
+    $knowledgeBasesProperty = $existing.PSObject.Properties["knowledge_bases"]
+    if ($null -eq $knowledgeBasesProperty) {
+        $existing | Add-Member -NotePropertyName "knowledge_bases" -NotePropertyValue $knowledgeBases
+    }
+    else {
+        $knowledgeBasesProperty.Value = $knowledgeBases
+    }
+    if ($null -eq $existing.PSObject.Properties["llm"]) {
+        $existing | Add-Member -NotePropertyName "llm" -NotePropertyValue ([pscustomobject]@{})
+    }
+    if ($existing.llm -isnot [pscustomobject]) {
+        throw "Existing llm config must be a JSON object: $ConfigPath"
+    }
     $llmDefaults = [ordered]@{
         enable_semantic            = $false
         model                      = "gpt-4o-mini"
@@ -85,21 +79,17 @@ function Ensure-GlobalConfigFile {
         agent_reflection_enabled   = $true
         agent_min_chunk_coverage   = 0.6
     }
-    $llmOut = [ordered]@{}
     foreach ($k in $llmDefaults.Keys) {
-        $llmOut[$k] = Get-PropValue -Object $llmRaw -Name $k -DefaultValue $llmDefaults[$k]
-    }
-
-    $configOut = [ordered]@{
-        knowledge_bases = $knowledgeBases
-        llm             = $llmOut
+        if ($null -eq $existing.llm.PSObject.Properties[$k]) {
+            $existing.llm | Add-Member -NotePropertyName $k -NotePropertyValue $llmDefaults[$k]
+        }
     }
 
     $configDir = Split-Path -Path $ConfigPath -Parent
     if (-not [string]::IsNullOrWhiteSpace($configDir)) {
         New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     }
-    ($configOut | ConvertTo-Json -Depth 8) + "`n" | Set-Content -LiteralPath $ConfigPath -Encoding UTF8
+    [IO.File]::WriteAllText($ConfigPath, ($existing | ConvertTo-Json -Depth 100) + "`n", [Text.UTF8Encoding]::new($false))
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition

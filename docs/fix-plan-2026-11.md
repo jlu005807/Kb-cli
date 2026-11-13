@@ -486,3 +486,9 @@ printf '%s\n%s\n' \
 - kb.md 解析入口：已核对 BOM 由共享 parser/helper 处理。
 - `--prune` 回归：已核对相关集成用例显式传入 prune。
 - Cursor 与 Cline MCP 配置：见本文顶部核验来源和阶段 6 文档。
+
+## 15. 发布包验收（2026-11）
+
+验收发现并修复：Windows 安装器原先用 PowerShell 5.1 默认 UTF-8 BOM 写配置，Serde 无法读取；升级配置时会丢失未知字段，损坏 JSON 会被静默重置。现改为无 BOM UTF-8、只补缺少的默认项，并在配置不能解析时中止且不覆盖原文件。Windows/Linux 打包脚本现遵守绝对或相对 `CARGO_TARGET_DIR`；Linux Cargo 版本读取去掉 CRLF 的回车符。
+
+回归及持续验收：`tests/tools/packaging.test.js` 从隔离临时 workspace 验证两种换行格式、绝对/相对 target 目录和归档内容；Windows 安装器测试只在临时用户注册表中修改 PATH，覆盖配置新建/升级/损坏、重复安装与卸载。Linux 发布验收从 `.tar.gz` 解压，实际运行安装后的 `init → add → update → ask` 和 MCP `initialize/tools/list/ping`，再卸载并确认其他文件和配置保留。Release workflow 在上传前执行两平台真实产物验收并核对 tag 与产物版本；CI 执行打包脚本与 Windows 安装器回归测试。
