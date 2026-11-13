@@ -6,6 +6,17 @@
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
+fn parse_finite_confidence(value: &str) -> Result<f32, String> {
+    let confidence = value
+        .parse::<f32>()
+        .map_err(|_| "confidence must be a number".to_string())?;
+    if confidence.is_finite() {
+        Ok(confidence)
+    } else {
+        Err("confidence must be finite".to_string())
+    }
+}
+
 const HELP_OVERVIEW: &str = "These are common kb commands used in various situations:\n\nstart a working area\n  init        Create kb.md, .kb state and default ignore rules\n\nmanage references\n  add         Add file contents to the knowledge base\n  mv          Move or rename an alias\n  rm          Remove an alias from the working set\n  path        Show or update the path of an alias\n  chmod       Update permissions of an alias\n  list        List tracked aliases\n\nmaintain index state\n  check       Show index diff without writing files\n  update      Apply index diff and persist snapshot (use --strict for L2-L5 hard-fail)\n\nbuild agent memory\n  remember    Record an agent observation into the L0 episode timeline\n  correct     Record a user correction (highest-priority memory signal)\n  consolidate Distill accumulated episodes into agent-memory files\n\nretrieve and environment\n  ask         Retrieve relevant context for a question\n  serve       Serve the memory system over stdio JSON-RPC (MCP) for external agents\n  env         Show registered knowledge base roots\n  completion  Generate shell completion scripts\n";
 
 // CLI 参数契约：全局选项 + 子命令集合。
@@ -133,7 +144,7 @@ pub enum Commands {
         #[arg(long = "ref")]
         refs: Vec<String>,
         /// Self-assessed confidence in [0.0, 1.0]; defaults to 0.8.
-        #[arg(long)]
+        #[arg(long, value_parser = parse_finite_confidence)]
         confidence: Option<f32>,
     },
     // Record a user correction (highest-priority memory signal).

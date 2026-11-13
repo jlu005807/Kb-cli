@@ -158,6 +158,30 @@ fn remember_supports_explicit_confidence_and_refs() {
 }
 
 #[test]
+fn remember_rejects_non_finite_confidence_without_writing_episode() {
+    let dir = unique_temp_dir("remember-nan-confidence");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+
+    let episodes_path = dir.join(".kb/episodes.jsonl");
+    let before = fs::read(&episodes_path).ok();
+    let assert = kb_command_in(&dir)
+        .args([
+            "--output",
+            "json",
+            "remember",
+            "invalid confidence",
+            "--confidence",
+            "NaN",
+        ])
+        .assert();
+    let output = assert.get_output();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(fs::read(&episodes_path).ok(), before);
+}
+
+#[test]
 fn correct_writes_user_correction_with_confidence_1() {
     let dir = unique_temp_dir("correct-user-correction");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -489,4 +513,69 @@ fn mcp_server_stdio_end_to_end() {
             && ep["agent_id"] == "mcp-e2e-agent"),
         "list_episodes should return the remembered observation: {episodes:?}"
     );
+}
+
+#[test]
+fn mcp_verify_citation_reports_stale_chunk_and_keeps_server_alive() {
+    let dir = unique_temp_dir("mcp-stale-citation");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/chinese.md",
+        "第一段中文内容。\n\n第二段中文内容，用来测试。\n",
+    );
+    let (ok, _) = run_json(
+        &[
+            "add",
+            "./docs/chinese.md",
+            "zh",
+            "--category",
+            "raw",
+        ],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+    mk_file(
+        &dir,
+        "./docs/chinese.md",
+        "X第一段中文内容。\n\n第二段中文内容，用来测试。\n",
+    );
+
+    let requests = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"verify_citation","arguments":{"chunk_id":"zh:0002","quote":"第二段"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+    ]
+    .join("\n");
+    let output = kb_command_in(&dir)
+        .args(["serve", "--mcp"])
+        .write_stdin(requests)
+        .assert()
+        .get_output()
+        .to_owned();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "MCP process should survive stale citation; stderr: {stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "MCP stderr: {stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("MCP stdout should be UTF-8");
+    let responses = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("response should be JSON"))
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2);
+    assert_eq!(responses[0]["id"], 1);
+    let citation: Value = serde_json::from_str(
+        responses[0]["result"]["content"][0]["text"]
+            .as_str()
+            .expect("citation tool content"),
+    )
+    .expect("citation payload should be JSON");
+    assert_eq!(citation["stale"], true);
+    assert_eq!(responses[1]["id"], 2);
+    assert!(responses[1]["result"].is_object());
 }

@@ -16,13 +16,14 @@ fn mcp_tool_verify_citation(args: &Value) -> Result<Value, String> {
         .ok_or_else(|| "verify_citation requires quote".to_string())?;
     let cwd = mcp_cwd()?;
 
-    // chunk_id 形如 "<record_id>:<seq>"，record_id 取冒号前。
-    let record_id = chunk_id.split(':').next().unwrap_or(chunk_id);
+    let record_id = kb_core::record_id_of_chunk(chunk_id);
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd.clone()));
 
     // 候选证据：优先源文件按 chunk 切出的片段；附带 preview 作为兜底。
     let mut candidates: Vec<String> = Vec::new();
+    let mut stale = false;
     if let Some(raw) = toolbox.read_raw_chunk(record_id, Some(chunk_id)) {
+        stale = raw.stale;
         candidates.push(raw.preview);
     }
     if let Some(summary) = toolbox.read_file_summary(record_id) {
@@ -36,6 +37,7 @@ fn mcp_tool_verify_citation(args: &Value) -> Result<Value, String> {
         return Ok(json!({
             "chunk_id": chunk_id,
             "matched": false,
+            "stale": false,
             "reason": "chunk not found or source unreadable; run `kb update` first",
         }));
     }
@@ -43,13 +45,18 @@ fn mcp_tool_verify_citation(args: &Value) -> Result<Value, String> {
     let candidate_refs: Vec<&str> = candidates.iter().map(String::as_str).collect();
     let verdict = kb_core::verify_citation(quote, &candidate_refs);
 
-    Ok(json!({
+    let mut result = json!({
         "chunk_id": chunk_id,
         "quote": quote,
         "matched": verdict.matched,
         "method": verdict.method,
         "coverage": verdict.coverage,
-    }))
+        "stale": stale,
+    });
+    if stale {
+        result["warning"] = json!("Source content changed; run `kb update` to refresh citations.");
+    }
+    Ok(result)
 }
 
 /// list_episodes：按 agent_id（可选）+ limit 拉取最近 episode。

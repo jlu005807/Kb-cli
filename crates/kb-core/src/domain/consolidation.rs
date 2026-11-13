@@ -84,9 +84,16 @@ pub struct ConsolidationPlan {
     pub skipped_below_threshold: usize,
 }
 
-/// 从 chunk_id 提取 record_id（冒号前部分）。`"docs/a:0001"` -> `"docs/a"`。
-fn record_id_of(chunk_id: &str) -> &str {
-    chunk_id.split(':').next().unwrap_or(chunk_id)
+/// 从 chunk id 提取 record id；只移除末尾非空的 ASCII 数字序号。
+pub fn record_id_of_chunk(chunk_id: &str) -> &str {
+    match chunk_id.rsplit_once(':') {
+        Some((record_id, sequence))
+            if !sequence.is_empty() && sequence.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            record_id
+        }
+        _ => chunk_id,
+    }
 }
 
 /// 把一批 episode 提炼成固化计划。
@@ -117,7 +124,7 @@ pub fn plan_consolidation(
 
         let mut topics: Vec<String> = Vec::new();
         for chunk_id in &ep.refs {
-            let rid = record_id_of(chunk_id).to_string();
+            let rid = record_id_of_chunk(chunk_id).to_string();
             if !rid.is_empty() && !topics.contains(&rid) {
                 topics.push(rid);
             }
@@ -286,6 +293,31 @@ mod tests {
         assert_eq!(mem.source_episode_ids.len(), 2);
         assert_eq!(mem.contributor_agents, vec!["b", "a"]); // sorted by ts desc
         assert_eq!(mem.refs, vec!["docs/a:0002", "docs/a:0001"]);
+    }
+
+    #[test]
+    fn consolidation_extracts_record_ids_only_from_numeric_chunk_suffixes() {
+        for (chunk_id, expected_topic) in [
+            ("docs/a:0001", "docs/a"),
+            ("D:/notes/a.md:0002", "D:/notes/a.md"),
+            ("docs/a", "docs/a"),
+            ("a:b", "a:b"),
+            ("x:", "x:"),
+        ] {
+            let episode = ep(
+                "o1",
+                EpisodeKind::Observation,
+                "a",
+                1,
+                &[chunk_id],
+                0.8,
+            );
+            let plan = plan_consolidation(&[episode], 1, Timestamp(9));
+            assert_eq!(
+                plan.memories[0].topic, expected_topic,
+                "unexpected topic for chunk id {chunk_id}"
+            );
+        }
     }
 
     #[test]

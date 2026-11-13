@@ -23,7 +23,7 @@ pub use domain::{
     PermissionAction, PermissionExplainTrace, PermissionInterpreter, PermissionParseError,
     PermissionParseErrorKind, Ref, RefError, SearchHit, SearchProjectionSnapshot,
     SemanticProviderInfo, Timestamp, WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument,
-    WikiPageType, WikiViewSnapshot, plan_consolidation, verify_citation,
+    WikiPageType, WikiViewSnapshot, plan_consolidation, record_id_of_chunk, verify_citation,
 };
 pub use ports::{
     AgentAnswerRequest, AgentAnswerResponse, AgentBackend, AnswerEngine, AnswerMeta,

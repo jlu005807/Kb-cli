@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use crate::agent_tools::{SemanticAgentContext, SemanticAgentToolbox};
 use crate::protocol::{
-    self, build_chat_completion_endpoint, extract_chat_message_content, fnv1a64,
-    normalize_text_field, parse_json_object_from_text, ChatProtocolSettings,
+    self, build_chat_completion_endpoint, extract_chat_message_content, normalize_text_field,
+    parse_json_object_from_text, ChatProtocolSettings,
 };
 use kb_core::domain::{KnowledgeChunk, SemanticProviderInfo};
 use kb_core::error::DomainError;
+use kb_core::usecases::fnv1a64;
 use kb_core::{
     split_paragraph_spans, SemanticExtractRequest, SemanticExtractResponse, SemanticExtractor,
 };

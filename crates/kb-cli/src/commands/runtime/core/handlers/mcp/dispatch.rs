@@ -7,6 +7,20 @@
 /// 派发一次 `tools/call`。协议级失败（缺 name / 未知工具）回 JSON-RPC error；
 /// 业务级失败（缺参数 / 未初始化）回 `isError:true` 的 tool content。
 fn mcp_dispatch_tool_call(id: Value, params: &Value) -> Value {
+    let failure_id = id.clone();
+    mcp_guard(failure_id, || mcp_dispatch_tool_call_inner(id, params))
+}
+
+fn mcp_guard(id: Value, dispatch: impl FnOnce() -> Value) -> Value {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(dispatch)).unwrap_or_else(|_| {
+        jsonrpc_result(
+            id,
+            mcp_tool_content(&json!({ "error": "tool handler panicked" }), true),
+        )
+    })
+}
+
+fn mcp_dispatch_tool_call_inner(id: Value, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 

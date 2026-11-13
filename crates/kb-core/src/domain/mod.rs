@@ -22,7 +22,9 @@ mod wiki_view;
 pub use agent::{AgentId, AgentIdError};
 pub use alias::{Alias, AliasError, AliasErrorKind};
 pub use citation::{verify_citation, CitationMatch, CitationVerdict};
-pub use consolidation::{plan_consolidation, ConsolidatedMemory, ConsolidationPlan};
+pub use consolidation::{
+    plan_consolidation, record_id_of_chunk, ConsolidatedMemory, ConsolidationPlan,
+};
 pub use episode::{Episode, EpisodeFilter, EpisodeKind};
 pub use graph::{GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot};
 pub use index::{

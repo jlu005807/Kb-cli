@@ -4,6 +4,7 @@ use kb_core::domain::{
     WikiManifestSnapshot, WikiPageDocument,
 };
 use kb_core::SemanticExtractRequest;
+use kb_core::usecases::fnv1a64;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -278,12 +279,13 @@ impl SemanticAgentToolbox {
         let source_path = resolve_source_path(root, &entry.path);
         let raw = fs::read_to_string(source_path).ok()?;
         let chunk = selected_chunk(entry, chunk_id)?;
-        let excerpt = excerpt_for_chunk(&raw, chunk, self.raw_excerpt_max_chars);
+        let (excerpt, stale) = excerpt_for_chunk(&raw, chunk, self.raw_excerpt_max_chars);
         Some(AgentRawChunkItem {
             record_id: entry.record_id.clone(),
             path: entry.path.clone(),
             chunk_id: chunk.chunk_id.clone(),
             preview: excerpt,
+            stale,
         })
     }
 
@@ -580,6 +582,7 @@ pub struct AgentRawChunkItem {
     pub path: String,
     pub chunk_id: String,
     pub preview: String,
+    pub stale: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -624,14 +627,30 @@ fn selected_chunk<'a>(
     entry.chunks.first()
 }
 
-fn excerpt_for_chunk(raw: &str, chunk: &KnowledgeChunk, max_chars: usize) -> String {
-    let raw_len_u64 = raw.len() as u64;
-    let start = chunk.byte_range[0].min(raw_len_u64) as usize;
-    let end = chunk.byte_range[1].min(raw_len_u64) as usize;
-    if start >= end {
-        return stable_truncate(raw.trim(), max_chars);
+fn excerpt_for_chunk(raw: &str, chunk: &KnowledgeChunk, max_chars: usize) -> (String, bool) {
+    let fallback = || (stable_truncate(&chunk.preview, max_chars), true);
+    let (Ok(start), Ok(end)) = (
+        usize::try_from(chunk.byte_range[0]),
+        usize::try_from(chunk.byte_range[1]),
+    ) else {
+        return fallback();
+    };
+    if start >= end
+        || end > raw.len()
+        || !raw.is_char_boundary(start)
+        || !raw.is_char_boundary(end)
+    {
+        return fallback();
     }
-    stable_truncate(raw[start..end].trim(), max_chars)
+
+    let slice = &raw[start..end];
+    if chunk.content_signature.starts_with("fnv1a64:")
+        && chunk.content_signature != format!("fnv1a64:{:016x}", fnv1a64(slice.as_bytes()))
+    {
+        return fallback();
+    }
+
+    (stable_truncate(slice.trim(), max_chars), false)
 }
 
 fn summary_item_from_entry(entry: &KnowledgeEntry, score: f64) -> Option<AgentSummaryItem> {
@@ -740,8 +759,9 @@ mod tests {
         WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument, WikiPageType,
     };
     use kb_core::SemanticExtractRequest;
+    use kb_core::usecases::fnv1a64;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_temp_dir(tag: &str) -> PathBuf {
@@ -757,6 +777,55 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    fn read_raw_chunk_fixture(
+        root: &Path,
+        source: &str,
+        byte_range: [u64; 2],
+        content_signature: &str,
+        preview: &str,
+    ) -> serde_json::Value {
+        fs::create_dir_all(root.join(".kb")).expect("create .kb");
+        fs::create_dir_all(root.join("docs")).expect("create docs");
+        fs::write(root.join("docs/a.md"), source).expect("write source");
+
+        let knowledge = KnowledgeSnapshot {
+            schema_version: 1,
+            generated_at: "now".to_string(),
+            base_index_signature: "idx".to_string(),
+            entries: vec![KnowledgeEntry {
+                record_id: "docs/a".to_string(),
+                path: "./docs/a.md".to_string(),
+                input_signature: "input".to_string(),
+                status: KnowledgeStatus::Active,
+                summary: "summary".to_string(),
+                tags: vec![],
+                key_concepts: vec![],
+                chunks: vec![KnowledgeChunk {
+                    chunk_id: "docs/a:0001".to_string(),
+                    byte_range,
+                    content_signature: content_signature.to_string(),
+                    summary: "chunk summary".to_string(),
+                    preview: preview.to_string(),
+                }],
+                provider: SemanticProviderInfo {
+                    kind: "rule".to_string(),
+                    name: "test".to_string(),
+                },
+                ..KnowledgeEntry::default()
+            }],
+        };
+        fs::write(
+            root.join(".kb/knowledge.json"),
+            serde_json::to_string(&knowledge).expect("serialize knowledge"),
+        )
+        .expect("write knowledge");
+
+        let item = SemanticAgentToolbox::new(Some(root.to_path_buf()))
+            .read_raw_chunk("docs/a", Some("docs/a:0001"))
+            .expect("raw chunk should be found");
+        serde_json::to_value(item).expect("serialize raw chunk")
     }
 
     #[test]
@@ -946,5 +1015,81 @@ mod tests {
             .read_wiki_page_markdown("source:docs/a")
             .expect("wiki markdown should load");
         assert!(wiki_markdown.markdown.contains("# docs/a"));
+    }
+
+    #[test]
+    fn stale_chunk_with_non_character_byte_boundary_uses_index_preview() {
+        let root = unique_temp_dir("chunk-invalid-boundary");
+        let item = read_raw_chunk_fixture(
+            &root,
+            "中文正文",
+            [1, 2],
+            "fnv1a64:0000000000000000",
+            "indexed preview",
+        );
+
+        assert_eq!(item["preview"], "indexed preview");
+        assert_eq!(item["stale"], true);
+    }
+
+    #[test]
+    fn stale_chunk_with_out_of_bounds_range_uses_index_preview() {
+        let root = unique_temp_dir("chunk-out-of-bounds");
+        let item = read_raw_chunk_fixture(
+            &root,
+            "current source",
+            [0, 100],
+            "fnv1a64:0000000000000000",
+            "indexed preview",
+        );
+
+        assert_eq!(item["preview"], "indexed preview");
+        assert_eq!(item["stale"], true);
+    }
+
+    #[test]
+    fn stale_chunk_with_changed_content_signature_uses_index_preview() {
+        let root = unique_temp_dir("chunk-changed-content");
+        let item = read_raw_chunk_fixture(
+            &root,
+            "changed source",
+            [0, 7],
+            "fnv1a64:0000000000000000",
+            "indexed preview",
+        );
+
+        assert_eq!(item["preview"], "indexed preview");
+        assert_eq!(item["stale"], true);
+    }
+
+    #[test]
+    fn unchanged_fnv_chunk_signature_returns_current_excerpt_not_stale() {
+        let root = unique_temp_dir("chunk-unchanged-content");
+        let signature = format!("fnv1a64:{:016x}", fnv1a64(b"source evidence"));
+        let item = read_raw_chunk_fixture(
+            &root,
+            "source evidence",
+            [0, 15],
+            &signature,
+            "indexed preview",
+        );
+
+        assert_eq!(item["preview"], "source evidence");
+        assert_eq!(item["stale"], false);
+    }
+
+    #[test]
+    fn non_fnv_chunk_signature_checks_boundaries_without_marking_stale() {
+        let root = unique_temp_dir("chunk-non-fnv-signature");
+        let item = read_raw_chunk_fixture(
+            &root,
+            "source evidence",
+            [0, 15],
+            "llm-generated-signature",
+            "indexed preview",
+        );
+
+        assert_eq!(item["preview"], "source evidence");
+        assert_eq!(item["stale"], false);
     }
 }

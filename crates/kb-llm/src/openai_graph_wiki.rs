@@ -3,15 +3,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::agent_tools::SemanticAgentToolbox;
 use crate::openai_semantic::LlmSemanticConfig;
 use crate::protocol::{
-    self, build_chat_completion_endpoint, extract_chat_message_content, fnv1a64,
-    normalize_text_field, parse_json_object_from_text, stable_truncate, ChatProtocolSettings,
+    self, build_chat_completion_endpoint, extract_chat_message_content, normalize_text_field,
+    parse_json_object_from_text, stable_truncate, ChatProtocolSettings,
 };
 use kb_core::domain::{
     GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot,
     KnowledgeSnapshot, KnowledgeStatus, WikiManifestEntry, WikiManifestSnapshot, WikiPageDocument,
     WikiViewSnapshot,
 };
-use kb_core::usecases::{CompileL4Issue, CompileL4Outcome, CompileL5Issue, CompileL5Outcome};
+use kb_core::usecases::{
+    fnv1a64, CompileL4Issue, CompileL4Outcome, CompileL5Issue, CompileL5Outcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 

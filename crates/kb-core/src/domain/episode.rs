@@ -110,7 +110,9 @@ impl Episode {
     }
 
     pub fn with_confidence(mut self, confidence: f32) -> Self {
-        self.confidence = confidence.clamp(0.0, 1.0);
+        if confidence.is_finite() {
+            self.confidence = confidence.clamp(0.0, 1.0);
+        }
         self
     }
 
@@ -196,6 +198,17 @@ mod tests {
         assert_eq!(ep.confidence, 1.0);
         let ep = sample(EpisodeKind::Observation, "a", "s", 1).with_confidence(-1.0);
         assert_eq!(ep.confidence, 0.0);
+    }
+
+    #[test]
+    fn builder_keeps_default_confidence_for_non_finite_values() {
+        let default = sample(EpisodeKind::Observation, "a", "s", 1).confidence;
+        let nan = sample(EpisodeKind::Observation, "a", "s", 1).with_confidence(f32::NAN);
+        let infinity =
+            sample(EpisodeKind::Observation, "a", "s", 1).with_confidence(f32::INFINITY);
+
+        assert_eq!(nan.confidence, default);
+        assert_eq!(infinity.confidence, default);
     }
 
     #[test]

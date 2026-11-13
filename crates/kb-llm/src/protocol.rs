@@ -371,19 +371,10 @@ pub(crate) fn normalize_text_field(input: Option<String>) -> Option<String> {
     })
 }
 
-/// FNV-1a 64 位哈希（内容签名用，semantic 与 graph/wiki 共用）。
-pub(crate) fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kb_core::usecases::fnv1a64;
 
     #[test]
     fn endpoint_normalization_appends_and_is_idempotent() {

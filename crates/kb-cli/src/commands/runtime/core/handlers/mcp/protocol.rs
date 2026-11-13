@@ -200,4 +200,12 @@ mod mcp_protocol_tests {
         let resp = handle_mcp_line(req).expect("must reply");
         assert_eq!(resp["error"]["code"], -32601);
     }
+
+    #[test]
+    fn mcp_guard_converts_tool_panics_to_tool_errors() {
+        let response = mcp_guard(Value::from(7), || panic!("simulated tool panic"));
+
+        assert_eq!(response["id"], 7);
+        assert_eq!(response["result"]["isError"], true);
+    }
 }

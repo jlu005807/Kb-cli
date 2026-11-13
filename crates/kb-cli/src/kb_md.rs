@@ -48,6 +48,7 @@ struct ParsedReference {
 }
 
 pub fn parse_kb_document(raw: &str) -> Result<KbDocument, String> {
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let lines = raw.lines().collect::<Vec<_>>();
     let (front_matter, body_start_line) = parse_front_matter(&lines)?;
 
@@ -304,6 +305,25 @@ default_perm: rw
         assert_eq!(doc.references.len(), 2);
         assert_eq!(doc.references[0].perms, "r");
         assert_eq!(doc.references[1].perms, "rw");
+    }
+
+    #[test]
+    fn bom_front_matter_preserves_default_permission() {
+        let raw = "\u{feff}---\ndefault_perm: rw\n---\n# docs\n[guide](docs/guide.md)\n";
+        let doc = parse_kb_document(raw).expect("parse BOM-prefixed kb.md");
+
+        assert_eq!(doc.front_matter.default_perm, "rw");
+        assert_eq!(doc.references[0].perms, "rw");
+    }
+
+    #[test]
+    fn bom_prefixed_first_line_is_recognized_as_heading_without_shifting_lines() {
+        let raw = "\u{feff}# docs\n[guide](docs/guide.md)\n";
+        let doc = parse_kb_document(raw).expect("parse BOM-prefixed kb.md");
+
+        assert_eq!(doc.categories, vec!["docs"]);
+        assert_eq!(doc.references[0].category.as_deref(), Some("docs"));
+        assert_eq!(doc.references[0].line, 2);
     }
 
     #[test]
