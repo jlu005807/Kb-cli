@@ -394,16 +394,18 @@ impl KbMdText {
 | #13 | CLI 集成 | E3003 → 存储错误码 |
 | #14 | episode_files 单测 | 新 episode 丢失 → 正常读出 |
 
-## 11. 手工验收清单（Windows）
+## 11. 最终验收记录（Windows）
 
-每项注明执行人、日期与结果。
-
-- [ ] Ctrl+C 中断 `kb serve --mcp`：进程退出，退出码 130，stdout 没有多余内容。
-- [ ] Ctrl+C 中断 `kb update --llm`（需要可用的 key）：退出码 130；再执行一次 `kb update` 能正常完成。
-- [ ] 打开两个终端，同时执行 `kb update`：一个成功，一个报 E3004。
-- [ ] 用记事本把 kb.md 另存为"UTF-8 带 BOM"：`list` 中的权限符合 front matter。
-- [ ] CRLF 的 kb.md 执行 `kb chmod` 后，`git diff` 只显示目标行。
-- [ ] Claude Desktop 或 Cursor 按更新后的 README 配置，能列出 8 个工具。
+| 检查 | 结果 | 验证方式与边界 |
+|---|---|---|
+| MCP server 中断 | 通过 handler 验证 | 给隔离进程发送 `CTRL_BREAK_EVENT`，退出码 130、stderr 含 `E9001`、MCP stdout 只有 ping 响应。没有直接注入 `CTRL_C_EVENT`。 |
+| `update --llm` 中断与恢复 | 通过 | 使用本机 mock HTTP 服务等待 LLM 请求后发送 `CTRL_BREAK_EVENT`；退出码 130、stderr 含 `E9001`，之后规则模式 `kb update` 成功。未调用外部模型。 |
+| writer lock 冲突与释放 | 通过 | Windows 另一进程持有 `.kb/writer.lock` 时 `kb add` 返回 `E3004`；释放锁后 `kb add` 成功。未同时启动两个 `kb update`。 |
+| BOM 和权限解析 | 通过 | 隔离 kb.md 写入 UTF-8 BOM 与 `default_perm: rw`，`update` 后 `list` 返回 `rw`。 |
+| CRLF `chmod` | 通过 | 字节级比较显示仅声明行变化，其他行保持 CRLF。 |
+| MCP tools/list | 通过协议检查 | 隔离 server 返回全部 8 个 tools；未连接真实 Cursor、Cline 或 Claude Desktop。 |
+| Unix SIGINT | 通过 | WSL Ubuntu / Rust 1.94.1 上运行 `mcp_sigint_exits_130_and_writes_interrupt_error_to_stderr`，1 passed。 |
+| Rust 1.89 工具链 | 未验证 | 最终门禁使用 Rust 1.94.1。 |
 
 ## 12. 每阶段的交接流程
 
