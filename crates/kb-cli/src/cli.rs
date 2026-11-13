@@ -183,32 +183,7 @@ pub enum Commands {
 #[cfg(test)]
 mod tests {
     use super::{Cli, Commands};
-    use clap::{CommandFactory, Parser};
-
-    #[test]
-    fn help_contains_exact_command_set() {
-        let help = Cli::command().render_long_help().to_string();
-        for cmd in [
-            "init",
-            "add",
-            "mv",
-            "rm",
-            "path",
-            "chmod",
-            "list",
-            "check",
-            "update",
-            "ask",
-            "remember",
-            "correct",
-            "consolidate",
-            "serve",
-            "env",
-            "completion",
-        ] {
-            assert!(help.contains(cmd), "help missing command: {cmd}");
-        }
-    }
+    use clap::Parser;
 
     #[test]
     fn add_parses_category_and_mode() {
@@ -236,20 +211,6 @@ mod tests {
             }
             _ => panic!("expected add command"),
         }
-    }
-
-    #[test]
-    fn help_usage_uses_kb_not_exe() {
-        let help = Cli::command().render_help().to_string();
-        assert!(help.contains("Usage: kb [OPTIONS] <COMMAND>"));
-    }
-
-    #[test]
-    fn help_contains_grouped_overview_sections() {
-        let help = Cli::command().render_help().to_string();
-        assert!(help.contains("manage references"));
-        assert!(help.contains("maintain index state"));
-        assert!(help.contains("retrieve and environment"));
     }
 
     #[test]

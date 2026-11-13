@@ -57,24 +57,23 @@ fn bootstrap_overview_context(
     }
 
     let mut bootstrap_chunks = Vec::new();
-    if let Some(graph) = Some(toolbox.read_graph_overview()) {
-        tool_trace.push(json!({
-            "tool": "read_graph_overview",
-            "summary": format!("read_graph_overview -> nodes={}, edges={}", graph.node_count, graph.edge_count),
-        }));
-        push_agent_trace(
-            agent_trace,
-            Some(0),
-            "bootstrap",
-            "Bootstrap graph overview for a high-level knowledge-base question.".to_string(),
-            Some("read_graph_overview"),
-        );
-        emit_ask_trace("bootstrap tool read_graph_overview");
-        bootstrap_chunks.push(format!(
-            "read_graph_overview:\n{}",
-            serde_json::to_string_pretty(&graph).unwrap_or_else(|_| "null".to_string())
-        ));
-    }
+    let graph = toolbox.read_graph_overview();
+    tool_trace.push(json!({
+        "tool": "read_graph_overview",
+        "summary": format!("read_graph_overview -> nodes={}, edges={}", graph.node_count, graph.edge_count),
+    }));
+    push_agent_trace(
+        agent_trace,
+        Some(0),
+        "bootstrap",
+        "Bootstrap graph overview for a high-level knowledge-base question.".to_string(),
+        Some("read_graph_overview"),
+    );
+    emit_ask_trace("bootstrap tool read_graph_overview");
+    bootstrap_chunks.push(format!(
+        "read_graph_overview:\n{}",
+        serde_json::to_string_pretty(&graph).unwrap_or_else(|_| "null".to_string())
+    ));
 
     if let Some(page) = toolbox.read_wiki_page("overview") {
         tool_trace.push(json!({

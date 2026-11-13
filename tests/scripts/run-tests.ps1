@@ -11,6 +11,10 @@ cargo test --workspace
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (Get-Command node -ErrorAction SilentlyContinue) {
+    Write-Host "Running doc-fixture validator regression test"
+    node --test tests/tools/validate-doc-fixture-diff.test.js
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
     Write-Host "Running Node-based doc-fixture diff (fallback)"
     node tests/tools/validate-doc-fixture-diff.js
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

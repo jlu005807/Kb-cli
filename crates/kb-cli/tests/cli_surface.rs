@@ -7,34 +7,6 @@ use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 #[test]
-fn help_displays_full_command_surface() {
-    kb_command().arg("--help").assert().success().stdout(
-        contains("init")
-            .and(contains("add"))
-            .and(contains("mv"))
-            .and(contains("rm"))
-            .and(contains("path"))
-            .and(contains("chmod"))
-            .and(contains("list"))
-            .and(contains("check"))
-            .and(contains("update"))
-            .and(contains("ask"))
-            .and(contains("env"))
-            .and(contains("completion")),
-    );
-}
-
-#[test]
-fn help_includes_required_global_flags() {
-    kb_command().arg("--help").assert().success().stdout(
-        contains("--output")
-            .and(contains("--quiet"))
-            .and(contains("--verbose"))
-            .and(contains("--no-color")),
-    );
-}
-
-#[test]
 fn root_help_does_not_advertise_config_flag() {
     let assert = kb_command().arg("--help").assert().success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);

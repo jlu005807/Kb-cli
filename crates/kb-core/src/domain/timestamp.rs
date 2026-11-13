@@ -54,13 +54,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn now_is_after_2025() {
-        let t = Timestamp::now();
-        let jan_2025_nanos: u64 = 1_735_689_600_000_000_000;
-        assert!(t.0 > jan_2025_nanos, "expected wall-clock to be after 2025");
-    }
-
-    #[test]
     fn ordering_is_total() {
         let a = Timestamp(10);
         let b = Timestamp(20);

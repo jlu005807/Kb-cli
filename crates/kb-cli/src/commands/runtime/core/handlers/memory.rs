@@ -197,7 +197,9 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
                 .get(&mem.topic)
                 .expect("filename planned for each memory")
                 .clone();
-            let stem = file_name.strip_suffix(".md").unwrap_or(&file_name);
+            let stem = file_name
+                .strip_suffix(".md")
+                .expect("memory file names always have a .md extension");
             let abs_path = mem_dir.join(&file_name);
             let doc = render_memory_document(mem);
             kb_storage_fs::atomic_write_bytes(&abs_path, doc.as_bytes()).map_err(|err| {
@@ -289,9 +291,12 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
 
 /// 一条 memory 的精简 JSON 视图（dry-run / 落盘都返回，便于外部 agent 消费）。
 fn memory_summary_json(mem: &kb_core::ConsolidatedMemory, file_name: &str) -> Value {
+    let file_stem = file_name
+        .strip_suffix(".md")
+        .expect("memory file names always have a .md extension");
     json!({
         "topic": mem.topic,
-        "file_stem": file_name.strip_suffix(".md").unwrap_or(file_name),
+        "file_stem": file_stem,
         "confidence": mem.confidence,
         "has_user_correction": mem.has_user_correction,
         "source_episode_ids": mem.source_episode_ids,

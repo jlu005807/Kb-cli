@@ -9,6 +9,7 @@ cargo test --workspace
 
 echo "Running Node-based doc-fixture diff (fallback)"
 if command -v node >/dev/null 2>&1; then
+  node --test tests/tools/validate-doc-fixture-diff.test.js
   node tests/tools/validate-doc-fixture-diff.js
 else
   echo "node not found; skipping Node-based diff"

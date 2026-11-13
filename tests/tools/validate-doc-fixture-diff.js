@@ -43,7 +43,10 @@ for (const cmd of cmds) {
     ];
 
     for (const c of checks) {
-        if (!c.jstr) continue;
+        if (!c.jstr) {
+            results.push({cmd, state: c.state, error: 'JSON example not found'});
+            continue;
+        }
         const fixPath = path.join('tests','fixtures','cli',`${cmd}_${c.state}.json`);
         if (!fs.existsSync(fixPath)) {
             results.push({cmd, state: c.state, error: `Missing fixture ${fixPath}`});

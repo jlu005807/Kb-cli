@@ -2,6 +2,8 @@
 
 状态：v2 已执行。阶段 0–6 均已修复、验证、评审并分别提交。初稿中“待确认”“不提交 commit”及由用户代跑门禁的流程，已被后续明确的逐阶段实施、验证、评审和提交要求取代。
 
+后续整体评审补充：删除重复的 Rust 文档 fixture 校验目标和 helper 测试，保留 CI 运行的 Node 校验器；移除一条依赖墙上日期的测试和被 root-help snapshot 覆盖的断言；移除未使用的测试依赖和恒真包装。MCP panic 兜底及存储兼容 fallback 等有明确错误路径的防御逻辑保留。文档校验器补上必需示例缺失时失败的回归测试。
+
 | 阶段 | 提交 |
 |---|---|
 | 0 测试隔离与基线 | `22fdb4f` |
@@ -12,7 +14,7 @@
 | 5 配置与 CLI 面 | `156e54a` |
 | 6 文档对齐 | `7e5e566` |
 
-验证记录：当前 `Cargo.lock` 在 Rust 1.89.0 上通过两平台门禁：Windows Clippy 无警告、362 项测试通过；WSL Ubuntu Clippy 无警告、361 项测试通过。Windows `CTRL_C_EVENT`、并发 update 冲突和中断后恢复、doc-fixture 与文档相对链接检查均通过。
+验证记录：当前 `Cargo.lock` 在 Rust 1.89.0 上通过两平台门禁：Windows Clippy 无警告、346 项测试通过；WSL Ubuntu Clippy 无警告、345 项测试通过。整体评审删除了重复的 helper 测试目标、被 root help snapshot 覆盖的 help 子串断言、依赖固定日历的 timestamp 测试，以及未使用 dev-dependencies。Windows `CTRL_C_EVENT`、并发 update 冲突和中断后恢复、doc-fixture 与文档相对链接检查均通过。
 
 Cursor 的项目级/全局 MCP 路径已由 [Cursor Staff 回复](https://forum.cursor.com/t/can-cursor-cli-support-add-mcp-server-parameter/167812/4)确认，该回复链接到 [Cursor MCP 文档](https://cursor.com/docs/cli/mcp)。Cline 的扩展配置入口和默认文件路径已按 [MCP 设置说明](https://docs.cline.bot/mcp/mcp-overview) 与[配置目录说明](https://docs.cline.bot/getting-started/config)核验。Claude Code CLI 在隔离配置目录中完成 initialize 和 tools/list，收到全部 8 个工具；未启动模型会话。Linux SIGINT 集成用例已在 WSL Ubuntu、Rust 1.89.0 和 1.94.1 上通过。
 
@@ -409,7 +411,7 @@ impl KbMdText {
 | CRLF `chmod` | 通过 | 字节级比较显示仅声明行变化，其他行保持 CRLF。 |
 | MCP client | 通过 | Claude Code CLI 2.1.318 使用独立 `CLAUDE_CONFIG_DIR` 显示 Connected；通信记录确认客户端完成 initialize 和 tools/list 并收到全部 8 个工具，无需模型调用。 |
 | Unix SIGINT | 通过 | WSL Ubuntu 的 Rust 1.89.0 全量测试包含此用例；Rust 1.94.1 下也已单独通过。 |
-| Rust 1.89 工具链 | 通过（Windows / Linux） | Rust 1.89.0 下两平台 workspace Clippy 无警告；Windows 362 项、Linux 361 项测试通过，数量差异来自平台专属用例。 |
+| Rust 1.89 工具链 | 通过（Windows / Linux） | Rust 1.89.0 下两平台 workspace Clippy 无警告；Windows 346 项、Linux 345 项测试通过，数量差异来自平台专属用例。 |
 
 最低版本验收命令（使用当前锁定依赖）：
 
