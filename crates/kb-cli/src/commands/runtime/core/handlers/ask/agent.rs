@@ -829,7 +829,7 @@ fn run_live_ask_agent(
         None,
     );
     emit_ask_trace("forced final synthesis returned answer");
-    return Ok(AskAgentAnswerOutput {
+    Ok(AskAgentAnswerOutput {
         agent_backend: "live".to_string(),
         agent_warning: None,
         retrieved_context: gathered_context,
@@ -837,14 +837,7 @@ fn run_live_ask_agent(
         tool_trace,
         answer_text: payload.answer_text,
         citations: payload.citations,
-    });
-
-    #[allow(unreachable_code)]
-    Err(format!(
-        "ask agent did not produce final answer for question '{}' via {}",
-        question,
-        provider.unwrap_or("unknown")
-    ))
+    })
 }
 pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;

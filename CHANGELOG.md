@@ -8,7 +8,8 @@
 
 - 精简重复测试覆盖：文档 fixture parity 统一由 CI 已运行的 Node 校验器负责，删除重复 Rust 校验目标及重复 helper 测试；移除依赖日历日期的 `Timestamp::now` 断言，并清理未使用的测试依赖。
 - 文档 fixture 校验现在要求每个受检命令都包含成功与失败 JSON 示例；补充了缺失示例的回归测试。
-- 移除 KB 总览路径中恒真的 `Some` 包装；memory 文件名的 `.md` 后缀改为显式不变量检查。
+- 移除 KB 总览路径中恒真的 `Some` 包装及 ask agent 不可达错误分支；memory 文件名的 `.md` 后缀改为显式不变量检查。
+- 移除未使用的存储后端标签 API 和冗余 SQLite connection clone；FS/SQLite 选择测试改为断言实际数据库文件副作用。
 - 陈旧或损坏的 chunk byte range 不再 panic：raw chunk 读取校验 UTF-8 边界及 FNV-1a 内容签名，验证失败时回退到索引 preview 并返回 `stale`；MCP `verify_citation` 会提示运行 `kb update`，单次工具 panic 也不会终止后续 JSON-RPC 请求。
 - 修正 Windows 盘符 chunk id 解析，`D:/notes/a.md:0002` 不再被截成 `D`。
 - `kb remember --confidence` 拒绝 NaN 和无穷值，参数解析失败且不追加 episode；领域层也忽略非有限 confidence，保留默认值。

@@ -21,7 +21,7 @@ use kb_storage_fs::{
     FsSearchStore, FsWikiStore,
 };
 use kb_storage_sqlite::{
-    open_database, SqliteConnection, SqliteEpisodeStore, SqliteGraphStore, SqliteIndexStore,
+    open_database, SqliteEpisodeStore, SqliteGraphStore, SqliteIndexStore,
     SqliteKnowledgeStore, SqliteSearchStore, SqliteWikiStore,
 };
 
@@ -32,19 +32,6 @@ pub enum StorageBackend {
     Fs,
     /// 单文件 SQLite，所有层共用一个 `.kb/store.sqlite3`。
     Sqlite,
-}
-
-impl StorageBackend {
-    /// trace/输出协议里展示当前实际生效的后端；当前仅在测试断言中使用，但
-    /// 是 StorageHandles 对外 API 的一部分，handlers 后续做 backend 感知逻辑
-    /// 时会复用。允许 dead_code 而不是删除——加回去比保留稳定 API 风险更大。
-    #[allow(dead_code)]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Fs => "fs",
-            Self::Sqlite => "sqlite",
-        }
-    }
 }
 
 /// 解析 `.kb/config.json::storage.backend`。出现以下任一情况返回 `Fs` 兜底：
@@ -87,10 +74,6 @@ pub fn sqlite_database_path(cwd: &Path) -> PathBuf {
 /// 因为它桥接的是 `crate::state::State` 而不是 `kb_core::StateSnapshot` 的纯
 /// 文件序列化路径。SQLite 化 state 是单独的迁移项，不在本模块范围内。
 pub struct StorageHandles {
-    /// 当前生效的后端类型。允许 dead_code：现在仅测试断言使用，但暴露给
-    /// handlers 后续做"是否需要 sqlite 专属优化"判断时不至于再扩字段。
-    #[allow(dead_code)]
-    pub backend: StorageBackend,
     pub index: Box<dyn IndexStore + Send + Sync>,
     pub knowledge: Box<dyn KnowledgeStore + Send + Sync>,
     pub search: Box<dyn SearchStore + Send + Sync>,
@@ -103,10 +86,6 @@ pub struct StorageHandles {
     /// L2 编译需要读原始文件；fs 后端就是文件系统读取，sqlite 后端也复用同一个
     /// reader（数据库里不存原文）。
     pub content_reader: FsFileContentReader,
-    /// 仅在 SQLite 后端下出现，供需要直接读取 wiki 页面正文等"trait 之外"的
-    /// 便利方法使用。FS 后端时为 `None`。
-    #[allow(dead_code)]
-    pub sqlite_conn: Option<SqliteConnection>,
 }
 
 impl StorageHandles {
@@ -124,7 +103,6 @@ impl StorageHandles {
 
     fn open_fs(cwd: &Path) -> Self {
         Self {
-            backend: StorageBackend::Fs,
             index: Box::new(FsIndexStore::new(cwd.to_path_buf())),
             knowledge: Box::new(FsKnowledgeStore::new(cwd.to_path_buf())),
             search: Box::new(FsSearchStore::new(cwd.to_path_buf())),
@@ -132,7 +110,6 @@ impl StorageHandles {
             wiki: Box::new(FsWikiStore::new(cwd.to_path_buf())),
             episode: Box::new(FsEpisodeStore::new(cwd.to_path_buf())),
             content_reader: FsFileContentReader::new(cwd.to_path_buf()),
-            sqlite_conn: None,
         }
     }
 
@@ -148,7 +125,6 @@ impl StorageHandles {
         }
         let conn = open_database(&db_path)?;
         Ok(Self {
-            backend: StorageBackend::Sqlite,
             index: Box::new(SqliteIndexStore::new(conn.clone())),
             knowledge: Box::new(SqliteKnowledgeStore::new(conn.clone())),
             search: Box::new(SqliteSearchStore::new(conn.clone())),
@@ -156,7 +132,6 @@ impl StorageHandles {
             wiki: Box::new(SqliteWikiStore::new(conn.clone())),
             episode: Box::new(SqliteEpisodeStore::new(conn.clone())),
             content_reader: FsFileContentReader::new(cwd.to_path_buf()),
-            sqlite_conn: Some(conn),
         })
     }
 }
@@ -224,18 +199,15 @@ mod tests {
     #[test]
     fn fs_handles_open_without_filesystem_state() {
         let tmp = unique_temp_dir("fs-handles");
-        let handles = StorageHandles::open(&tmp).expect("open fs handles");
-        assert_eq!(handles.backend, StorageBackend::Fs);
-        assert!(handles.sqlite_conn.is_none());
+        let _handles = StorageHandles::open(&tmp).expect("open fs handles");
+        assert!(!sqlite_database_path(&tmp).exists());
     }
 
     #[test]
     fn sqlite_handles_create_database_file() {
         let tmp = unique_temp_dir("sqlite-handles");
         write_config(&tmp, r#"{"storage":{"backend":"sqlite"}}"#);
-        let handles = StorageHandles::open(&tmp).expect("open sqlite handles");
-        assert_eq!(handles.backend, StorageBackend::Sqlite);
-        assert!(handles.sqlite_conn.is_some());
+        let _handles = StorageHandles::open(&tmp).expect("open sqlite handles");
         assert!(sqlite_database_path(&tmp).exists());
     }
 }
