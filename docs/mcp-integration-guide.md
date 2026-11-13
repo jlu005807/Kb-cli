@@ -56,7 +56,7 @@ Server 通过 stdio 接受 JSON-RPC 2.0 请求，暴露 8 个 tools。
 
 #### Cursor
 
-在项目级 `.cursor/mcp.json` 或全局 `~/.cursor/mcp.json` 中配置 MCP server：
+项目级 MCP server 配置放在 `.cursor/mcp.json`，全局配置放在 `~/.cursor/mcp.json`。详见 [Cursor MCP 文档](https://cursor.com/docs/cli/mcp) 和 [Cursor Staff 对两种配置范围的确认](https://forum.cursor.com/t/can-cursor-cli-support-add-mcp-server-parameter/167812/4)。
 
 ```json
 {
@@ -74,7 +74,7 @@ Server 通过 stdio 接受 JSON-RPC 2.0 请求，暴露 8 个 tools。
 
 #### Cline
 
-在 Cline 扩展的 MCP Servers 设置中添加 server（配置文件名为 `cline_mcp_settings.json`），不要写入 VS Code 的 `settings.json`：
+在 Cline 面板打开 **MCP Servers → Configure → Configure MCP Servers**，编辑扩展打开的 MCP JSON 设置，并在 `mcpServers` 对象中添加 server。默认全局文件为 `~/.cline/data/settings/cline_mcp_settings.json`；Cline 官方文档分别说明了 [MCP 设置入口](https://docs.cline.bot/mcp/mcp-overview) 和 [配置目录](https://docs.cline.bot/getting-started/config)。不要把配置写进 VS Code 的 `settings.json`。
 
 ```json
 {
@@ -506,6 +506,9 @@ kb serve --mcp
 ## 参考资料
 
 - [Model Context Protocol 规范](https://modelcontextprotocol.io)
+- [Cursor MCP 文档](https://cursor.com/docs/cli/mcp)
+- [Cline MCP 设置](https://docs.cline.bot/mcp/mcp-overview)
+- [Cline 配置目录](https://docs.cline.bot/getting-started/config)
 - [KB-CLI 命令手册](cli/command-manual.md)
 - [记忆模型设计文档](architecture/memory-model.md)
 - [arXiv:2404.13501 - Agent Memory Taxonomy](https://arxiv.org/abs/2404.13501)

@@ -121,7 +121,7 @@ kb serve --mcp
 
 配置文件位置：`%APPDATA%\Claude\claude_desktop_config.json`
 
-**Cursor**：把 MCP server 配置放入项目级 `.cursor/mcp.json` 或全局 `~/.cursor/mcp.json`：
+**Cursor**：项目级配置放在 `.cursor/mcp.json`，全局配置放在 `~/.cursor/mcp.json`：
 
 ```json
 {
@@ -135,8 +135,9 @@ kb serve --mcp
 }
 ```
 
-**Cline**：在 Cline 扩展的 MCP Servers 设置中配置（配置文件名为 `cline_mcp_settings.json`），不要写入 VS Code 的 `settings.json`。配置结构同上，把 `KB_AGENT_ID` 设为 `cline`。
-详见：[MCP 集成指南](docs/mcp-integration-guide.md)
+**Cline**：打开 Cline 面板的 **MCP Servers → Configure → Configure MCP Servers**，在 JSON 的 `mcpServers` 中添加与上例相同的配置，并将 `KB_AGENT_ID` 设为 `cline`。默认全局文件为 `~/.cline/data/settings/cline_mcp_settings.json`；不要写入 VS Code 的 `settings.json`。详见 [Cline MCP 文档](https://docs.cline.bot/mcp/mcp-overview) 与 [配置目录说明](https://docs.cline.bot/getting-started/config)。
+
+详见：[MCP 集成指南](docs/mcp-integration-guide.md)；[Cursor MCP 文档](https://cursor.com/docs/cli/mcp)。
 
 ---
 
