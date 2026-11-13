@@ -30,7 +30,15 @@ pub struct KbReference {
 pub struct KbDocument {
     pub front_matter: KbFrontMatter,
     pub categories: Vec<String>,
+    pub headings: Vec<HeadingInfo>,
     pub references: Vec<KbReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadingInfo {
+    pub line: usize,
+    pub level: usize,
+    pub name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +61,7 @@ pub fn parse_kb_document(raw: &str) -> Result<KbDocument, String> {
     let (front_matter, body_start_line) = parse_front_matter(&lines)?;
 
     let mut categories: Vec<String> = Vec::new();
+    let mut headings: Vec<HeadingInfo> = Vec::new();
     let mut references: Vec<KbReference> = Vec::new();
     let mut scopes: Vec<HeadingScope> = Vec::new();
 
@@ -64,6 +73,11 @@ pub fn parse_kb_document(raw: &str) -> Result<KbDocument, String> {
         }
 
         if let Some((level, heading_name, heading_perm)) = parse_heading(trimmed) {
+            headings.push(HeadingInfo {
+                line: line_number,
+                level,
+                name: heading_name.clone(),
+            });
             while scopes
                 .last()
                 .map(|scope| scope.level >= level)
@@ -120,6 +134,7 @@ pub fn parse_kb_document(raw: &str) -> Result<KbDocument, String> {
     Ok(KbDocument {
         front_matter,
         categories,
+        headings,
         references,
     })
 }

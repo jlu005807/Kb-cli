@@ -164,4 +164,4 @@ default_perm: r
 - 即使某些路径已不在 `./.kb/regs.json` 中，但仍残留在基线 `index.json`，上述清理仍会执行。
 - `kb chmod <target> <perms>` 仅修改 `kb.md` 内权限声明（引用或分类），不直接写 `regs.json`。
 - `kb rm <target>` 从 `kb.md` 删除匹配声明（按 alias/id/path）；真正同步到 `regs.json` 仅发生在 `kb update`。
-- `kb update` 会把声明差异同步到 `./.kb/regs.json`，更新后端索引产物，并在 `check` 确认 `not_found` 时删除 `kb.md` 中缺失引用行，同时按路径去重重复 raw 引用。
+- `kb update` 会把声明差异同步到 `./.kb/regs.json` 并更新后端索引产物；确认为 `not_found` 的路径会从登记与索引中移除，但 `kb.md` 声明默认保留，只有 `kb update --prune` 才删除对应行。raw 重复引用仍按路径去重。

@@ -206,12 +206,13 @@
 - 刷新后端索引快照。
 - 同步 `raw` 与 `kb.md`：
   - 将新增 raw 文件追加到 `# raw`
-  - 删除已确认为 `not_found` 的声明行
+  - 已确认为 `not_found` 的路径会从登记与索引中移除；`kb.md` 声明默认保留
+  - 只有传入 `--prune` 才删除对应的 `kb.md` 声明行
   - 按规范化路径对 raw 声明去重
 
 选项：
 - `--dry-run`：仅预览，不写入
-- `--prune`：显式清理无效/缺失条目（注意：registry diff 存在 `to_remove` 时即使不带 `--prune` 也会以 prune 语义执行）
+- `--prune`：删除 `kb.md` 中已确认为 `not_found` 的声明行；与 `--dry-run` 同用时只预览、不改写文件
 - `--full`：全量重建索引
 - `--strict`：L2-L5 任一失败时整体失败（非 0 退出）
 - `--llm`：本次更新强制尝试启用 L2/L4/L5 的 LLM 路径（若缺少 `KB_LLM_KEY` 会回退到规则路径并给 warning）
@@ -245,6 +246,7 @@ LLM 配置优先级：
 - `full`
 - `raw_category_created`
 - `strict`
+- `missing_declarations`：未找到的声明路径（`alias`、`path`）；不计入 warnings，也不导致 `--strict` 失败
 - `layer_status`
 - `l2_compilation`
 - `semantic_extractor`

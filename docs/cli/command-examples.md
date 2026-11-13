@@ -432,6 +432,7 @@ kb update --output=json
     "full": false,
     "raw_category_created": false,
     "strict": false,
+    "missing_declarations": [],
     "layer_status": {
       "l0_declaration": "ok",
       "l1_registry": "ok",

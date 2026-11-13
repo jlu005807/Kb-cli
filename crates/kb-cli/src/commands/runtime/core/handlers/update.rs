@@ -36,14 +36,25 @@ pub(crate) fn run_update(
 
     let diff = compute_registry_diff(&cwd, &registry.regs, &desired, effective_baseline.as_ref());
     apply_registry_diff(&mut registry, &diff);
+    let missing_declarations = if prune && !dry_run {
+        Vec::new()
+    } else {
+        diff.to_remove
+            .iter()
+            .filter(|item| item.reason == "not_found")
+            .map(|item| json!({"alias": item.alias, "path": item.path}))
+            .collect::<Vec<_>>()
+    };
 
     let backend_sync = build_backend_sync_backend();
     let mut raw_category_created = false;
     if !dry_run {
         let kb_md = cwd.join("kb.md");
-        let kb_doc_for_prune = parse_kb_document_file(&kb_md)?;
-        prune_missing_refs_from_kb_md(&cwd, &kb_doc_for_prune, &diff)
-            .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
+        if prune {
+            let kb_doc_for_prune = parse_kb_document_file(&kb_md)?;
+            prune_missing_refs_from_kb_md(&cwd, &kb_doc_for_prune, &diff)
+                .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
+        }
         let kb_doc_for_dedupe = parse_kb_document_file(&kb_md)?;
         dedupe_raw_refs_in_kb_md(&cwd, &kb_doc_for_dedupe)
             .map_err(|_| map_core_error(CoreErrorKind::WriteConfigFailed, json!({})))?;
@@ -447,6 +458,7 @@ pub(crate) fn run_update(
                 "strict": true,
                 "layer_status": layer_status,
                 "l2_compilation": l2_compilation,
+                "missing_declarations": missing_declarations,
                 "warnings": [],
                 "errors": warning_items,
                 "failed_layers": progressive_issues.iter().map(|issue| issue.layer).collect::<Vec<_>>(),
@@ -478,6 +490,7 @@ pub(crate) fn run_update(
         l2_reused: l2_outcome.reused,
         l2_missing: l2_outcome.missing,
         l2_failed: l2_outcome.failed,
+        missing_declarations: missing_declarations.len(),
         warnings: warning_texts,
         errors: vec![],
     });
@@ -491,6 +504,7 @@ pub(crate) fn run_update(
         "full": full,
         "raw_category_created": raw_category_created,
         "strict": strict,
+        "missing_declarations": missing_declarations,
         "layer_status": layer_status,
         "l2_compilation": l2_compilation,
         "semantic_extractor": {

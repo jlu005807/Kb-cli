@@ -6,29 +6,107 @@ fn write_kb_md_atomic(kb_md: &Path, content: &str) -> Result<(), std::io::Error>
         .map_err(|err| std::io::Error::other(err.to_string()))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KbMdText {
+    bom: bool,
+    eol: &'static str,
+    lines: Vec<String>,
+    trailing_eol: bool,
+}
+
+impl Default for KbMdText {
+    fn default() -> Self {
+        Self {
+            bom: false,
+            eol: "\n",
+            lines: Vec::new(),
+            trailing_eol: false,
+        }
+    }
+}
+
+impl KbMdText {
+    fn read(path: &Path) -> Result<Self, std::io::Error> {
+        match fs::read_to_string(path) {
+            Ok(raw) => Ok(Self::from_raw(&raw)),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn from_raw(raw: &str) -> Self {
+        let bom = raw.starts_with('\u{feff}');
+        let content = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+        let eol = match content.find('\n') {
+            Some(index) if index > 0 && content.as_bytes()[index - 1] == b'\r' => "\r\n",
+            _ => "\n",
+        };
+
+        Self {
+            bom,
+            eol,
+            lines: content.lines().map(ToString::to_string).collect(),
+            trailing_eol: content.ends_with('\n'),
+        }
+    }
+
+    fn render(&self) -> String {
+        let mut content = String::new();
+        if self.bom {
+            content.push('\u{feff}');
+        }
+        for (index, line) in self.lines.iter().enumerate() {
+            if index > 0 {
+                content.push_str(self.eol);
+            }
+            content.push_str(line);
+        }
+        if self.trailing_eol {
+            content.push_str(self.eol);
+        }
+        content
+    }
+
+    fn write_atomic(&self, path: &Path) -> Result<(), std::io::Error> {
+        write_kb_md_atomic(path, &self.render())
+    }
+}
+
 fn append_to_kb_md(
     kb_md: &Path,
     category: &str,
     alias: &str,
     path: &str,
 ) -> Result<(), std::io::Error> {
-    let mut content = fs::read_to_string(kb_md).unwrap_or_default();
-    let has_category = parse_kb_document(&content)
-        .ok()
-        .map(|doc| doc.categories.iter().any(|x| x == category))
-        .unwrap_or(false);
+    let mut content = KbMdText::read(kb_md)?;
+    let reference = format!("[{alias}]({path})");
+    let Ok(document) = parse_kb_document(&content.render()) else {
+        content.lines.push(format!("# {category}"));
+        content.lines.push(reference);
+        content.trailing_eol = true;
+        return content.write_atomic(kb_md);
+    };
 
-    if !has_category {
-        if !content.ends_with('\n') && !content.is_empty() {
-            content.push('\n');
-        }
-        content.push_str(&format!("# {category}\n"));
+    if let Some(heading) = document.headings.iter().find(|item| item.name == category) {
+        let first_line_after_heading = heading.line.min(content.lines.len());
+        let stop = document
+            .headings
+            .iter()
+            .find(|item| item.line > heading.line)
+            .map(|item| item.line.saturating_sub(1))
+            .unwrap_or(content.lines.len())
+            .min(content.lines.len());
+        let insert_at = (first_line_after_heading..stop)
+            .rfind(|index| !content.lines[*index].trim().is_empty())
+            .map(|index| index + 1)
+            .unwrap_or(first_line_after_heading);
+        content.lines.insert(insert_at, reference);
+    } else {
+        content.lines.push(format!("# {category}"));
+        content.lines.push(reference);
     }
-    if !content.ends_with('\n') && !content.is_empty() {
-        content.push('\n');
-    }
-    content.push_str(&format!("[{alias}]({path})\n"));
-    write_kb_md_atomic(kb_md, &content)
+    content.trailing_eol = true;
+    content.write_atomic(kb_md)
 }
 
 fn append_missing_raw_refs_to_kb_md(
@@ -63,8 +141,7 @@ fn apply_rm_to_kb_md(
     kb_doc: &crate::kb_md::KbDocument,
     target: &str,
 ) -> Result<Option<(String, String)>, std::io::Error> {
-    let raw = fs::read_to_string(kb_md)?;
-    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let mut content = KbMdText::read(kb_md)?;
     let reference = resolve_rm_target(kb_doc, target);
 
     let Some(reference) = reference else {
@@ -72,16 +149,11 @@ fn apply_rm_to_kb_md(
     };
 
     let idx = reference.line.saturating_sub(1);
-    if idx >= lines.len() {
+    if idx >= content.lines.len() {
         return Ok(None);
     }
-    lines.remove(idx);
-
-    let mut out = lines.join("\n");
-    if raw.ends_with('\n') {
-        out.push('\n');
-    }
-    write_kb_md_atomic(kb_md, &out)?;
+    content.lines.remove(idx);
+    content.write_atomic(kb_md)?;
 
     Ok(Some(reference.identity()))
 }
@@ -173,21 +245,16 @@ fn apply_mv_to_kb_md(
     let Some(reference) = resolve_rm_target(kb_doc, target) else {
         return Ok(None);
     };
-    let raw = fs::read_to_string(kb_md)?;
-    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let mut content = KbMdText::read(kb_md)?;
     let idx = reference.line.saturating_sub(1);
-    if idx >= lines.len() {
+    if idx >= content.lines.len() {
         return Ok(None);
     }
-    let Some(new_line) = rewrite_reference_line(&lines[idx], Some(new_alias), None) else {
+    let Some(new_line) = rewrite_reference_line(&content.lines[idx], Some(new_alias), None) else {
         return Ok(None);
     };
-    lines[idx] = new_line;
-    let mut out = lines.join("\n");
-    if raw.ends_with('\n') {
-        out.push('\n');
-    }
-    write_kb_md_atomic(kb_md, &out)?;
+    content.lines[idx] = new_line;
+    content.write_atomic(kb_md)?;
     Ok(Some(reference.identity()))
 }
 
@@ -201,21 +268,16 @@ fn apply_path_to_kb_md(
     let Some(reference) = resolve_rm_target(kb_doc, target) else {
         return Ok(None);
     };
-    let raw = fs::read_to_string(kb_md)?;
-    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let mut content = KbMdText::read(kb_md)?;
     let idx = reference.line.saturating_sub(1);
-    if idx >= lines.len() {
+    if idx >= content.lines.len() {
         return Ok(None);
     }
-    let Some(new_line) = rewrite_reference_line(&lines[idx], None, Some(new_path)) else {
+    let Some(new_line) = rewrite_reference_line(&content.lines[idx], None, Some(new_path)) else {
         return Ok(None);
     };
-    lines[idx] = new_line;
-    let mut out = lines.join("\n");
-    if raw.ends_with('\n') {
-        out.push('\n');
-    }
-    write_kb_md_atomic(kb_md, &out)?;
+    content.lines[idx] = new_line;
+    content.write_atomic(kb_md)?;
     Ok(Some(reference.identity()))
 }
 
@@ -225,8 +287,7 @@ fn apply_chmod_to_kb_md(
     target: &str,
     perms: &str,
 ) -> Result<bool, std::io::Error> {
-    let raw = fs::read_to_string(kb_md)?;
-    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let mut content = KbMdText::read(kb_md)?;
     let normalized_target = normalize_path(target);
 
     if let Some(reference) = kb_doc.references.iter().find(|item| {
@@ -238,8 +299,8 @@ fn apply_chmod_to_kb_md(
         item.alias.as_deref() == Some(target) || id == target || normalized_ref_path == normalized_target
     }) {
         let idx = reference.line.saturating_sub(1);
-        if idx < lines.len() {
-            let old_line = lines[idx].clone();
+        if idx < content.lines.len() {
+            let old_line = content.lines[idx].clone();
             let leading_ws = old_line
                 .chars()
                 .take_while(|ch| ch.is_whitespace())
@@ -255,25 +316,17 @@ fn apply_chmod_to_kb_md(
                     new_line.push_str(&comment_text);
                 }
             }
-            lines[idx] = new_line;
-            let mut out = lines.join("\n");
-            if raw.ends_with('\n') {
-                out.push('\n');
-            }
-            write_kb_md_atomic(kb_md, &out)?;
+            content.lines[idx] = new_line;
+            content.write_atomic(kb_md)?;
             return Ok(true);
         }
     }
 
-    for idx in 0..lines.len() {
-        if let Some((level, name, leading_ws)) = parse_heading_line_for_chmod(&lines[idx]) {
+    for idx in 0..content.lines.len() {
+        if let Some((level, name, leading_ws)) = parse_heading_line_for_chmod(&content.lines[idx]) {
             if name == target {
-                lines[idx] = format!("{leading_ws}{} {name}:{perms}", "#".repeat(level));
-                let mut out = lines.join("\n");
-                if raw.ends_with('\n') {
-                    out.push('\n');
-                }
-                write_kb_md_atomic(kb_md, &out)?;
+                content.lines[idx] = format!("{leading_ws}{} {name}:{perms}", "#".repeat(level));
+                content.write_atomic(kb_md)?;
                 return Ok(true);
             }
         }
@@ -324,8 +377,7 @@ fn prune_missing_refs_from_kb_md(
     }
 
     let kb_md = cwd.join("kb.md");
-    let raw = fs::read_to_string(&kb_md)?;
-    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let mut content = KbMdText::read(&kb_md)?;
     let mut removed = 0usize;
 
     let mut remove_indexes = kb_doc
@@ -339,18 +391,14 @@ fn prune_missing_refs_from_kb_md(
     remove_indexes.reverse();
 
     for idx in remove_indexes {
-        if idx < lines.len() {
-            lines.remove(idx);
+        if idx < content.lines.len() {
+            content.lines.remove(idx);
             removed += 1;
         }
     }
 
     if removed > 0 {
-        let mut out = lines.join("\n");
-        if raw.ends_with('\n') {
-            out.push('\n');
-        }
-        write_kb_md_atomic(&kb_md, &out)?;
+        content.write_atomic(&kb_md)?;
     }
 
     Ok(removed)
@@ -361,8 +409,7 @@ fn dedupe_raw_refs_in_kb_md(
     kb_doc: &crate::kb_md::KbDocument,
 ) -> Result<usize, std::io::Error> {
     let kb_md = cwd.join("kb.md");
-    let raw = fs::read_to_string(&kb_md)?;
-    let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
+    let mut content = KbMdText::read(&kb_md)?;
     let mut seen = HashSet::new();
     let mut remove_indexes = Vec::new();
 
@@ -386,18 +433,14 @@ fn dedupe_raw_refs_in_kb_md(
 
     let mut removed = 0usize;
     for idx in remove_indexes {
-        if idx < lines.len() {
-            lines.remove(idx);
+        if idx < content.lines.len() {
+            content.lines.remove(idx);
             removed += 1;
         }
     }
 
     if removed > 0 {
-        let mut out = lines.join("\n");
-        if raw.ends_with('\n') {
-            out.push('\n');
-        }
-        write_kb_md_atomic(&kb_md, &out)?;
+        content.write_atomic(&kb_md)?;
     }
 
     Ok(removed)
@@ -450,7 +493,134 @@ fn metadata_summary(abs: &Path) -> (u64, String) {
 
 #[cfg(test)]
 mod kbmd_ops_tests {
-    use super::rewrite_reference_line;
+    use super::{append_to_kb_md, apply_chmod_to_kb_md, rewrite_reference_line, KbMdText};
+    use crate::kb_md::parse_kb_document;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_path() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("kbmd-ops-{}-{nonce}", std::process::id()))
+            .join("kb.md")
+    }
+
+    #[test]
+    fn chmod_changes_only_the_target_line_in_crlf_kb_md() {
+        let path = unique_test_path();
+        fs::create_dir_all(path.parent().expect("test directory"))
+            .expect("create test directory");
+        let original = "# docs:r\r\n[doc](./a.md):r\r\n# next\r\n";
+        fs::write(&path, original.as_bytes()).expect("write kb.md");
+        let document = parse_kb_document(original).expect("parse kb.md");
+
+        assert!(apply_chmod_to_kb_md(&path, &document, "doc", "rw").expect("chmod kb.md"));
+        let written = fs::read(&path).expect("read kb.md");
+
+        assert_eq!(written, b"# docs:r\r\n[doc](./a.md):rw\r\n# next\r\n");
+    }
+
+    #[test]
+    fn kbmd_text_round_trips_line_endings_bom_and_trailing_eol() {
+        for raw in [
+            "# docs\n[doc](./a.md)\n",
+            "# docs\r\n[doc](./a.md)\r\n",
+            "\u{feff}# docs\r\n[doc](./a.md)\r\n",
+            "# docs\n[doc](./a.md)",
+        ] {
+            let path = unique_test_path();
+            fs::create_dir_all(path.parent().expect("test directory"))
+                .expect("create test directory");
+            fs::write(&path, raw.as_bytes()).expect("write kb.md");
+
+            KbMdText::read(&path)
+                .expect("read kb.md")
+                .write_atomic(&path)
+                .expect("write kb.md");
+
+            assert_eq!(fs::read(&path).expect("read written kb.md"), raw.as_bytes());
+        }
+    }
+
+    #[test]
+    fn kbmd_text_normalizes_mixed_line_endings_to_first_style() {
+        let path = unique_test_path();
+        fs::create_dir_all(path.parent().expect("test directory"))
+            .expect("create test directory");
+        fs::write(&path, b"# docs\r\n[doc](./a.md)\n# next\r\n").expect("write kb.md");
+
+        KbMdText::read(&path)
+            .expect("read kb.md")
+            .write_atomic(&path)
+            .expect("write kb.md");
+
+        assert_eq!(
+            fs::read(&path).expect("read written kb.md"),
+            b"# docs\r\n[doc](./a.md)\r\n# next\r\n"
+        );
+    }
+
+    #[test]
+    fn append_to_kb_md_stays_inside_target_heading_section() {
+        let cases = [
+            (
+                "target section at end",
+                "# docs\n[old](./old.md)\n",
+                "docs",
+                "# docs\n[old](./old.md)\n[new](./new.md)\n",
+            ),
+            (
+                "target section in middle",
+                "# docs\n[old](./old.md)\n# notes\n[other](./other.md)\n",
+                "docs",
+                "# docs\n[old](./old.md)\n[new](./new.md)\n# notes\n[other](./other.md)\n",
+            ),
+            (
+                "duplicate category uses first heading",
+                "# docs\n[first](./first.md)\n# docs\n[second](./second.md)\n",
+                "docs",
+                "# docs\n[first](./first.md)\n[new](./new.md)\n# docs\n[second](./second.md)\n",
+            ),
+            (
+                "target section with child heading",
+                "# docs\n[old](./old.md)\n## child\n[child](./child.md)\n",
+                "docs",
+                "# docs\n[old](./old.md)\n[new](./new.md)\n## child\n[child](./child.md)\n",
+            ),
+            (
+                "empty target section",
+                "# docs\n# notes\n[other](./other.md)\n",
+                "docs",
+                "# docs\n[new](./new.md)\n# notes\n[other](./other.md)\n",
+            ),
+            (
+                "target section with trailing blank lines",
+                "# docs\n[old](./old.md)\n\n\n# notes\n",
+                "docs",
+                "# docs\n[old](./old.md)\n[new](./new.md)\n\n\n# notes\n",
+            ),
+            ("empty file", "", "docs", "# docs\n[new](./new.md)\n"),
+        ];
+
+        for (name, original, category, expected) in cases {
+            let path = unique_test_path();
+            fs::create_dir_all(path.parent().expect("test directory"))
+                .expect("create test directory");
+            fs::write(&path, original).expect("write kb.md");
+
+            append_to_kb_md(&path, category, "new", "./new.md").expect("append reference");
+
+            assert_eq!(
+                fs::read_to_string(path).expect("read updated kb.md"),
+                expected,
+                "wrong insertion point for {name}"
+            );
+        }
+    }
 
     #[test]
     fn rewrite_alias_preserves_perm_suffix_and_comment() {

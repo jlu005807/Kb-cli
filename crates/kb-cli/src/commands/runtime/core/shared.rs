@@ -302,6 +302,7 @@ struct UpdateTextSummary {
     l2_reused: usize,
     l2_missing: usize,
     l2_failed: usize,
+    missing_declarations: usize,
     warnings: Vec<String>,
     errors: Vec<String>,
 }
@@ -338,6 +339,13 @@ fn format_update_text(summary: &UpdateTextSummary) -> String {
         for line in &summary.errors {
             let _ = writeln!(out, "  - {}", line);
         }
+    }
+    if summary.missing_declarations > 0 {
+        let _ = writeln!(
+            out,
+            "{} declared path(s) not found; run 'kb update --prune' to remove them from kb.md",
+            summary.missing_declarations
+        );
     }
     out
 }

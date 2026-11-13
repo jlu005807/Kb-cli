@@ -213,6 +213,47 @@ fn add_default_append_and_category() {
 }
 
 #[test]
+fn add_inserts_before_child_heading_in_target_category() {
+    let dir = unique_temp_dir("add-before-child-heading");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/new.md", "NEW");
+    mk_file(&dir, "./docs/existing.md", "EXISTING");
+    mk_file(&dir, "./docs/child.md", "CHILD");
+    mk_file(
+        &dir,
+        "./kb.md",
+        "# docs:r\n[existing](./docs/existing.md):r\n\n## child\n[child](./docs/child.md):r\n# notes:rw\n",
+    );
+
+    let (ok, _) = run_json(
+        &["add", "./docs/new.md", "new", "--category", "docs"],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    let new_line = kb_md.find("[new](./docs/new.md)").expect("new reference");
+    let child_heading = kb_md.find("## child").expect("child heading");
+    assert!(new_line < child_heading, "new reference must remain in docs");
+
+    let (ok, listed) = run_json(&["list", "--long", "--tree"], &dir);
+    assert!(ok);
+    let items = listed["data"]["items"].as_array().expect("items array");
+    let new_item = items
+        .iter()
+        .find(|item| item["alias"] == "new")
+        .expect("new alias should be indexed");
+    assert_eq!(new_item["perms"], "r");
+    let categories = listed["data"]["categories"]
+        .as_array()
+        .expect("categories array");
+    assert!(categories.iter().any(|category| category == "docs"));
+}
+
+#[test]
 fn rm_updates_kb_md_only_and_check_detects_deletion_until_update() {
     let dir = unique_temp_dir("rm-kbmd-only");
     let (ok, _) = run_json(&["init", "demo"], &dir);
@@ -689,7 +730,7 @@ fn update_applies_add_and_remove_to_regs_file() {
 }
 
 #[test]
-fn update_prunes_missing_kb_md_references() {
+fn update_keeps_missing_declarations_until_prune_is_requested() {
     let dir = unique_temp_dir("update-prune-kbmd-missing");
     let (ok, _) = run_json(&["init", "demo"], &dir);
     assert!(ok);
@@ -729,12 +770,94 @@ fn update_prunes_missing_kb_md_references() {
         }),
     );
 
-    let (ok, _) = run_json(&["update"], &dir);
+    let (ok, updated) = run_json(&["update"], &dir);
     assert!(ok);
+    let missing = updated["data"]["missing_declarations"]
+        .as_array()
+        .expect("missing declarations array");
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0]["alias"], "missing");
+    assert_eq!(missing[0]["path"], "./docs/missing.md");
 
     let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    assert!(kb_md.contains("[missing](docs/missing.md):r"));
+    assert!(kb_md.contains("[still](docs/still.md):r"));
+    let (ok, listed) = run_json(&["list"], &dir);
+    assert!(ok);
+    let items = listed["data"]["items"].as_array().expect("items array");
+    assert!(!items.iter().any(|item| item["path"] == "./docs/missing.md"));
+
+    let regs = read_json_file(&dir, "./.kb/regs.json");
+    assert!(!regs["regs"]
+        .as_array()
+        .expect("regs array")
+        .iter()
+        .any(|item| item["path"] == "./docs/missing.md"));
+
+    let text_update = kb_command_in(&dir)
+        .args(["update"])
+        .assert()
+        .success();
+    let text = String::from_utf8_lossy(&text_update.get_output().stdout);
+    assert!(text.contains(
+        "1 declared path(s) not found; run 'kb update --prune' to remove them from kb.md"
+    ));
+
+    let (ok, pruned) = run_json(&["update", "--prune"], &dir);
+    assert!(ok);
+    assert!(pruned["data"]["missing_declarations"]
+        .as_array()
+        .expect("missing declarations array")
+        .is_empty());
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read pruned kb.md");
     assert!(!kb_md.contains("[missing](docs/missing.md):r"));
     assert!(kb_md.contains("[still](docs/still.md):r"));
+}
+
+#[test]
+fn missing_declarations_do_not_fail_strict_and_dry_run_prune_does_not_write() {
+    let dir = unique_temp_dir("update-missing-strict-dry-run");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./kb.md", "# docs:r\n[missing](docs/missing.md):r\n");
+
+    let original = fs::read(dir.join("kb.md")).expect("read original kb.md");
+    let (ok, dry_run) = run_json(&["update", "--dry-run", "--prune"], &dir);
+    assert!(ok);
+    assert_eq!(dry_run["data"]["missing_declarations"].as_array().unwrap().len(), 1);
+    assert_eq!(fs::read(dir.join("kb.md")).expect("read dry-run kb.md"), original);
+
+    let (ok, strict) = run_json(&["update", "--strict"], &dir);
+    assert!(ok, "missing declarations alone must not fail strict mode: {strict}");
+    assert_eq!(strict["data"]["missing_declarations"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn strict_layer_failure_keeps_missing_declarations_in_error_details() {
+    let dir = unique_temp_dir("update-strict-missing-details");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/live.md", "LIVE");
+    mk_file(
+        &dir,
+        "./kb.md",
+        "# docs:r\n[missing](docs/missing.md):r\n[live](docs/live.md):r\n",
+    );
+
+    let (ok, result) = run_json_with_env(
+        &["update", "--strict"],
+        &dir,
+        &[("KB_UPDATE_SIMULATE_LAYER_FAILURES", "l2_semantic")],
+    );
+
+    assert!(!ok);
+    assert_eq!(result["error"]["code"], "E1011");
+    let missing = result["error"]["details"]["missing_declarations"]
+        .as_array()
+        .expect("missing declarations in strict error details");
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0]["alias"], "missing");
+    assert_eq!(missing[0]["path"], "./docs/missing.md");
 }
 
 #[test]
@@ -1173,6 +1296,27 @@ fn update_appends_new_raw_files_into_kb_md_raw_category() {
     let kb_md_again = fs::read_to_string(dir.join("kb.md")).expect("read kb.md again");
     let count = kb_md_again.matches("[](./.kb/raw/new-raw.md)").count();
     assert_eq!(count, 1, "raw reference should not be duplicated");
+}
+
+#[test]
+fn update_preserves_crlf_when_appending_raw_declarations() {
+    let dir = unique_temp_dir("update-append-raw-crlf");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./docs/guide.md", "GUIDE");
+    mk_file(&dir, "./docs/notes.md", "NOTES");
+    mk_file(&dir, "./.kb/raw/new-raw.md", "RAW NEW");
+
+    let original = "# docs:r\r\n[guide](./docs/guide.md):r\r\n# notes:rw\r\n[notes](./docs/notes.md):rw\r\n";
+    fs::write(dir.join("kb.md"), original.as_bytes()).expect("write CRLF kb.md");
+
+    let (ok, _) = run_json(&["update"], &dir);
+    assert!(ok);
+
+    assert_eq!(
+        fs::read(dir.join("kb.md")).expect("read updated kb.md"),
+        b"# docs:r\r\n[guide](./docs/guide.md):r\r\n# notes:rw\r\n[notes](./docs/notes.md):rw\r\n# raw\r\n[](./.kb/raw/new-raw.md)\r\n"
+    );
 }
 
 #[test]
