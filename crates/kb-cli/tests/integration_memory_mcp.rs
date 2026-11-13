@@ -2,12 +2,15 @@
 //! `kb consolidate`) and the MCP stdio server (`kb serve --mcp`).
 //!
 //! Follows the same conventions as `integration_core_commands.rs`:
-//! `assert_cmd::Command::cargo_bin("kb-cli")`, unique temp dirs, `--output json`.
+//! shared command setup, unique temp dirs, `--output json`.
 //! The MCP end-to-end test spawns the real binary and speaks JSON-RPC 2.0 over
 //! piped stdio (line-delimited), matching the transport used by Claude Desktop
 //! / Cursor / Cline.
 
-use assert_cmd::Command;
+#[allow(dead_code)]
+mod common;
+
+use common::{kb_command_in, kb_command_with_env, kb_process_command};
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -15,9 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(current_dir)
+    let assert = kb_command_in(current_dir)
         .arg("--output")
         .arg("json")
         .args(args)
@@ -28,15 +29,11 @@ fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
 }
 
 fn run_json_with_env(args: &[&str], current_dir: &Path, envs: &[(&str, &str)]) -> (bool, Value) {
-    let mut cmd = Command::cargo_bin("kb-cli").expect("kb-cli binary should build");
-    cmd.current_dir(current_dir)
+    let assert = kb_command_with_env(current_dir, envs)
         .arg("--output")
         .arg("json")
-        .args(args);
-    for (key, value) in envs {
-        cmd.env(key, value);
-    }
-    let assert = cmd.assert();
+        .args(args)
+        .assert();
     let success = assert.get_output().status.success();
     let body: Value = serde_json::from_slice(&assert.get_output().stdout).expect("json stdout");
     (success, body)
@@ -359,10 +356,7 @@ fn mcp_server_stdio_end_to_end() {
     let (ok, _) = run_json(&["update"], &dir);
     assert!(ok);
 
-    let bin = assert_cmd::cargo::cargo_bin("kb-cli");
-    let mut child = std::process::Command::new(bin)
-        .current_dir(&dir)
-        .env("KB_AGENT_ID", "mcp-e2e-agent")
+    let mut child = kb_process_command(&dir, &[("KB_AGENT_ID", "mcp-e2e-agent")])
         .args(["serve", "--mcp"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

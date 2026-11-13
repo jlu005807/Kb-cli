@@ -1,13 +1,14 @@
-use assert_cmd::Command;
+#[allow(dead_code)]
+mod common;
+
+use common::{kb_command_in, kb_command_with_env, kb_command_with_global_config};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(current_dir)
+    let assert = kb_command_in(current_dir)
         .arg("--output")
         .arg("json")
         .args(args)
@@ -18,15 +19,11 @@ fn run_json(args: &[&str], current_dir: &Path) -> (bool, Value) {
 }
 
 fn run_json_with_env(args: &[&str], current_dir: &Path, envs: &[(&str, &str)]) -> (bool, Value) {
-    let mut cmd = Command::cargo_bin("kb-cli").expect("kb-cli binary should build");
-    cmd.current_dir(current_dir)
+    let assert = kb_command_with_env(current_dir, envs)
         .arg("--output")
         .arg("json")
-        .args(args);
-    for (key, value) in envs {
-        cmd.env(key, value);
-    }
-    let assert = cmd.assert();
+        .args(args)
+        .assert();
     let success = assert.get_output().status.success();
     let body: Value = serde_json::from_slice(&assert.get_output().stdout).expect("json stdout");
     (success, body)
@@ -37,10 +34,7 @@ fn run_json_with_global_config(
     current_dir: &Path,
     global_config: &Path,
 ) -> (bool, Value) {
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(current_dir)
-        .env("KB_GLOBAL_CONFIG", global_config)
+    let assert = kb_command_with_global_config(current_dir, global_config)
         .arg("--output")
         .arg("json")
         .args(args)
@@ -126,6 +120,10 @@ fn init_creates_kbignore() {
     assert!(env_template.contains("KB_LLM_SEMANTIC_FLOW=two_step"));
     assert!(env_template.contains("KB_LLM_RETRY_MAX_ATTEMPTS=3"));
     assert!(dir.join(".kb/config.json").exists());
+    assert!(
+        dir.join("global-config.json").exists(),
+        "init should write the global registry into the test directory"
+    );
     let local_cfg = read_json_file(&dir, "./.kb/config.json");
     assert!(local_cfg.get("llm").is_some());
     assert_eq!(local_cfg["llm"]["semantic_flow"], "two_step");
@@ -1375,9 +1373,7 @@ fn ask_returns_disabled_engine_and_retrieval_structure() {
     let (ok, _) = run_json(&["update"], &dir);
     assert!(ok);
 
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(&dir)
+    let assert = kb_command_in(&dir)
         .arg("ask")
         .arg("hello")
         .arg("--top")
@@ -1467,20 +1463,22 @@ fn ask_reports_configured_engine_when_llm_env_is_present() {
     let (ok, _) = run_json(&["update"], &dir);
     assert!(ok);
 
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(&dir)
-        .env("KB_LLM_KEY", "demo-key")
-        .env("KB_LLM_MODEL", "demo-model")
-        .env("KB_LLM_BASE_URL", "https://api.example/v1")
-        .env("KB_ASK_OFFLINE_STUB", "1")
-        .arg("ask")
-        .arg("hello")
-        .arg("--top")
-        .arg("1")
-        .arg("--output")
-        .arg("json")
-        .assert();
+    let assert = kb_command_with_env(
+        &dir,
+        &[
+            ("KB_LLM_KEY", "demo-key"),
+            ("KB_LLM_MODEL", "demo-model"),
+            ("KB_LLM_BASE_URL", "https://api.example/v1"),
+            ("KB_ASK_OFFLINE_STUB", "1"),
+        ],
+    )
+    .arg("ask")
+    .arg("hello")
+    .arg("--top")
+    .arg("1")
+    .arg("--output")
+    .arg("json")
+    .assert();
     let output = assert.get_output();
     assert!(output.status.success());
     assert_eq!(output.status.code(), Some(0));
@@ -1520,20 +1518,22 @@ fn ask_answer_reports_tool_trace_when_llm_env_is_present() {
     let (ok, _) = run_json(&["update"], &dir);
     assert!(ok);
 
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(&dir)
-        .env("KB_LLM_KEY", "demo-key")
-        .env("KB_LLM_MODEL", "demo-model")
-        .env("KB_LLM_BASE_URL", "https://api.example/v1")
-        .arg("ask")
-        .arg("hello")
-        .arg("--top")
-        .arg("1")
-        .arg("--answer")
-        .arg("--output")
-        .arg("json")
-        .assert();
+    let assert = kb_command_with_env(
+        &dir,
+        &[
+            ("KB_LLM_KEY", "demo-key"),
+            ("KB_LLM_MODEL", "demo-model"),
+            ("KB_LLM_BASE_URL", "https://api.example/v1"),
+        ],
+    )
+    .arg("ask")
+    .arg("hello")
+    .arg("--top")
+    .arg("1")
+    .arg("--answer")
+    .arg("--output")
+    .arg("json")
+    .assert();
     let output = assert.get_output();
     assert!(output.status.success());
 
@@ -1571,21 +1571,23 @@ fn ask_answer_stub_emits_agent_trace_and_stderr_progress() {
     let (ok, _) = run_json(&["update"], &dir);
     assert!(ok);
 
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(&dir)
-        .env("KB_LLM_KEY", "demo-key")
-        .env("KB_LLM_MODEL", "demo-model")
-        .env("KB_LLM_BASE_URL", "https://api.example/v1")
-        .env("KB_ASK_OFFLINE_STUB", "1")
-        .arg("ask")
-        .arg("hello")
-        .arg("--top")
-        .arg("1")
-        .arg("--answer")
-        .arg("--output")
-        .arg("json")
-        .assert();
+    let assert = kb_command_with_env(
+        &dir,
+        &[
+            ("KB_LLM_KEY", "demo-key"),
+            ("KB_LLM_MODEL", "demo-model"),
+            ("KB_LLM_BASE_URL", "https://api.example/v1"),
+            ("KB_ASK_OFFLINE_STUB", "1"),
+        ],
+    )
+    .arg("ask")
+    .arg("hello")
+    .arg("--top")
+    .arg("1")
+    .arg("--answer")
+    .arg("--output")
+    .arg("json")
+    .assert();
     let output = assert.get_output();
     assert!(output.status.success());
 
@@ -1960,9 +1962,7 @@ fn ask_without_context_returns_e5003() {
 #[test]
 fn completion_bash_outputs_script_in_text_mode() {
     let dir = unique_temp_dir("completion-bash");
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(&dir)
+    let assert = kb_command_in(&dir)
         .args(["completion", "bash"])
         .assert();
     let output = assert.get_output();
@@ -2053,10 +2053,7 @@ fn env_list_text_is_human_readable_multiline() {
     let (ok, _) = run_json_with_global_config(&["init", "demo"], &kb_one, &global_config);
     assert!(ok);
 
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .current_dir(&caller)
-        .env("KB_GLOBAL_CONFIG", &global_config)
+    let assert = kb_command_with_global_config(&caller, &global_config)
         .args(["env", "--list"])
         .assert();
 

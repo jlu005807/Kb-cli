@@ -1,51 +1,43 @@
-use assert_cmd::Command;
+#[allow(dead_code)]
+mod common;
+
+use common::kb_command;
 use insta::assert_snapshot;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 #[test]
 fn help_displays_full_command_surface() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(
-            contains("init")
-                .and(contains("add"))
-                .and(contains("mv"))
-                .and(contains("rm"))
-                .and(contains("path"))
-                .and(contains("chmod"))
-                .and(contains("list"))
-                .and(contains("check"))
-                .and(contains("update"))
-                .and(contains("ask"))
-                .and(contains("env"))
-                .and(contains("completion")),
-        );
+    kb_command().arg("--help").assert().success().stdout(
+        contains("init")
+            .and(contains("add"))
+            .and(contains("mv"))
+            .and(contains("rm"))
+            .and(contains("path"))
+            .and(contains("chmod"))
+            .and(contains("list"))
+            .and(contains("check"))
+            .and(contains("update"))
+            .and(contains("ask"))
+            .and(contains("env"))
+            .and(contains("completion")),
+    );
 }
 
 #[test]
 fn help_includes_required_global_flags() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .arg("--help")
-        .assert()
-        .success()
-        .stdout(
-            contains("--output")
-                .and(contains("--quiet"))
-                .and(contains("--verbose"))
-                .and(contains("--config"))
-                .and(contains("--no-color")),
-        );
+    kb_command().arg("--help").assert().success().stdout(
+        contains("--output")
+            .and(contains("--quiet"))
+            .and(contains("--verbose"))
+            .and(contains("--config"))
+            .and(contains("--no-color")),
+    );
 }
 
 #[test]
 fn add_help_contains_mode_and_category() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
+    kb_command()
         .args(["add", "--help"])
         .assert()
         .success()
@@ -54,8 +46,7 @@ fn add_help_contains_mode_and_category() {
 
 #[test]
 fn update_help_contains_full_and_strict_flags() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
+    kb_command()
         .args(["update", "--help"])
         .assert()
         .success()
@@ -68,8 +59,7 @@ fn update_help_contains_full_and_strict_flags() {
 
 #[test]
 fn check_help_contains_category_filter_and_top() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
+    kb_command()
         .args(["check", "--help"])
         .assert()
         .success()
@@ -82,8 +72,7 @@ fn check_help_contains_category_filter_and_top() {
 
 #[test]
 fn completion_help_contains_shell_argument() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
+    kb_command()
         .args(["completion", "--help"])
         .assert()
         .success()
@@ -92,8 +81,7 @@ fn completion_help_contains_shell_argument() {
 
 #[test]
 fn env_help_contains_list_flag() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
+    kb_command()
         .args(["env", "--help"])
         .assert()
         .success()
@@ -102,8 +90,7 @@ fn env_help_contains_list_flag() {
 
 #[test]
 fn ask_help_contains_answer_flag() {
-    Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
+    kb_command()
         .args(["ask", "--help"])
         .assert()
         .success()
@@ -112,11 +99,7 @@ fn ask_help_contains_answer_flag() {
 
 #[test]
 fn root_help_matches_full_snapshot() {
-    let assert = Command::cargo_bin("kb-cli")
-        .expect("kb-cli binary should build")
-        .arg("--help")
-        .assert()
-        .success();
+    let assert = kb_command().arg("--help").assert().success();
 
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("help utf8");
     let normalized = stdout.replace("\r\n", "\n");
