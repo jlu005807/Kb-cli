@@ -56,7 +56,7 @@ Server 通过 stdio 接受 JSON-RPC 2.0 请求，暴露 8 个 tools。
 
 #### Cursor
 
-在项目根目录创建或编辑 `.cursorrules`：
+在项目级 `.cursor/mcp.json` 或全局 `~/.cursor/mcp.json` 中配置 MCP server：
 
 ```json
 {
@@ -72,13 +72,13 @@ Server 通过 stdio 接受 JSON-RPC 2.0 请求，暴露 8 个 tools。
 }
 ```
 
-#### Cline (VSCode Extension)
+#### Cline
 
-在 VSCode 设置中添加（`settings.json`）：
+在 Cline 扩展的 MCP Servers 设置中添加 server（配置文件名为 `cline_mcp_settings.json`），不要写入 VS Code 的 `settings.json`：
 
 ```json
 {
-  "cline.mcpServers": {
+  "mcpServers": {
     "kb-memory": {
       "command": "kb",
       "args": ["serve", "--mcp"],
@@ -97,11 +97,11 @@ MCP server 暴露以下 8 个 tools：
 | Tool | 功能 | 主要参数 |
 |------|------|---------|
 | `recall` | 检索记忆 | `query`, `top_k` |
-| `remember` | 写入观察 | `content`, `confidence` |
-| `correct` | 写入纠错 | `content` |
+| `remember` | 写入观察 | `content`, `confidence`, `refs` |
+| `correct` | 写入纠错 | `content`, `refs` |
 | `verify_citation` | 验证引用 | `quote`, `chunk_id` |
 | `list_episodes` | 列出时间线 | `agent_id`, `limit` |
-| `consolidate` | 固化记忆 | `dry_run` |
+| `consolidate` | 固化记忆 | `dry_run`, `min` |
 | `read_summary` | 读取摘要 | `record_id_or_path` |
 | `read_neighbors` | 读取图谱邻接 | `record_id` |
 
@@ -122,12 +122,15 @@ MCP server 暴露以下 8 个 tools：
 **输出：**
 ```json
 {
-  "contexts": [
+  "query": "项目架构是什么",
+  "top_k": 5,
+  "results": [
     {
-      "content": "项目使用 Rust workspace + 六边形架构",
+      "alias": "architecture",
+      "snippet": "项目使用 Rust workspace + 六边形架构",
       "source_layer": "l2_semantic",
       "record_id": "test-doc.md",
-      "chunk_id": "chunk-001",
+      "chunk_id": "architecture:0001",
       "score": 0.95
     }
   ]
@@ -149,9 +152,12 @@ MCP server 暴露以下 8 个 tools：
 **输出：**
 ```json
 {
+  "command": "remember",
   "episode_id": "ep-1780232776512863500-364524e31ae9b138",
-  "kind": "Observation",
-  "confidence": 0.8
+  "agent_id": "claude-desktop",
+  "kind": "observation",
+  "confidence": 0.800000011920929,
+  "refs": []
 }
 ```
 
@@ -169,32 +175,39 @@ MCP server 暴露以下 8 个 tools：
 **输出：**
 ```json
 {
+  "command": "correct",
   "episode_id": "ep-1780232776419638000-cc840e4e00cd0a72",
-  "kind": "UserCorrection",
-  "confidence": 1.0
+  "agent_id": "claude-desktop",
+  "kind": "user_correction",
+  "refs": []
 }
 ```
 
 #### `verify_citation`
 
-验证引用的真实性（反幻觉）。
+验证引用的真实性（反幻觉）。当 chunk 的源文件切片边界失效或 FNV-1a 内容签名不符时，server 会回退到索引时的 preview 验证，并返回 `stale: true` 和更新提示。
 
 **输入：**
 ```json
 {
   "quote": "项目使用 Rust workspace",
-  "chunk_id": "chunk-001"
+  "chunk_id": "docs/architecture.md:0001"
 }
 ```
 
 **输出：**
 ```json
 {
-  "verified": true,
-  "confidence": 0.95,
-  "method": "lexical_match"
+  "chunk_id": "docs/architecture.md:0001",
+  "quote": "项目使用 Rust workspace",
+  "matched": true,
+  "method": "substring",
+  "coverage": 1.0,
+  "stale": false
 }
 ```
+
+源文件已变化时响应包含 `stale: true` 和 `warning`，提示运行 `kb update` 刷新索引。
 
 #### `list_episodes`
 
@@ -211,12 +224,15 @@ MCP server 暴露以下 8 个 tools：
 **输出：**
 ```json
 {
+  "count": 1,
   "episodes": [
     {
-      "episode_id": "ep-...",
+      "id": "ep-...",
       "agent_id": "claude-desktop",
-      "kind": "Observation",
+      "session_id": "session-1",
+      "kind": "observation",
       "content": "...",
+      "refs": [],
       "confidence": 0.8,
       "timestamp": 1780232776512863500
     }
@@ -226,28 +242,41 @@ MCP server 暴露以下 8 个 tools：
 
 #### `consolidate`
 
-触发记忆固化（将 episodes 聚类提炼成 `.kb/raw/agent-memory/*.md`）。
+触发记忆固化（按引用中的 record topic 将 episodes 聚类，生成 `.kb/raw/agent-memory/*.md`）。新文件名为 `{slug}-{topic 的 FNV-1a 64 位哈希前 8 位}.md`；已有文件头部 metadata 的 topic 匹配时会复用旧路径。短哈希文件名冲突时扩展到完整 16 位哈希，不会覆盖其他 topic。未能登记的文件会列入 `warnings`；已登记项计入 `already_declared`。
 
 **输入：**
 ```json
 {
-  "dry_run": true
+  "dry_run": true,
+  "min": 2
 }
 ```
 
 **输出：**
 ```json
 {
-  "mode": "dry_run",
-  "episodes_processed": 15,
-  "consolidation_plan": [
+  "command": "consolidate",
+  "dry_run": true,
+  "min_episodes_per_topic": 2,
+  "considered": 2,
+  "skipped_non_assertive": 0,
+  "skipped_below_threshold": 0,
+  "memories_planned": 1,
+  "memories": [
     {
-      "agent_id": "claude-desktop",
-      "episode_count": 12,
-      "target_file": ".kb/raw/agent-memory/general.md",
-      "action": "create"
+      "topic": "general",
+      "file_stem": "general-9e275796",
+      "confidence": 0.9142857193946838,
+      "has_user_correction": true,
+      "source_episode_ids": ["ep-1780232776419638000-cc840e4e00cd0a72", "ep-1780232776512863500-364524e31ae9b138"],
+      "contributor_agents": ["claude-desktop"],
+      "refs": []
     }
-  ]
+  ],
+  "written": [],
+  "added": [],
+  "already_declared": 0,
+  "warnings": []
 }
 ```
 
@@ -278,6 +307,8 @@ MCP server 暴露以下 8 个 tools：
 > `sqlite` 时（L2/L4/L5 落在 `store.sqlite3`），这些工具可能报告数据缺失，
 > 响应中会附带 `warning` 字段说明原因；`recall`/`remember`/`correct`/
 > `list_episodes`/`consolidate` 不受影响。
+
+episode 或 recall index 存储打开、读取、写入失败时，MCP 工具错误内容包含 `E1004`；`verify_citation` 找不到可用候选证据时返回 `matched: false` 的正常工具结果。
 
 #### `read_neighbors`
 
@@ -475,6 +506,6 @@ kb serve --mcp
 ## 参考资料
 
 - [Model Context Protocol 规范](https://modelcontextprotocol.io)
-- [KB-CLI 命令手册](../cli/command-manual.md)
-- [记忆模型设计文档](../architecture/memory-model.md)
+- [KB-CLI 命令手册](cli/command-manual.md)
+- [记忆模型设计文档](architecture/memory-model.md)
 - [arXiv:2404.13501 - Agent Memory Taxonomy](https://arxiv.org/abs/2404.13501)

@@ -6,6 +6,16 @@
 
 ### 修复
 
+- 陈旧或损坏的 chunk byte range 不再 panic：raw chunk 读取校验 UTF-8 边界及 FNV-1a 内容签名，验证失败时回退到索引 preview 并返回 `stale`；MCP `verify_citation` 会提示运行 `kb update`，单次工具 panic 也不会终止后续 JSON-RPC 请求。
+- 修正 Windows 盘符 chunk id 解析，`D:/notes/a.md:0002` 不再被截成 `D`。
+- `kb remember --confidence` 拒绝 NaN 和无穷值，参数解析失败且不追加 episode；领域层也忽略非有限 confidence，保留默认值。
+- 修复 `kb.md` UTF-8 BOM 导致的 front matter、首行标题识别错误；程序化改写保留 BOM、LF/CRLF 和尾部换行（混合行尾按第一处风格统一）。
+- 修复 `kb add --category` 遇到子标题时把声明写入错误分类的问题；现在插入目标分类首个标题区段的末尾。历史错放条目不会自动迁移，请结合 `kb check` 和 `kb list --tree` 检查并手工调整 `kb.md`。
+- `kb update` 默认保留 `kb.md` 中缺失路径的声明，仅从登记/索引移除；只有 `--prune` 删除声明。`missing_declarations` 独立报告，不影响 `--strict`。
+- 防止 consolidate 产物 slug 碰撞覆盖不同 topic；恢复以 episode 时间线为准的独立记忆文件。文件系统 episode log 尾部无换行时，追加前会先分隔新记录。
+- CLI 记忆命令及 MCP 存储工具的存储故障使用 `E1004`，不再误报为 `kb.md` 格式错误 `E3003`。
+- CLI 写命令获得单写者文件锁；Ctrl+C 立即返回 130，JSON 错误写 stderr，MCP stdout 不被错误包污染。
+
 - **`kb mv` / `kb path` 此前是空操作**：两个命令只写入管线从不读取的
   `.kb/refs.json`，改名/改路径对 `list`/`check`/`update`/`ask` 完全不可见。
   现在它们改写 `kb.md` 声明行（保留显式权限后缀与行内注释），经
@@ -27,6 +37,10 @@
 
 ### 变更
 
+- **移除全局 `--config` 参数**：改用 `KB_GLOBAL_CONFIG` 选择全局配置；旧 `E2008` 编号保留并标记废弃。
+- `kb update` 输出新增 `missing_declarations`；缺失声明默认保留，只有 `--prune` 才删除 `kb.md` 行。
+- 新建 consolidate 记忆文件改用 `{slug}-{FNV-1a(topic) 前 8 位}.md`，冲突时扩展为完整 16 位哈希；已有文件头 metadata topic 匹配时复用原文件路径。
+- 全局配置统一按非空 `KB_GLOBAL_CONFIG`、已存在的可执行文件安装目录 `config.json`、用户目录 `.kb-cli/config.json` 的顺序选择；新安装且没有安装目录配置时使用用户目录，已有安装目录配置继续生效。
 - **移除 `kb update --yes`**：该标志从未产生任何行为；现在传入会得到
   参数解析错误。
 - `kb mv`/`kb path` 以 `kb.md` 声明为真值：目标不在 `kb.md` 中时报
@@ -43,6 +57,10 @@
 
 ### 新增
 
+- 新错误码 `E3004` 用于并发 writer lock 冲突；锁冲突立即失败并尽可能报告持锁 PID。
+- 新错误码 `E1004` 用于记忆与 MCP 存储打开、读取、写入失败。
+- `kb env --doctor` 新增所选全局配置路径和规则来源；memory consolidate 输出新增 `already_declared` 与 `warnings`。
+- workspace Rust 版本元数据更新为 1.89。当前实现使用 Rust 1.89 稳定 API；依赖最低版本及旧版工具链兼容性尚未单独验证。
 - 新错误码：`E2010`（路径含 `)`、`#` 或控制字符，无法安全写入 kb.md
   声明）、`E2011`（目录/glob 模式声明不可经 CLI 单行改写）。
 - `LICENSE`（MIT，README 徽章此前指向不存在的文件）。

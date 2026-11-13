@@ -152,7 +152,7 @@ pub enum Commands {
         #[arg(long = "ref")]
         refs: Vec<String>,
     },
-    // Distill accumulated episodes into .kb/agent-memory/*.md memory files.
+    // Distill accumulated episodes into .kb/raw/agent-memory/*.md memory files.
     Consolidate {
         /// Minimum episodes per topic before a memory file is produced.
         #[arg(long, default_value_t = 2)]

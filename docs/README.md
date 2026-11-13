@@ -40,7 +40,6 @@
 
 - [Phase 4 完成报告](phase-4-completion-report.md) - Agent 记忆系统实现总结
 - [文档工作日志](history/documentation-work-log.md) - 文档优化与清理的合并纪要（历史记录）
-- [superpowers 规格与计划](superpowers/) - 各阶段设计规格与实施计划（历史文档，按当时状态保留）
 
 ---
 
@@ -165,13 +164,11 @@ kb env --doctor
 | [mcp-integration-guide.md](mcp-integration-guide.md) | MCP 集成完整指南 |
 | [phase-4-completion-report.md](phase-4-completion-report.md) | Phase 4 完成报告 |
 
-### 历史文档 (`docs/history/`、`docs/superpowers/`)
+### 历史文档 (`docs/history/`)
 
 | 目录 / 文档 | 描述 |
 |------|------|
 | [history/documentation-work-log.md](history/documentation-work-log.md) | 文档优化与项目清理工作日志（由 4 份历史报告合并而来） |
-| [superpowers/specs/](superpowers/specs/) | 历史设计规格（2026-05，L2-L5 / 记忆模型 / wiki 视图等，按当时状态保留，不再随代码更新） |
-| [superpowers/plans/](superpowers/plans/) | 历史实施计划（2026-05，与上述规格配套，已执行完毕） |
 
 ---
 
@@ -286,8 +283,8 @@ kb ask "什么是 L0 Episode Layer"
 
 ### 社区支持
 
-- **GitHub Issues**: [报告 Bug 或提出功能请求](https://github.com/your-repo/kb-cli/issues)
-- **Discussions**: [参与讨论](https://github.com/your-repo/kb-cli/discussions)
+- **GitHub Issues**: [报告 Bug 或提出功能请求](https://github.com/jlu005807/Kb-cli/issues)
+- **Discussions**: [参与讨论](https://github.com/jlu005807/Kb-cli/discussions)
 
 ---
 
@@ -366,9 +363,9 @@ kb --version
 
 发现文档问题或有改进建议？欢迎：
 
-- [提交 Issue](https://github.com/your-repo/kb-cli/issues/new)
-- [编辑文档](https://github.com/your-repo/kb-cli/edit/main/docs/)
-- [参与讨论](https://github.com/your-repo/kb-cli/discussions)
+- [提交 Issue](https://github.com/jlu005807/Kb-cli/issues/new)
+- [编辑文档](https://github.com/jlu005807/Kb-cli/edit/main/docs/)
+- [参与讨论](https://github.com/jlu005807/Kb-cli/discussions)
 
 ---
 

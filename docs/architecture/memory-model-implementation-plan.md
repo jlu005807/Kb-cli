@@ -23,11 +23,7 @@
 4. 必需配置键：`KB_LLM_KEY`、`KB_LLM_MODEL`、`KB_LLM_BASE_URL`。
 5. L5 视图层输出目录固定为 `.kb/wiki/`。
 
-对应 spec：
-
-1. `docs/superpowers/specs/2026-05-02-kb-update-strict-layered-pipeline-design.md`
-2. `docs/superpowers/specs/2026-05-02-l2-l3-l4-generation-flow-design.md`
-3. `docs/superpowers/specs/2026-05-02-l5-wiki-markdown-view-design.md`
+早期实施依据保存在开发工作区的 `docs/superpowers/specs/` 中；该目录被 gitignore 排除，不随仓库分发。
 
 ## 1. 文件结构与职责
 

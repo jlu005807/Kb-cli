@@ -66,8 +66,10 @@
 `kb update` 在当前快照与基线比较后执行：
 
 - 默认：缺失路径计入 `marked_invalid`
-- `--prune`：缺失路径计入 `removed`
+- `--prune`：缺失路径计入 `removed`，并删除 `kb.md` 中确认为 `not_found` 的声明行
 - `--dry-run`：仅返回统计，不写索引文件
+
+缺失声明默认留在 `kb.md`，并通过 `missing_declarations` 单独报告；该字段不计入 warnings，也不会导致 `--strict` 失败。
 
 输出字段：
 

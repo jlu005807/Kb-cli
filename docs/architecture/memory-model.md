@@ -331,19 +331,24 @@ L0 Declaration → L1 Index → L2-L5 (existing layers)
 
 ### 10.4 记忆命令
 
-#### `kb remember <CONTENT>`
+#### `kb remember <CONTENT> [--ref <CHUNK_ID>]... [--confidence <VALUE>]`
 - 写入 Observation episode
 - 默认 confidence 0.8
+- confidence 必须是有限数值，存储值限制在 [0, 1]
+- `--ref` 可重复传入引用的 chunk
 - 用于记录 agent 学到的事实
 
-#### `kb correct <CONTENT>`
+#### `kb correct <CONTENT> [--ref <CHUNK_ID>]...`
 - 写入 UserCorrection episode
 - 固定 confidence 1.0（最高优先级）
+- `--ref` 可重复传入引用的 chunk
 - 用于反幻觉和记忆冲突解决
 
-#### `kb consolidate [--dry-run]`
-- 将积累的 episodes 固化为 `.kb/raw/agent-memory/*.md` 文件
-- 按 agent_id 聚类，提炼成机器可读的 skill/SOP 格式
+#### `kb consolidate [--min <N>] [--dry-run]`
+- 将积累的 episodes 固化为 `.kb/raw/agent-memory/*.md` 文件。
+- 每个 topic 最少需有 `--min` 条 assertive episode 才生成文件，默认值为 2。
+- 按 refs 中的 chunk id 推导 record topic 后聚类；没有 refs 的 episode 归入 `general`，分组不依赖 `agent_id`。
+- 新产物使用 `{slug}-{FNV-1a(topic) 前 8 位}.md`。头部 metadata 中 topic 匹配的已有文件会继续复用；短哈希冲突时使用 16 位哈希，仍冲突则报错且不覆盖。
 - 固化后的文件会在下次 `kb update` 时编译进 L1-L5 层
 
 ### 10.5 MCP 集成（Model Context Protocol）
@@ -360,7 +365,7 @@ kb serve --mcp
 | `recall` | 检索记忆（分层检索，返回 ranked contexts） |
 | `remember` | 写入观察（L0 episode，kind=Observation） |
 | `correct` | 写入纠错（L0 episode，kind=UserCorrection） |
-| `verify_citation` | 验证引用（词法校验 quote 是否真实存在于 chunk_id） |
+| `verify_citation` | 验证引用（词法校验 quote 是否真实存在于 chunk_id，并返回 `stale`、`warning`） |
 | `list_episodes` | 列出 episode 时间线（可按 agent_id 过滤） |
 | `consolidate` | 触发记忆固化（支持 dry_run 预览） |
 | `read_summary` | 读取文件语义摘要（L2） |
@@ -384,7 +389,7 @@ kb serve --mcp
 ### 10.6 记忆系统设计原则
 
 1. **反幻觉优先**
-   - `verify_citation` 做词法验证（substring match + token overlap）
+   - `verify_citation` 做词法验证（substring match + token overlap）；源文件内容自索引后变化时返回 `stale: true`、基于索引 preview 的裁决和更新提示
    - `UserCorrection` 最高优先级（confidence 1.0）
    - 冲突可见但不覆写（provenance 链保留历史）
 

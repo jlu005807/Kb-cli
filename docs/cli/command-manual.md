@@ -3,7 +3,7 @@
 本文档是 KB-CLI 命令行为与边界的权威说明。
 若与 `command-examples.md` 或其他文档冲突，以本手册为准。
 
-> 实现同步（2026-04-19）
+> 实现同步（2026-11-13）
 > - 命令路由已解耦：`commands.rs` 仅分发，`commands/cmd_*.rs` 负责命令连接，运行时逻辑位于 `commands/runtime/core/*`。
 > - 当前采用“声明优先”模型：声明来自 `kb.md + ./.kb/raw/`；登记快照为 `./.kb/regs.json`。
 > - `kb add` / `kb rm` / `kb chmod` 只更新声明源（`kb.md`），不直接写入 `regs.json`。
@@ -85,6 +85,7 @@
 - `--mode copy` 会把文件复制到 `./.kb/raw/` 并写入 raw 声明。
 - 空别名会回退为规范化路径标识。
 - 分类不存在返回 `E2007`。
+- 声明插入到目标分类的第一个同名标题区段内、下一个任意级标题之前；分类重名时使用第一个标题。
 - 冲突检测以 `kb.md` 声明为准（手工维护的引用同样参与）：别名冲突返回 `E2003`，路径已登记返回 `E2006`。
 
 主要输出字段：
@@ -219,7 +220,7 @@
 LLM 配置优先级：
 - 环境变量
 - 项目配置 `./.kb/config.json`
-- 全局配置 `~/.kb-cli/config.json`（或 `KB_GLOBAL_CONFIG` 指向的 config）
+- 全局配置（选择顺序见 `kb env --doctor`）
 
 分层成功策略：
 - 基础层（L0->L1）失败：默认模式和严格模式都失败。
@@ -309,26 +310,27 @@ LLM 配置优先级：
 错误与退出：
 - 无可用上下文：`E5003`（退出码 5）
 
-### 4.11 `kb remember <CONTENT>`
+### 4.11 `kb remember <CONTENT> [--ref <CHUNK_ID>]... [--confidence <VALUE>]`
 
 行为：
 - 记录 agent 观察到的事实，写入 L0 episode 时间线（`.kb/episodes.jsonl` 或 sqlite `episodes` 表）。
 - Episode kind 为 `Observation`，默认 confidence 为 0.8。
+- `--ref` 可重复传入。`--confidence` 必须为有限数值，NaN 和无穷值导致参数解析失败（退出码 2）；存储时将有限值限制在 [0, 1]。
 - 自动记录 `agent_id`（从环境变量 `KB_AGENT_ID` 读取，默认 `kb-cli`）和 `session_id`（从 `KB_SESSION_ID` 读取，可选）。
 
 主要输出字段：
 - `episode_id`
 - `agent_id`
-- `session_id`
 - `kind`
-- `content`
 - `confidence`
-- `timestamp`
+- `refs`
+
+完整 content、session_id、timestamp 保存在 episode 时间线中，可通过 MCP `list_episodes` 读取。
 
 错误与退出：
-- Episode store 写入失败：`E1004`（退出码 1）
+- Episode store 打开或追加失败：`E1004`（退出码 1）
 
-### 4.12 `kb correct <CONTENT>`
+### 4.12 `kb correct <CONTENT> [--ref <CHUNK_ID>]...`
 
 行为：
 - 记录用户纠错，写入 L0 episode 时间线。
@@ -338,33 +340,33 @@ LLM 配置优先级：
 主要输出字段：
 - `episode_id`
 - `agent_id`
-- `session_id`
 - `kind`
-- `content`
-- `confidence`
-- `timestamp`
+- `refs`
+
+confidence 固定为 1.0，保存在 episode 时间线中。
 
 错误与退出：
-- Episode store 写入失败：`E1004`（退出码 1）
+- Episode store 打开或追加失败：`E1004`（退出码 1）
 
-### 4.13 `kb consolidate [--dry-run]`
+### 4.13 `kb consolidate [--min <N>] [--dry-run]`
 
 行为：
 - 将积累的 L0 episodes 固化为语义记忆文件（`.kb/raw/agent-memory/*.md`）。
-- 按 agent_id 聚类，提炼成机器可读的 skill/SOP 格式。
+- 按引用中的 chunk id 推导 record topic 后聚类；没有 refs 的 episode 归入 `general`，分组不依赖 `agent_id`。
+- 新文件名为 `{slug}-{topic 的 FNV-1a 64 位哈希前 8 位}.md`；头部 metadata 的 topic 匹配时复用已有文件；短哈希冲突扩展为完整 16 位哈希，仍冲突时不覆盖并报错。
 - 支持 `--dry-run` 预览固化计划而不实际写入。
+- `--min` 指定每个 topic 的最少 episode 数，默认 2，下限为 1。
 - 固化后的文件会在下次 `kb update` 时编译进 L1-L5 层。
 
 主要输出字段：
-- `mode`（`dry_run` 或 `execute`）
-- `episodes_processed`
-- `files_created`
-- `files_updated`
-- `consolidation_plan[]`（仅 `--dry-run`）
+- `dry_run`、`considered`、`skipped_non_assertive`、`skipped_below_threshold`
+- `min_episodes_per_topic`、`memories_planned`
+- `memories[]`（`topic`、实际 `file_stem`、`confidence`、`has_user_correction`、`source_episode_ids`、`contributor_agents`、`refs`）
+- `written[]`、`added[]`、`already_declared`、`warnings[]`
 
 错误与退出：
-- Episode store 读取失败：`E1005`（退出码 1）
-- 文件写入失败：`E1003`（退出码 1）
+- Episode store、记忆目录或记忆文件打开、读取、写入失败：`E1004`（退出码 1）
+- 完整哈希仍冲突时不覆盖文件，返回 `E1004`（退出码 1）
 
 ### 4.14 `kb serve --mcp`
 
@@ -373,12 +375,13 @@ LLM 配置优先级：
 - 暴露 8 个 tools：`recall`、`remember`、`correct`、`verify_citation`、`list_episodes`、`consolidate`、`read_summary`、`read_neighbors`。
 - 用于让外部 agent（Claude Desktop / Cursor / Cline）接入记忆系统。
 - Server 运行在前台，通过 stdio 通信，按 Ctrl+C 或发送 EOF 停止。
+- Ctrl+C：进程以退出码 130 退出；JSON 模式的 `E9001` 写入 stderr，MCP stdout 不追加错误包。
 
 MCP Tools：
 - `recall`：检索记忆（分层检索，返回 ranked contexts）
 - `remember`：写入观察（L0 episode，kind=Observation）
 - `correct`：写入纠错（L0 episode，kind=UserCorrection）
-- `verify_citation`：验证引用（词法校验 quote 是否真实存在于 chunk_id）
+- `verify_citation`：验证引用（词法校验 quote 是否真实存在于 chunk_id；源文件已变化时返回 `stale: true` 和更新提示）
 - `list_episodes`：列出 episode 时间线（可按 agent_id 过滤）
 - `consolidate`：触发记忆固化（支持 dry_run 预览）
 - `read_summary`：读取文件语义摘要（L2）
@@ -392,6 +395,7 @@ MCP Tools：
 - 知识库未初始化：`E3001`（退出码 3）
 - JSON-RPC 协议错误：写入错误响应到 stdout，继续运行
 - 内部错误：写入错误响应到 stdout，继续运行
+- memory episode/index 存储打开、读取或写入失败：工具返回 `E1004`（退出码不适用于常驻 server）
 
 ### 4.15 `kb env [--list] [--doctor]`
 
@@ -404,6 +408,11 @@ MCP Tools：
   - 配置解析 trace（逐层解析摘要）
 - `--doctor` 与 `--list` 同时传入时，`--doctor` 优先（此时列表信息无意义）。
 
+全局配置文件的选择顺序：
+1. 非空 `KB_GLOBAL_CONFIG`。
+2. 已存在的可执行文件安装目录 `config.json`（可执行文件位于 `bin/` 时检查其父目录）。
+3. 用户目录下的 `.kb-cli/config.json`（Windows 使用用户目录，其他平台使用 home 目录）。
+
 主要输出字段（默认 / `--list` 模式）：
 - `mode`
 - `items[].path`
@@ -414,6 +423,8 @@ MCP Tools：
 主要输出字段（`--doctor` 模式）：
 - `mode`（固定 `doctor`）
 - `cwd`
+- `global_config.path`：实际选中的全局配置文件
+- `global_config.rule` / `global_config.source`：命中的选择规则编号与来源
 - `llm.model` / `llm.base_url` / `llm.key_present` / `llm.semantic_enabled` / `llm.graph_enabled` / `llm.wiki_enabled`
 - `key_source`
 - `source_map.key` / `source_map.model` / `source_map.base_url`
@@ -428,6 +439,12 @@ MCP Tools：
 主要输出字段：
 - `shell`
 - `script`
+
+### 4.17 并发写入保护
+
+对同一个知识库，同时只允许一个 `init`、`add`、`mv`、`rm`、`path`、`chmod`、非 dry-run `update` 或非 dry-run `consolidate` 执行。MCP 的 `consolidate` 只在该次工具调用内持锁；只读命令、`remember`、`correct` 和 `serve` 进程本身不持有 writer lock。发生冲突时立即返回 `E3004`（退出码 3），详情包含锁文件记录的持锁进程 PID。系统不支持文件锁的平台会在 `-v` 下提示并继续执行。
+
+`Ctrl+C` 以 `E9001` / 退出码 130 结束进程。JSON 模式的中断错误写入 stderr；MCP stdout 只保留 JSON-RPC 响应流。中断期间原子写可能留下 `.<name>.<nonce>.tmp` 临时文件，可以在确认进程已退出后手动删除。
 
 ## 5. 操作边界总结
 

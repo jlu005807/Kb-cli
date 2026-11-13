@@ -12,6 +12,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 version = "0.1.4"
+rust-version = "1.89"
 
 [workspace.dependencies]
 assert_cmd = "2.0.16"

@@ -3,8 +3,7 @@
 > 本地知识库 CLI + 可插拔 Agent 记忆系统
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![Status](https://img.shields.io/badge/status-production--ready-green.svg)]()
+[![Rust](https://img.shields.io/badge/rust-1.89%2B-orange.svg)](https://www.rust-lang.org/)
 
 **KB-CLI** 是一个 Rust 实现的本地知识库命令行工具，提供分层记忆架构（L0-L5）和可插拔的 Agent 记忆系统。
 
@@ -122,10 +121,21 @@ kb serve --mcp
 
 配置文件位置：`%APPDATA%\Claude\claude_desktop_config.json`
 
-**其他 Agent：**
-- **Cursor**: 在 `.cursorrules` 中配置
-- **Cline**: 在 VSCode `settings.json` 中配置
+**Cursor**：把 MCP server 配置放入项目级 `.cursor/mcp.json` 或全局 `~/.cursor/mcp.json`：
 
+```json
+{
+  "mcpServers": {
+    "kb-memory": {
+      "command": "kb",
+      "args": ["serve", "--mcp"],
+      "env": { "KB_AGENT_ID": "cursor" }
+    }
+  }
+}
+```
+
+**Cline**：在 Cline 扩展的 MCP Servers 设置中配置（配置文件名为 `cline_mcp_settings.json`），不要写入 VS Code 的 `settings.json`。配置结构同上，把 `KB_AGENT_ID` 设为 `cline`。
 详见：[MCP 集成指南](docs/mcp-integration-guide.md)
 
 ---
@@ -173,7 +183,9 @@ export KB_LLM_ENABLE_SEMANTIC=1
 }
 ```
 
-**优先级：** 环境变量 > 项目配置 > 全局配置
+**优先级：** 环境变量 > 项目配置 > 全局配置。
+
+全局配置文件依次选择：非空 `KB_GLOBAL_CONFIG`、已存在的可执行文件安装目录配置、`~/.kb-cli/config.json`（Windows 使用用户目录）。`kb env --doctor` 会显示所选路径和规则。
 
 ---
 
@@ -238,11 +250,13 @@ export KB_LLM_ENABLE_SEMANTIC=1
 
 **开发环境：**
 ```bash
-git clone https://github.com/your-repo/kb-cli.git
-cd kb-cli
+git clone https://github.com/jlu005807/Kb-cli.git
+cd Kb-cli
 cargo build
 cargo test
 ```
+
+代码使用 Rust 1.89 稳定的标准库 API。依赖的最低 Rust 版本要求以及整个 workspace 在 Rust 1.89 上的编译情况，尚未用 1.89 工具链验证。
 
 ---
 

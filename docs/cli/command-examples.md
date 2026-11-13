@@ -403,9 +403,10 @@ kb check --output=json
 
 ## 8. `kb update [--dry-run] [--prune] [--full] [--strict] [--llm]`
 
-> 实现说明（2026-04-18）：`update` 会把 `check` 差异写入 `./.kb/regs.json`，移除过期/已删除/不存在条目，并刷新后端索引文件。
+> 实现说明（2026-11-13）：`update` 会把 `check` 差异写入 `./.kb/regs.json`，移除过期/已删除/不存在条目，并刷新后端索引文件。
 > 当 `check` 确认为 `to_remove` 时，`update` 也会清理匹配的陈旧索引记录，即使这些路径已不在 `regs.json` 中。
-> 对于确认为 `not_found` 的声明，`update` 会同步删除 `kb.md` 中对应引用行。
+> 确认为 `not_found` 的路径会从登记和索引中移除；`kb.md` 声明默认保留，只有 `--prune` 才删除对应引用行。
+> `missing_declarations` 单独列出未找到的声明，不计入 `warnings`，也不导致 `--strict` 失败。
 > `update` 是 `kb rm`、`kb chmod` 等“声明优先变更”的持久化步骤。
 > 为保证 raw 与 `kb.md` 对齐，`update` 还会按路径去重 `kb.md` 中重复的 raw 引用行。
 > 分层策略：默认模式下 `L2-L5` 失败只记 `warnings` 并返回成功；`--strict` 下 `L2-L5` 任一失败即整体失败。
@@ -876,13 +877,12 @@ kb remember "项目使用 Rust workspace + 六边形架构" --output=json
   "schema_version": "1.0",
   "status": "success",
   "data": {
-    "episode_id": "ep_1748707200000000000_abc123",
+    "command": "remember",
+    "episode_id": "ep-1748707200000000000-ab12cd34ef56ab12",
     "agent_id": "kb-cli",
-    "session_id": null,
-    "kind": "Observation",
-    "content": "项目使用 Rust workspace + 六边形架构",
-    "confidence": 0.8,
-    "timestamp": 1748707200000000000
+    "kind": "observation",
+    "confidence": 0.800000011920929,
+    "refs": []
   }
 }
 ```
@@ -893,10 +893,7 @@ kb remember "项目使用 Rust workspace + 六边形架构"
 ```
 **输出（text）：**
 ```text
-Episode recorded
-episode_id: ep-1748707200000000000-ab12cd34ef56ab12
-kind: Observation
-confidence: 0.8
+remembered observation ep-1748707200000000000-ab12cd34ef56ab12 (confidence 0.80)
 ```
 
 ## 13. `kb correct <CONTENT>`
@@ -912,13 +909,11 @@ kb correct "存储后端默认是 fs 不是 sqlite" --output=json
   "schema_version": "1.0",
   "status": "success",
   "data": {
-    "episode_id": "ep_1748707260000000000_def456",
+    "command": "correct",
+    "episode_id": "ep-1748707260000000000-de45fa67bc89de45",
     "agent_id": "kb-cli",
-    "session_id": null,
-    "kind": "UserCorrection",
-    "content": "存储后端默认是 fs 不是 sqlite",
-    "confidence": 1.0,
-    "timestamp": 1748707260000000000
+    "kind": "user_correction",
+    "refs": []
   }
 }
 ```
@@ -929,13 +924,12 @@ kb correct "存储后端默认是 fs 不是 sqlite"
 ```
 **输出（text）：**
 ```text
-User correction recorded
-episode_id: ep-1748707260000000000-de45fa67bc89de45
-kind: UserCorrection
-confidence: 1.0 (highest priority)
+recorded user correction ep-1748707260000000000-de45fa67bc89de45
 ```
 
 ## 14. `kb consolidate`
+
+以下示例基于上面的一条 observation（confidence 0.8）和一条 user correction（confidence 1.0），两条均没有 refs，归入 `general`。
 
 ### 成功示例（dry-run）
 **命令：**
@@ -948,24 +942,28 @@ kb consolidate --dry-run --output=json
   "schema_version": "1.0",
   "status": "success",
   "data": {
-    "mode": "dry_run",
-    "episodes_processed": 15,
-    "files_created": 0,
-    "files_updated": 0,
-    "consolidation_plan": [
+    "command": "consolidate",
+    "dry_run": true,
+    "min_episodes_per_topic": 2,
+    "considered": 2,
+    "skipped_non_assertive": 0,
+    "skipped_below_threshold": 0,
+    "memories_planned": 1,
+    "memories": [
       {
-        "agent_id": "kb-cli",
-        "episode_count": 12,
-        "target_file": ".kb/raw/agent-memory/kb-cli-session-001.md",
-        "action": "create"
-      },
-      {
-        "agent_id": "claude-desktop",
-        "episode_count": 3,
-        "target_file": ".kb/raw/agent-memory/claude-desktop-session-002.md",
-        "action": "update"
+        "topic": "general",
+        "file_stem": "general-9e275796",
+        "confidence": 0.9142857193946838,
+        "has_user_correction": true,
+        "source_episode_ids": ["ep-1748707260000000000-de45fa67bc89de45", "ep-1748707200000000000-ab12cd34ef56ab12"],
+        "contributor_agents": ["kb-cli"],
+        "refs": []
       }
-    ]
+    ],
+    "written": [],
+    "added": [],
+    "already_declared": 0,
+    "warnings": []
   }
 }
 ```
@@ -981,10 +979,38 @@ kb consolidate --output=json
   "schema_version": "1.0",
   "status": "success",
   "data": {
-    "mode": "execute",
-    "episodes_processed": 15,
-    "files_created": 1,
-    "files_updated": 1
+    "command": "consolidate",
+    "dry_run": false,
+    "min_episodes_per_topic": 2,
+    "considered": 2,
+    "skipped_non_assertive": 0,
+    "skipped_below_threshold": 0,
+    "memories_planned": 1,
+    "memories": [
+      {
+        "topic": "general",
+        "file_stem": "general-9e275796",
+        "confidence": 0.9142857193946838,
+        "has_user_correction": true,
+        "source_episode_ids": ["ep-1748707260000000000-de45fa67bc89de45", "ep-1748707200000000000-ab12cd34ef56ab12"],
+        "contributor_agents": ["kb-cli"],
+        "refs": []
+      }
+    ],
+    "written": [
+      {
+        "topic": "general",
+        "file": "./.kb/raw/agent-memory/general-9e275796.md",
+        "episodes": 2,
+        "confidence": 0.9142857193946838,
+        "has_user_correction": true
+      }
+    ],
+    "added": [
+      { "alias": "agent-memory/general-9e275796", "file": "./.kb/raw/agent-memory/general-9e275796.md" }
+    ],
+    "already_declared": 0,
+    "warnings": []
   }
 }
 ```
@@ -995,12 +1021,7 @@ kb consolidate
 ```
 **输出（text）：**
 ```text
-Memory consolidation complete
-episodes_processed: 15
-files_created: 1
-files_updated: 1
-
-Next step: Run 'kb update' to compile consolidated memories into L1-L5 layers
+consolidate: wrote 1 memory file(s) from 2 episode(s); run `kb update` to compile into L1-L5
 ```
 
 ## 15. `kb serve --mcp`
@@ -1010,22 +1031,7 @@ Next step: Run 'kb update' to compile consolidated memories into L1-L5 layers
 ```bash
 kb serve --mcp
 ```
-**输出（text，启动日志）：**
-```text
-KB-CLI MCP Server starting...
-Protocol: JSON-RPC 2.0 over stdio
-Tools available: 8
-  - recall
-  - remember
-  - correct
-  - verify_citation
-  - list_episodes
-  - consolidate
-  - read_summary
-  - read_neighbors
-
-Waiting for requests... (Press Ctrl+C to stop)
-```
+Server 启动后等待 stdin 请求，stdout 只输出 JSON-RPC 响应。发送 EOF 正常退出；Ctrl+C 以退出码 130 结束，错误写入 stderr。
 
 **MCP 协议交互示例（JSON-RPC）：**
 

@@ -1,6 +1,6 @@
 ﻿# `kb.md` 规范（当前实现）
 
-本文档描述 **当前代码实现** 中 `kb.md` 的实际语义与约束（截至 2026-04-19）。
+本文档描述 **当前代码实现** 中 `kb.md` 的实际语义与约束（截至 2026-11-13）。
 
 > 运行时实现说明（2026-04-19）：CLI 命令分发已解耦为 `commands.rs` + `commands/cmd_*.rs`，`kb.md` 相关落盘逻辑位于 `commands/runtime/core/kbmd_ops.rs`。
 
@@ -37,6 +37,8 @@ default_perm: r
 [alias](path):权限
 ```
 
+文本按 UTF-8 读取；文件开头可带一个 UTF-8 BOM。解析时 BOM 不占行号，并且不会影响 front matter 或首行标题识别。
+
 ---
 
 ## 3. Front Matter
@@ -61,6 +63,8 @@ default_perm: r
 - 标题可写权限后缀：`# docs:rw`
 - 若无权限后缀，则继承上级标题权限；若无上级，则继承 `default_perm`（默认 `r`）。
 - `add --category` 与 `check --category` 的合法分类来自解析后的标题集合。
+- 同名分类标题可以存在多次；`kb add --category <name>` 选择第一个同名标题。
+- 新引用插入在该标题所属区段内最后一个非空行之后、下一个任意级标题之前；空区段插在标题后。
 
 示例：
 
@@ -134,6 +138,12 @@ default_perm: r
 ```
 
 并具备去重保障（不会重复追加同一条目）。
+
+---
+
+## 7.3 程序化改写与文本格式
+
+`add`、`mv`、`rm`、`path`、`chmod`、`update` 对 `kb.md` 的改写保留原文件是否带 BOM、主要行尾风格（LF 或 CRLF）以及是否以换行结尾。若文件混用 LF/CRLF，改写时会统一为第一处行尾的风格。
 
 ---
 

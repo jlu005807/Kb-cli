@@ -1,7 +1,7 @@
 //! L2 固化（consolidation）：把 L0 Episode 时间线提炼成可检索的语义记忆。
 //!
 //! 这是 agent memory "沉淀"的核心环节：agent 在交互中积累的 Observation /
-//! UserCorrection / Answer，定期被聚类提炼成 `.kb/agent-memory/*.md`，再走
+//! UserCorrection / Answer，定期被聚类提炼成 `.kb/raw/agent-memory/*.md`，再走
 //! `kb update` 进入 L1-L5——从而获得稳定 `chunk_id` 与可被 `verify_citation`
 //! 校验的能力。生成的文件面向 agent 检索，不要求人类可读。
 //!
