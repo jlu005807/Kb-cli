@@ -12,7 +12,9 @@
 | 5 配置与 CLI 面 | `156e54a` |
 | 6 文档对齐 | `7e5e566` |
 
-验证记录：workspace 门禁与文档校验已在 Windows 通过。Cursor 的项目级/全局 MCP 路径已由 [Cursor Staff 回复](https://forum.cursor.com/t/can-cursor-cli-support-add-mcp-server-parameter/167812/4)确认，该回复链接到 [Cursor MCP 文档](https://cursor.com/docs/cli/mcp)。Cline 的扩展配置入口和默认文件路径已按 [MCP 设置说明](https://docs.cline.bot/mcp/mcp-overview) 与[配置目录说明](https://docs.cline.bot/getting-started/config)核验。Linux SIGINT 集成用例已在 WSL Ubuntu、Rust 1.94.1 上通过（1 passed）。Rust 1.89 工具链兼容性仍未直接验证。
+验证记录：当前 `Cargo.lock` 在 Rust 1.89.0 上通过两平台门禁：Windows Clippy 无警告、362 项测试通过；WSL Ubuntu Clippy 无警告、361 项测试通过。Windows `CTRL_C_EVENT`、并发 update 冲突和中断后恢复、doc-fixture 与文档相对链接检查均通过。
+
+Cursor 的项目级/全局 MCP 路径已由 [Cursor Staff 回复](https://forum.cursor.com/t/can-cursor-cli-support-add-mcp-server-parameter/167812/4)确认，该回复链接到 [Cursor MCP 文档](https://cursor.com/docs/cli/mcp)。Cline 的扩展配置入口和默认文件路径已按 [MCP 设置说明](https://docs.cline.bot/mcp/mcp-overview) 与[配置目录说明](https://docs.cline.bot/getting-started/config)核验。Claude Code CLI 在隔离配置目录中完成 initialize 和 tools/list，收到全部 8 个工具；未启动模型会话。Linux SIGINT 集成用例已在 WSL Ubuntu、Rust 1.89.0 和 1.94.1 上通过。
 
 ## 0. 约束与已定决策
 
@@ -20,7 +22,7 @@
 - 不新增依赖。
 - 初稿提出不提交 commit；后续用户要求每阶段独立提交，实施时按后续要求提交。
 
-初稿曾记录仅在项目目录内操作、不联网和不执行删除的会话限制。后续用户要求逐阶段实施并执行门禁，并明确允许联网核验官方 MCP 配置文档；本次网络访问仅用于核实 Cursor 和 Cline 的配置说明，未运行删除命令。
+初稿的会话限制已被后续用户授权取代：允许逐阶段实施、运行门禁、独立提交和联网开展最终验收。最终验收使用隔离知识库、当前锁定依赖和本机 mock LLM 服务；客户端测试使用独立配置目录。
 
 已定决策：
 - #8 移除全局 `--config` 参数。
@@ -52,7 +54,7 @@ node tests/tools/validate-doc-fixture-diff.js
 | 新 | episodes.jsonl 末尾若有半行（崩溃残留、无换行），下一次追加会和它拼成一行，新 episode 也随之丢失 | 新增 #14 |
 | 新 | README 的 Cline 配置说明（"VSCode settings.json"）同样不对 | 并入阶段 6 |
 | 新 | BOM 还会破坏首行标题的识别与 chmod | #4 与 #11 共用一个 kb.md 读写 helper |
-| 文档 | "MSRV 1.74" 无法离线验证；引入 `File::try_lock` 后最低版本实际为 1.89 | 阶段 6 按 1.89 写，并说明未用旧工具链验证 |
+| 文档 | "MSRV 1.74" 无法离线验证；引入 `File::try_lock` 后最低版本实际为 1.89 | 阶段 6 初始按 1.89 声明；最终验收已补测 Windows 与 Linux Rust 1.89.0 |
 
 ## 2. 阶段总览
 
@@ -371,7 +373,7 @@ impl KbMdText {
 | `memory-model.md`、`mcp-integration-guide.md` | 产物命名规则；`verify_citation` 的 `stale` 字段 |
 | `CHANGELOG.md` | `[Unreleased]` 分为"修复 / 变更（含破坏性）/ 新增"三部分，覆盖本计划所有用户可见的改动 |
 
-说明：`rust-version = "1.89"` 只代表代码中用到的最高 API 版本；依赖的最低版本要求以及在 1.89 上能否编译，都没有用旧工具链验证过，文档里照实写明。
+说明：当前 `Cargo.lock` 下，workspace 已在 Windows x86_64 MSVC 与 WSL Ubuntu x86_64 GNU 的 Rust 1.89.0 上通过 Clippy 与测试。
 
 验收：doc-fixture 校验通过；对 `docs/` 做一遍链接检查，没有指向不存在文件的链接；README 中出现的每条命令和参数都能在 `cli.rs` 中找到。
 
@@ -394,18 +396,30 @@ impl KbMdText {
 | #13 | CLI 集成 | E3003 → 存储错误码 |
 | #14 | episode_files 单测 | 新 episode 丢失 → 正常读出 |
 
-## 11. 最终验收记录（Windows）
+## 11. 最终验收记录（2026-11-13）
+
+执行人：Codex。Windows 验收使用 x86_64 MSVC 目标；Linux 验收使用 WSL Ubuntu x86_64。
 
 | 检查 | 结果 | 验证方式与边界 |
 |---|---|---|
-| MCP server 中断 | 通过 handler 验证 | 给隔离进程发送 `CTRL_BREAK_EVENT`，退出码 130、stderr 含 `E9001`、MCP stdout 只有 ping 响应。没有直接注入 `CTRL_C_EVENT`。 |
-| `update --llm` 中断与恢复 | 通过 | 使用本机 mock HTTP 服务等待 LLM 请求后发送 `CTRL_BREAK_EVENT`；退出码 130、stderr 含 `E9001`，之后规则模式 `kb update` 成功。未调用外部模型。 |
-| writer lock 冲突与释放 | 通过 | Windows 另一进程持有 `.kb/writer.lock` 时 `kb add` 返回 `E3004`；释放锁后 `kb add` 成功。未同时启动两个 `kb update`。 |
+| MCP server 中断 | 通过 | 独立辅助进程向隐藏测试控制台发送 `CTRL_C_EVENT`，退出码 130、stderr 含 `E9001`，MCP stdout 只有 ping 响应；`CTRL_BREAK_EVENT` 也已通过。 |
+| `update --llm` 中断与恢复 | 通过 | 本机 mock HTTP 服务收到 LLM 请求后发送 `CTRL_C_EVENT`；退出码 130、stderr 含 `E9001`，之后规则模式 `kb update` 成功。未调用外部模型。 |
+| writer lock 冲突与释放 | 通过 | 第一个 `update --llm` 挂起时，第二个 `update` 返回退出码 3 和 `E3004`；中断第一个进程后再次 update 成功。 |
 | BOM 和权限解析 | 通过 | 隔离 kb.md 写入 UTF-8 BOM 与 `default_perm: rw`，`update` 后 `list` 返回 `rw`。 |
 | CRLF `chmod` | 通过 | 字节级比较显示仅声明行变化，其他行保持 CRLF。 |
-| MCP tools/list | 通过协议检查 | 隔离 server 返回全部 8 个 tools；未连接真实 Cursor、Cline 或 Claude Desktop。 |
-| Unix SIGINT | 通过 | WSL Ubuntu / Rust 1.94.1 上运行 `mcp_sigint_exits_130_and_writes_interrupt_error_to_stderr`，1 passed。 |
-| Rust 1.89 工具链 | 未验证 | 最终门禁使用 Rust 1.94.1。 |
+| MCP client | 通过 | Claude Code CLI 2.1.318 使用独立 `CLAUDE_CONFIG_DIR` 显示 Connected；通信记录确认客户端完成 initialize 和 tools/list 并收到全部 8 个工具，无需模型调用。 |
+| Unix SIGINT | 通过 | WSL Ubuntu 的 Rust 1.89.0 全量测试包含此用例；Rust 1.94.1 下也已单独通过。 |
+| Rust 1.89 工具链 | 通过（Windows / Linux） | Rust 1.89.0 下两平台 workspace Clippy 无警告；Windows 362 项、Linux 361 项测试通过，数量差异来自平台专属用例。 |
+
+最低版本验收命令（使用当前锁定依赖）：
+
+```bash
+cargo +1.89.0 clippy --locked --workspace --all-targets -- -D warnings
+cargo +1.89.0 test --locked --workspace
+node tests/tools/validate-doc-fixture-diff.js
+```
+
+收尾中发现 Unix SIGINT 测试的 `writeln!` 触发 Linux Clippy `write_literal`；先复现门禁失败，再改用 `write_all` 写入相同 JSON 请求和 LF，两平台门禁通过。业务代码和依赖未变更。
 
 ## 12. 每阶段的交接流程
 

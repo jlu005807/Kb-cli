@@ -257,7 +257,7 @@ cargo build
 cargo test
 ```
 
-代码使用 Rust 1.89 稳定的标准库 API。依赖的最低 Rust 版本要求以及整个 workspace 在 Rust 1.89 上的编译情况，尚未用 1.89 工具链验证。
+MSRV 为 Rust 1.89。已在 Windows x86_64 MSVC 和 WSL Ubuntu x86_64 GNU 上使用 Rust 1.89.0 对当前 `Cargo.lock` 运行 workspace Clippy 和测试并通过。
 
 ---
 

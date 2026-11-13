@@ -958,7 +958,8 @@ fn mcp_sigint_exits_130_and_writes_interrupt_error_to_stderr() {
         (first_line, remaining)
     });
     let stdin = child.stdin.as_mut().expect("MCP stdin");
-    writeln!(stdin, "{}", r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+    stdin
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n")
         .expect("send readiness ping");
     stdin.flush().expect("flush readiness ping");
     let ping_line = match ready_rx.recv_timeout(Duration::from_secs(5)) {

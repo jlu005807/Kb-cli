@@ -60,7 +60,7 @@
 - 新错误码 `E3004` 用于并发 writer lock 冲突；锁冲突立即失败并尽可能报告持锁 PID。
 - 新错误码 `E1004` 用于记忆与 MCP 存储打开、读取、写入失败。
 - `kb env --doctor` 新增所选全局配置路径和规则来源；memory consolidate 输出新增 `already_declared` 与 `warnings`。
-- workspace Rust 版本元数据更新为 1.89。当前实现使用 Rust 1.89 稳定 API；依赖最低版本及旧版工具链兼容性尚未单独验证。
+- workspace Rust 版本元数据更新为 1.89；Windows x86_64 MSVC 和 WSL Ubuntu x86_64 GNU 上使用 Rust 1.89.0 对当前 `Cargo.lock` 的 Clippy 和 workspace 测试已通过。
 - 新错误码：`E2010`（路径含 `)`、`#` 或控制字符，无法安全写入 kb.md
   声明）、`E2011`（目录/glob 模式声明不可经 CLI 单行改写）。
 - `LICENSE`（MIT，README 徽章此前指向不存在的文件）。
