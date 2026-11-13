@@ -19,6 +19,44 @@
 /// `.kb/raw/`（RAW_DIR_REL）是声明文件的正常归属地，能被 add + update 正常编译。
 const AGENT_MEMORY_SUBDIR: &str = "raw/agent-memory";
 
+fn existing_memory_topics(mem_dir: &std::path::Path) -> Result<std::collections::BTreeMap<String, String>, std::io::Error> {
+    let mut existing = std::collections::BTreeMap::new();
+    let entries = match std::fs::read_dir(mem_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(existing),
+        Err(err) => return Err(err),
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_file()
+            || entry.path().extension().and_then(|extension| extension.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+        let topic = std::fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|document| memory_document_topic(&document))
+            .unwrap_or_default();
+        existing.insert(file_name, topic);
+    }
+    Ok(existing)
+}
+
+fn memory_document_topic(document: &str) -> Option<String> {
+    let body = document.strip_prefix("<!-- kb-agent-memory")?;
+    let body = body
+        .strip_prefix("\r\n")
+        .or_else(|| body.strip_prefix('\n'))?;
+    let end = body.find("\n-->")?;
+    let metadata: Value = serde_json::from_str(body[..end].trim_end_matches('\r')).ok()?;
+    metadata
+        .get("topic")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
 /// `kb remember <content> [--ref <chunk_id>...] [--confidence <f32>]`
 ///
 /// 写一条 Observation episode。confidence 缺省 0.8（agent 自评，需后续 verify
@@ -126,25 +164,51 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
 
     let now = kb_core::Timestamp::now();
     let plan = kb_core::plan_consolidation(&episodes, min, now);
+    let mem_dir = cwd.join(".kb").join(AGENT_MEMORY_SUBDIR);
+    let mut existing_files = if plan.memories.is_empty() {
+        std::collections::BTreeMap::new()
+    } else {
+        existing_memory_topics(&mem_dir).map_err(|err| {
+            map_core_error(
+                CoreErrorKind::InvalidKbFormat,
+                json!({ "reason": "scan agent-memory files failed", "detail": err.to_string() }),
+            )
+        })?
+    };
+    let mut file_names = std::collections::BTreeMap::new();
+    for mem in &plan.memories {
+        let file_name = kb_core::usecases::memory_file_name(&mem.topic, &existing_files)
+            .map_err(|err| {
+                map_core_error(
+                    CoreErrorKind::InvalidKbFormat,
+                    json!({ "reason": "select memory file name failed", "topic": mem.topic, "detail": err }),
+                )
+            })?;
+        existing_files.insert(file_name.clone(), mem.topic.clone());
+        file_names.insert(mem.topic.clone(), file_name);
+    }
 
     let mut written: Vec<Value> = Vec::new();
     let mut added: Vec<Value> = Vec::new();
+    let mut already_declared = 0usize;
+    let mut warnings: Vec<Value> = Vec::new();
 
     if !dry_run && !plan.memories.is_empty() {
-        let mem_dir = cwd.join(".kb").join(AGENT_MEMORY_SUBDIR);
         std::fs::create_dir_all(&mem_dir).map_err(|err| {
             map_core_error(
                 CoreErrorKind::InvalidKbFormat,
                 json!({ "reason": "create agent-memory dir failed", "detail": err.to_string() }),
             )
         })?;
-
         for mem in &plan.memories {
-            let stem = mem.file_stem();
-            let file_name = format!("{stem}.md");
+            let file_name = file_names
+                .get(&mem.topic)
+                .expect("filename planned for each memory")
+                .clone();
+            let stem = file_name.strip_suffix(".md").unwrap_or(&file_name);
             let abs_path = mem_dir.join(&file_name);
             let doc = render_memory_document(mem);
-            std::fs::write(&abs_path, doc).map_err(|err| {
+            kb_storage_fs::atomic_write_bytes(&abs_path, doc.as_bytes()).map_err(|err| {
                 map_core_error(
                     CoreErrorKind::InvalidKbFormat,
                     json!({ "reason": "write memory file failed", "file": file_name, "detail": err.to_string() }),
@@ -169,8 +233,22 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
                 AddMode::Link,
                 Some("raw".to_string()),
             ) {
+                Ok(result) if result["ignored"].as_bool() == Some(true) => {
+                    warnings.push(json!({
+                        "file": file_name,
+                        "code": "IGNORED",
+                        "message": result["message"].as_str().unwrap_or("memory file ignored"),
+                    }));
+                }
                 Ok(_) => added.push(json!({ "alias": alias, "file": rel_path })),
-                Err(_) => { /* 已登记或被忽略——产物文件已写，update 仍会编译 */ }
+                Err(err) if matches!(err.code, "E2003" | "E2006") => {
+                    already_declared += 1;
+                }
+                Err(err) => warnings.push(json!({
+                    "file": file_name,
+                    "code": err.code,
+                    "message": err.message,
+                })),
             }
         }
     }
@@ -183,9 +261,22 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
         "skipped_non_assertive": plan.skipped_non_assertive,
         "skipped_below_threshold": plan.skipped_below_threshold,
         "memories_planned": plan.memories.len(),
-        "memories": plan.memories.iter().map(memory_summary_json).collect::<Vec<_>>(),
+        "memories": plan
+            .memories
+            .iter()
+            .map(|mem| {
+                memory_summary_json(
+                    mem,
+                    file_names
+                        .get(&mem.topic)
+                        .expect("filename planned for each memory"),
+                )
+            })
+            .collect::<Vec<_>>(),
         "written": written,
         "added": added,
+        "already_declared": already_declared,
+        "warnings": warnings,
     });
 
     let text = if dry_run {
@@ -205,10 +296,10 @@ pub(crate) fn run_consolidate(min: usize, dry_run: bool) -> Result<Value, CliErr
 }
 
 /// 一条 memory 的精简 JSON 视图（dry-run / 落盘都返回，便于外部 agent 消费）。
-fn memory_summary_json(mem: &kb_core::ConsolidatedMemory) -> Value {
+fn memory_summary_json(mem: &kb_core::ConsolidatedMemory, file_name: &str) -> Value {
     json!({
         "topic": mem.topic,
-        "file_stem": mem.file_stem(),
+        "file_stem": file_name.strip_suffix(".md").unwrap_or(file_name),
         "confidence": mem.confidence,
         "has_user_correction": mem.has_user_correction,
         "source_episode_ids": mem.source_episode_ids,

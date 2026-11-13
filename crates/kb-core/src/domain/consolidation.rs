@@ -51,24 +51,29 @@ impl ConsolidatedMemory {
     /// 折叠连续 `-`，去掉首尾 `-`。空结果回退到 `"general"`。
     /// 例如 `"docs/a"` -> `"docs-a"`，`"src/api.rs:0001"` -> `"src-api-rs-0001"`。
     pub fn file_stem(&self) -> String {
-        let mut out = String::with_capacity(self.topic.len());
-        let mut prev_dash = false;
-        for ch in self.topic.chars() {
-            if ch.is_ascii_alphanumeric() {
-                out.push(ch.to_ascii_lowercase());
-                prev_dash = false;
-            } else if !prev_dash {
-                out.push('-');
-                prev_dash = true;
-            }
-        }
-        let trimmed = out.trim_matches('-').to_string();
-        if trimmed.is_empty() {
+        let slug = memory_topic_slug(&self.topic);
+        if slug.is_empty() {
             GENERAL_TOPIC.to_string()
         } else {
-            trimmed
+            slug
         }
     }
+}
+
+/// Convert a memory topic to its ASCII-only filename slug without a fallback.
+pub fn memory_topic_slug(topic: &str) -> String {
+    let mut out = String::with_capacity(topic.len());
+    let mut prev_dash = false;
+    for ch in topic.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
 }
 
 /// 固化计划：一次 consolidate 的全部产物 + 统计。

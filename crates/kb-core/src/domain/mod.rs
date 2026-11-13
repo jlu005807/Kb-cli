@@ -23,7 +23,8 @@ pub use agent::{AgentId, AgentIdError};
 pub use alias::{Alias, AliasError, AliasErrorKind};
 pub use citation::{verify_citation, CitationMatch, CitationVerdict};
 pub use consolidation::{
-    plan_consolidation, record_id_of_chunk, ConsolidatedMemory, ConsolidationPlan,
+    memory_topic_slug, plan_consolidation, record_id_of_chunk, ConsolidatedMemory,
+    ConsolidationPlan,
 };
 pub use episode::{Episode, EpisodeFilter, EpisodeKind};
 pub use graph::{GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot};

@@ -14,7 +14,7 @@
 //! （`SingleWriterLock`），但 append-only 的容错设计让偶发交错也不会丢历史。
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use kb_core::domain::{Episode, EpisodeFilter};
@@ -81,6 +81,7 @@ impl EpisodeStore for FsEpisodeStore {
 
         let mut file = fs::OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&self.episodes_path)
             .map_err(|err| {
@@ -89,6 +90,39 @@ impl EpisodeStore for FsEpisodeStore {
                     self.episodes_path.display()
                 ))
             })?;
+        if file
+            .metadata()
+            .map_err(|err| {
+                DomainError::io(format!(
+                    "inspect episodes.jsonl '{}' before append failed: {err}",
+                    self.episodes_path.display()
+                ))
+            })?
+            .len()
+            > 0
+        {
+            file.seek(SeekFrom::End(-1)).map_err(|err| {
+                DomainError::io(format!(
+                    "seek episodes.jsonl '{}' before append failed: {err}",
+                    self.episodes_path.display()
+                ))
+            })?;
+            let mut last_byte = [0u8; 1];
+            file.read_exact(&mut last_byte).map_err(|err| {
+                DomainError::io(format!(
+                    "read episodes.jsonl '{}' tail before append failed: {err}",
+                    self.episodes_path.display()
+                ))
+            })?;
+            if last_byte[0] != b'\n' {
+                file.write_all(b"\n").map_err(|err| {
+                    DomainError::io(format!(
+                        "terminate final line in episodes.jsonl '{}' failed: {err}",
+                        self.episodes_path.display()
+                    ))
+                })?;
+            }
+        }
         file.write_all(line.as_bytes()).map_err(|err| {
             DomainError::io(format!(
                 "append episode '{}' to '{}' failed: {err}",
@@ -182,6 +216,24 @@ mod tests {
         // 重新打开一个 store 指向同目录，确认历史持久化。
         let reopened = FsEpisodeStore::under(&dir);
         assert_eq!(reopened.count(&EpisodeFilter::default()).unwrap(), 5);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn append_separates_new_episode_from_truncated_final_line() {
+        let dir = unique_test_dir("kb-fs-ep-truncated-tail");
+        let store = FsEpisodeStore::under(&dir);
+        let path = dir.join(".kb").join("episodes.jsonl");
+        fs::create_dir_all(path.parent().expect("episodes directory")).unwrap();
+        fs::write(&path, b"{\"id\":\"half").expect("write truncated final line");
+
+        store
+            .append(&ep("good", "a", "s", EpisodeKind::Observation, 1))
+            .unwrap();
+
+        let episodes = store.query(&EpisodeFilter::default()).unwrap();
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].id, "good");
         fs::remove_dir_all(&dir).ok();
     }
 

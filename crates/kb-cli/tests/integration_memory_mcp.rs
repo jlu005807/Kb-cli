@@ -253,11 +253,15 @@ fn consolidate_min_1_writes_memory_files_and_declares_them() {
     let written = body["data"]["written"].as_array().expect("written array");
     assert_eq!(written.len(), 1, "both episodes share the 'general' topic");
     assert_eq!(written[0]["topic"], "general");
-    assert_eq!(written[0]["file"], "./.kb/raw/agent-memory/general.md");
+    let file = written[0]["file"].as_str().expect("memory file path");
+    assert!(file.starts_with("./.kb/raw/agent-memory/general-"));
+    assert!(file.ends_with(".md"));
+    let actual_stem = file.rsplit('/').next().unwrap().strip_suffix(".md").unwrap();
+    assert_eq!(body["data"]["memories"][0]["file_stem"], actual_stem);
     assert_eq!(written[0]["has_user_correction"], true);
     assert_eq!(written[0]["episodes"], 2);
 
-    let memory_path = dir.join(".kb/raw/agent-memory/general.md");
+    let memory_path = dir.join(file.trim_start_matches("./"));
     assert!(memory_path.is_file(), "memory file must exist on disk");
     let doc = fs::read_to_string(&memory_path).expect("read memory file");
     assert!(doc.contains("kb-agent-memory"), "provenance meta block");
@@ -265,19 +269,217 @@ fn consolidate_min_1_writes_memory_files_and_declares_them() {
     assert!(doc.contains("the default backend is fs"));
 
     let added = body["data"]["added"].as_array().expect("added array");
+    let stem = file
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.strip_suffix(".md"))
+        .expect("memory file stem");
     assert!(
         added
             .iter()
-            .any(|x| x["alias"] == "agent-memory/general"
-                && x["file"] == "./.kb/raw/agent-memory/general.md"),
+            .any(|x| x["alias"] == format!("agent-memory/{stem}") && x["file"] == file),
         "memory file should be auto-declared via kb add"
     );
 
-    // Re-running consolidate is idempotent at declaration level: the add
-    // conflict is swallowed, the file is rewritten, and no error escapes.
+    // Re-running consolidate reuses the matching file and counts its declaration conflict.
     let (ok, again) = run_json(&["consolidate", "--min", "1"], &dir);
     assert!(ok);
     assert_eq!(again["status"], "success");
+    assert_eq!(again["data"]["already_declared"], 1);
+    assert!(again["data"]["warnings"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn consolidate_keeps_topics_with_colliding_slugs_in_separate_files() {
+    let dir = unique_temp_dir("consolidate-colliding-topics");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    let topics = [
+        ("docs/a", "A"),
+        ("docs-a", "B"),
+        ("./设计.md", "C"),
+        ("./需求.md", "D"),
+    ];
+    for (topic, label) in topics {
+        for sequence in ["1", "2"] {
+            let content = format!("fact {label}{sequence}");
+            let reference = format!("{topic}:0001");
+            let (ok, body) = run_json(&["remember", &content, "--ref", &reference], &dir);
+            assert!(ok, "remember failed: {body}");
+        }
+    }
+
+    let (ok, consolidated) = run_json(&["consolidate", "--min", "2"], &dir);
+    assert!(ok);
+    let written = consolidated["data"]["written"]
+        .as_array()
+        .expect("written array");
+    assert_eq!(written.len(), topics.len());
+    let files = written
+        .iter()
+        .map(|item| item["file"].as_str().expect("memory file").to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(files.len(), topics.len(), "topics must have separate files");
+
+    for (topic, label) in topics {
+        let item = written
+            .iter()
+            .find(|item| item["topic"] == topic)
+            .expect("topic output");
+        let file = item["file"].as_str().expect("file path");
+        let document = fs::read_to_string(dir.join(file.trim_start_matches("./")))
+            .expect("read consolidated memory");
+        assert!(document.contains(&format!("fact {label}1")));
+        assert!(document.contains(&format!("fact {label}2")));
+        for (other_topic, other_label) in topics {
+            if other_topic != topic {
+                assert!(!document.contains(&format!("fact {other_label}1")));
+                assert!(!document.contains(&format!("fact {other_label}2")));
+            }
+        }
+    }
+
+    let kb_md = fs::read_to_string(dir.join("kb.md")).expect("read kb.md");
+    for file in &files {
+        assert_eq!(kb_md.matches(&format!("({file})")).count(), 1);
+    }
+    let (ok, again) = run_json(&["consolidate", "--min", "2"], &dir);
+    assert!(ok);
+    assert_eq!(again["data"]["already_declared"], topics.len());
+    assert!(again["data"]["warnings"].as_array().unwrap().is_empty());
+    let second_files = again["data"]["written"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["file"].as_str().unwrap().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(second_files, files);
+}
+
+#[test]
+fn consolidate_reuses_existing_file_for_matching_topic_metadata() {
+    let dir = unique_temp_dir("consolidate-reuse-topic-file");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    let memory_dir = dir.join(".kb/raw/agent-memory");
+    fs::create_dir_all(&memory_dir).expect("create memory directory");
+    fs::write(
+        memory_dir.join("docs-a.md"),
+        "<!-- kb-agent-memory\n{\"topic\":\"docs/a\"}\n-->\n\nold content\n",
+    )
+    .expect("write legacy memory file");
+    for content in ["fact A1", "fact A2"] {
+        let (ok, body) = run_json(&["remember", content, "--ref", "docs/a:0001"], &dir);
+        assert!(ok, "remember failed: {body}");
+    }
+
+    let (ok, consolidated) = run_json(&["consolidate", "--min", "2"], &dir);
+    assert!(ok);
+    let written = consolidated["data"]["written"]
+        .as_array()
+        .expect("written array");
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0]["file"], "./.kb/raw/agent-memory/docs-a.md");
+    let document = fs::read_to_string(memory_dir.join("docs-a.md"))
+        .expect("read consolidated memory");
+    assert!(document.contains("fact A1"));
+    assert!(document.contains("fact A2"));
+    assert_eq!(
+        fs::read_dir(&memory_dir).expect("list memory directory").count(),
+        1
+    );
+}
+
+#[test]
+fn consolidate_counts_preexisting_memory_path_as_already_declared() {
+    let dir = unique_temp_dir("consolidate-path-already-declared");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    let file_name = kb_core::usecases::memory_file_name(
+        "docs/a",
+        &std::collections::BTreeMap::new(),
+    )
+    .expect("memory filename");
+    let relative_path = format!("./.kb/raw/agent-memory/{file_name}");
+    let memory_dir = dir.join(".kb/raw/agent-memory");
+    fs::create_dir_all(&memory_dir).expect("create memory directory");
+    fs::write(
+        memory_dir.join(&file_name),
+        "<!-- kb-agent-memory\n{\"topic\":\"docs/a\"}\n-->\n\nold content\n",
+    )
+    .expect("write existing memory file");
+    mk_file(&dir, "./kb.md", &format!("# raw\n[manual]({relative_path}):r\n"));
+    for content in ["fact A1", "fact A2"] {
+        let (ok, body) = run_json(&["remember", content, "--ref", "docs/a:0001"], &dir);
+        assert!(ok, "remember failed: {body}");
+    }
+
+    let (ok, consolidated) = run_json(&["consolidate", "--min", "2"], &dir);
+    assert!(ok);
+    assert_eq!(consolidated["data"]["already_declared"], 1);
+    assert!(consolidated["data"]["warnings"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn consolidate_does_not_overwrite_memory_file_without_parseable_topic() {
+    let dir = unique_temp_dir("consolidate-unparseable-memory");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    let file_name = kb_core::usecases::memory_file_name(
+        "docs/a",
+        &std::collections::BTreeMap::new(),
+    )
+    .expect("short hash memory filename");
+    let memory_dir = dir.join(".kb/raw/agent-memory");
+    fs::create_dir_all(&memory_dir).expect("create memory directory");
+    let occupied_path = memory_dir.join(&file_name);
+    fs::write(&occupied_path, "manual content without metadata\n")
+        .expect("write unparseable memory file");
+    for content in ["fact A1", "fact A2"] {
+        let (ok, body) = run_json(&["remember", content, "--ref", "docs/a:0001"], &dir);
+        assert!(ok, "remember failed: {body}");
+    }
+
+    let (ok, consolidated) = run_json(&["consolidate", "--min", "2"], &dir);
+    assert!(ok);
+    assert_eq!(fs::read_to_string(&occupied_path).unwrap(), "manual content without metadata\n");
+    let written = consolidated["data"]["written"].as_array().unwrap();
+    assert_eq!(written.len(), 1);
+    let generated = written[0]["file"].as_str().unwrap();
+    let generated_name = generated.rsplit('/').next().unwrap();
+    assert_ne!(generated_name, file_name);
+    let generated_stem = generated_name.strip_suffix(".md").unwrap();
+    assert_eq!(generated_stem.rsplit('-').next().unwrap().len(), 16);
+}
+
+#[test]
+fn consolidate_reports_ignored_memory_files_as_warnings() {
+    let dir = unique_temp_dir("consolidate-ignored-memory");
+    let (ok, _) = run_json(&["init", "demo"], &dir);
+    assert!(ok);
+    mk_file(&dir, "./.kb/.kbignore", "./.kb/raw/agent-memory/\n");
+    let (ok, _) = run_json(
+        &["remember", "fact one", "--ref", "docs/a:0001"],
+        &dir,
+    );
+    assert!(ok);
+    let (ok, _) = run_json(
+        &["remember", "fact two", "--ref", "docs/a:0002"],
+        &dir,
+    );
+    assert!(ok);
+
+    let (ok, consolidated) = run_json(&["consolidate", "--min", "2"], &dir);
+    assert!(ok);
+    let warnings = consolidated["data"]["warnings"]
+        .as_array()
+        .expect("consolidate warnings array");
+    assert_eq!(warnings.len(), 1);
+    let warning_file = warnings[0]["file"].as_str().expect("warning file");
+    assert!(warning_file.starts_with("docs-a-") && warning_file.ends_with(".md"));
+    assert!(warnings[0]["code"].is_string());
+    assert!(warnings[0]["message"].is_string());
+    assert!(consolidated["data"]["added"].as_array().unwrap().is_empty());
 }
 
 #[test]

@@ -2,8 +2,8 @@
 //! 负责把领域规则组织成可执行业务流程，并保持输入/输出稳定契约。
 
 use crate::domain::{
-    Alias, GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType, GraphSnapshot,
-    IndexSnapshot, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SearchHit,
+    memory_topic_slug, Alias, GraphEdge, GraphEdgeType, GraphEvidence, GraphNode, GraphNodeType,
+    GraphSnapshot, IndexSnapshot, KnowledgeEntry, KnowledgeSnapshot, KnowledgeStatus, SearchHit,
     SearchProjectionSnapshot, SemanticProviderInfo, WikiManifestEntry, WikiManifestSnapshot,
     WikiPageDocument, WikiPageType, WikiViewSnapshot,
 };
@@ -1174,6 +1174,47 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Select a stable memory filename, reusing matching metadata before creating a hashed name.
+/// `existing` maps each occupied filename to its parsed topic; an empty topic marks unknown metadata.
+pub fn memory_file_name(
+    topic: &str,
+    existing: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    if let Some((file_name, _)) = existing.iter().find(|(_, existing_topic)| *existing_topic == topic)
+    {
+        return Ok(file_name.clone());
+    }
+
+    let slug = memory_topic_slug(topic);
+    let slug = if slug.is_empty() {
+        let fallback = topic
+            .chars()
+            .map(|ch| if ch.is_alphanumeric() { ch } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        if fallback.is_empty() {
+            "topic".to_string()
+        } else {
+            fallback
+        }
+    } else {
+        slug
+    };
+    let hash = format!("{:016x}", fnv1a64(topic.as_bytes()));
+    let short_name = format!("{}-{}.md", slug, &hash[..8]);
+    if !existing.contains_key(&short_name) {
+        return Ok(short_name);
+    }
+
+    let full_name = format!("{}-{}.md", slug, hash);
+    if !existing.contains_key(&full_name) {
+        return Ok(full_name);
+    }
+
+    Err(format!("memory filename hash collision for topic '{topic}'"))
+}
+
 fn first_non_empty_line(text: &str) -> Option<String> {
     text.lines()
         .map(str::trim)
@@ -1578,6 +1619,7 @@ mod tests {
         StateSnapshot,
     };
     use std::cell::RefCell;
+    use std::collections::BTreeMap;
 
     struct TestRetriever;
 
@@ -1622,6 +1664,32 @@ mod tests {
     fn init_plan_blocks_non_force_overwrite() {
         let result = plan_init("demo".to_string(), None, true, false);
         assert_eq!(result, Err(InitPlanError::AlreadyInitialized));
+    }
+
+    #[test]
+    fn memory_file_name_reuses_existing_topics_and_resolves_hash_collisions() {
+        let topic = "docs/a";
+        let hash = format!("{:016x}", super::fnv1a64(topic.as_bytes()));
+        let mut existing = BTreeMap::new();
+        existing.insert("docs-a.md".to_string(), topic.to_string());
+        assert_eq!(super::memory_file_name(topic, &existing).unwrap(), "docs-a.md");
+
+        existing.clear();
+        let short_name = format!("docs-a-{}.md", &hash[..8]);
+        assert_eq!(
+            super::memory_file_name(topic, &existing).unwrap(),
+            short_name
+        );
+
+        existing.insert(short_name.clone(), "other/topic".to_string());
+        let full_name = format!("docs-a-{hash}.md");
+        assert_eq!(
+            super::memory_file_name(topic, &existing).unwrap(),
+            full_name
+        );
+
+        existing.insert(full_name, "another/topic".to_string());
+        assert!(super::memory_file_name(topic, &existing).is_err());
     }
 
     #[test]
