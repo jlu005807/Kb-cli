@@ -8,10 +8,8 @@
 //!   （半写入会让整个文件 parse 失败）。
 //! - **可 grep / 可 tail**：每行自包含，运维和调试友好。
 //!
-//! 并发：append 用 `OpenOptions::append(true)`。POSIX 下对小于 PIPE_BUF 的
-//! `O_APPEND` 写是原子的；Windows 下 FILE_APPEND_DATA 同样保证追加位置原子。
-//! 单行 episode 一般远小于该阈值。跨进程强一致仍建议配合上层单写者锁
-//! （`SingleWriterLock`），但 append-only 的容错设计让偶发交错也不会丢历史。
+//! 并发：append 用 `OpenOptions::append(true)` 让系统选择追加位置。
+//! 普通文件写入不受管道 PIPE_BUF 的原子性保证；读取按行跳过损坏记录。
 
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -37,26 +35,22 @@ impl FsEpisodeStore {
         Self::under(&base_dir)
     }
 
-    /// 读取并解析所有 episode，按文件内出现顺序（= 时间升序，因为 append-only）。
+    /// 读取并解析所有 episode，按文件内出现顺序；查询时再按时间排序。
     /// 解析失败的行被跳过（崩溃残留行容错），不会让整个读取失败。
     fn read_all(&self) -> Result<Vec<Episode>, DomainError> {
         if !self.episodes_path.exists() {
             return Ok(Vec::new());
         }
-        let raw = fs::read_to_string(&self.episodes_path).map_err(|err| {
+        let raw = fs::read(&self.episodes_path).map_err(|err| {
             DomainError::io(format!(
                 "read episodes.jsonl '{}' failed: {err}",
                 self.episodes_path.display()
             ))
         })?;
         let mut out = Vec::new();
-        for line in raw.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+        for line in raw.split(|byte| *byte == b'\n') {
             // 容错：跳过解析失败的行（例如崩溃残留的半写入行）。
-            if let Ok(ep) = serde_json::from_str::<Episode>(trimmed) {
+            if let Ok(ep) = serde_json::from_slice::<Episode>(line) {
                 out.push(ep);
             }
         }
@@ -135,9 +129,9 @@ impl EpisodeStore for FsEpisodeStore {
 
     fn query(&self, filter: &EpisodeFilter) -> Result<Vec<Episode>, DomainError> {
         let all = self.read_all()?;
-        let mut matched: Vec<Episode> =
-            all.into_iter().filter(|ep| filter.matches(ep)).collect();
-        // read_all 已是时间升序；limit 取最近 N 条 = 取尾部，仍保持升序。
+        let mut matched: Vec<Episode> = all.into_iter().filter(|ep| filter.matches(ep)).collect();
+        matched.sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then_with(|| a.id.cmp(&b.id)));
+        // limit 取最近 N 条 = 取时间排序后的尾部，仍保持升序。
         if let Some(limit) = filter.limit {
             if matched.len() > limit {
                 matched = matched.split_off(matched.len() - limit);
@@ -221,20 +215,38 @@ mod tests {
 
     #[test]
     fn append_separates_new_episode_from_truncated_final_line() {
-        let dir = unique_test_dir("kb-fs-ep-truncated-tail");
-        let store = FsEpisodeStore::under(&dir);
-        let path = dir.join(".kb").join("episodes.jsonl");
-        fs::create_dir_all(path.parent().expect("episodes directory")).unwrap();
-        fs::write(&path, b"{\"id\":\"half").expect("write truncated final line");
+        for tail in [
+            b"{\"id\":\"half".as_slice(),
+            b"{\"content\":\"\xe4\xb8".as_slice(),
+        ] {
+            let dir = unique_test_dir("kb-fs-ep-truncated-tail");
+            let store = FsEpisodeStore::under(&dir);
+            let path = dir.join(".kb").join("episodes.jsonl");
+            store
+                .append(&ep("before", "a", "s", EpisodeKind::Observation, 0))
+                .unwrap();
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap()
+                .write_all(tail)
+                .unwrap();
 
-        store
-            .append(&ep("good", "a", "s", EpisodeKind::Observation, 1))
-            .unwrap();
+            store
+                .append(&ep("good", "a", "s", EpisodeKind::Observation, 1))
+                .unwrap();
 
-        let episodes = store.query(&EpisodeFilter::default()).unwrap();
-        assert_eq!(episodes.len(), 1);
-        assert_eq!(episodes[0].id, "good");
-        fs::remove_dir_all(&dir).ok();
+            let episodes = store.query(&EpisodeFilter::default()).unwrap();
+            assert_eq!(
+                episodes
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+                ["before", "good"]
+            );
+            assert_eq!(store.count(&EpisodeFilter::default()).unwrap(), 2);
+            fs::remove_dir_all(&dir).ok();
+        }
     }
 
     #[test]
@@ -263,7 +275,7 @@ mod tests {
     fn query_limit_returns_most_recent_in_order() {
         let dir = unique_test_dir("kb-fs-ep-limit");
         let store = FsEpisodeStore::under(&dir);
-        for i in 1..=5 {
+        for i in [5, 1, 4, 2, 3] {
             store
                 .append(&ep(&format!("e{i}"), "a", "s", EpisodeKind::Query, i))
                 .unwrap();
@@ -279,6 +291,33 @@ mod tests {
         assert_eq!(out[1].id, "e5");
         // count 忽略 limit。
         assert_eq!(store.count(&filter).unwrap(), 5);
+        let all = store.query(&EpisodeFilter::default()).unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|item| item.timestamp.as_nanos())
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4, 5]
+        );
+        assert!(store
+            .query(&EpisodeFilter {
+                limit: Some(0),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty());
+        store
+            .append(&ep("e0", "a", "s", EpisodeKind::Query, 4))
+            .unwrap();
+        let tied = store
+            .query(&EpisodeFilter {
+                limit: Some(3),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            tied.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["e0", "e4", "e5"]
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
