@@ -98,7 +98,23 @@ pub(crate) fn run_add(
         }
         let target_abs = cwd.join(target_rel.trim_start_matches("./"));
         if src_path.is_file() {
-            fs::copy(&src_path, &target_abs).map_err(|_| write_config_error())?;
+            let mut input = fs::File::open(&src_path).map_err(|_| write_config_error())?;
+            let permissions = input.metadata().map_err(|_| write_config_error())?.permissions();
+            let mut output = fs::OpenOptions::new().write(true).create_new(true)
+                .open(&target_abs).map_err(|err| {
+                    if err.kind() == std::io::ErrorKind::AlreadyExists {
+                        map_core_error(CoreErrorKind::PathAlreadyRegistered, json!({"path": target_rel}))
+                    } else {
+                        write_config_error()
+                    }
+                })?;
+            let copied = std::io::copy(&mut input, &mut output)
+                .and_then(|_| output.set_permissions(permissions));
+            drop(output);
+            if copied.is_err() {
+                let _ = fs::remove_file(&target_abs);
+                return Err(write_config_error());
+            }
         }
         target_rel
     } else {

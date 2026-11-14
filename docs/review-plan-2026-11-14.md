@@ -12,7 +12,8 @@
 
 | 已完成阶段 | 复现与最小实现 | 验证与评审 | 提交 |
 |---|---|---|---|
-| 1 全局配置保护 | 三个回归先失败；写前严格读/容器校验，注册表和 LLM loader 接受 BOM | Windows 349 / Linux Rust 1.89 348 项测试、两平台 Clippy、Node 回归及 20 组 doc-fixture 通过；独立评审无重要问题 | `fix: preserve unreadable global configuration` |
+| 1 全局配置保护 | 三个回归先失败；写前严格读/容器校验，注册表和 LLM loader 接受 BOM | Windows 349 / Linux Rust 1.89 348 项测试、两平台 Clippy、Node 回归及 20 组 doc-fixture 通过；独立评审无重要问题 | `0488e0d` |
+| 2 copy 防覆盖 | 未登记目标碰撞先失败；源权限/锁定源保护先通过；create_new 复制并保留权限 | Windows 350 / Linux 348 项测试及两平台门禁通过；独立评审无重要问题 | `fix: prevent copy mode from overwriting raw files` |
 
 ## 1. 评审结论与边界
 

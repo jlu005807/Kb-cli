@@ -155,6 +155,10 @@ fn add_copy_mode_writes_into_hidden_raw_dir() {
     let (ok, _) = run_json(&["init", "demo"], &dir);
     assert!(ok);
     mk_file(&dir, "./docs/copy.md", "COPY");
+    let source = dir.join("docs/copy.md");
+    let mut permissions = fs::metadata(&source).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&source, permissions.clone()).unwrap();
 
     let (ok, body) = run_json(
         &["add", "./docs/copy.md", "docs/copy", "--mode", "copy"],
@@ -163,6 +167,25 @@ fn add_copy_mode_writes_into_hidden_raw_dir() {
     assert!(ok);
     assert_eq!(body["data"]["path"], "./.kb/raw/copy.md");
     assert!(dir.join(".kb/raw/copy.md").exists());
+    assert_eq!(fs::metadata(dir.join(".kb/raw/copy.md")).unwrap().permissions(), permissions);
+}
+
+#[test]
+#[cfg(windows)]
+fn add_copy_unreadable_source_does_not_create_target() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = unique_temp_dir("add-copy-locked-source");
+    assert!(run_json(&["init"], &dir).0);
+    mk_file(&dir, "./source.md", "original");
+    let kb_before = fs::read(dir.join("kb.md")).unwrap();
+    let refs_before = fs::read(dir.join(".kb/refs.json")).unwrap();
+    let _held = fs::OpenOptions::new().read(true).share_mode(0).open(dir.join("source.md")).unwrap();
+    let (ok, body) = run_json(&["add", "source.md", "locked", "--mode", "copy"], &dir);
+    assert!(!ok);
+    assert_eq!(body["error"]["code"], "E1001");
+    assert!(!dir.join(".kb/raw/source.md").exists());
+    assert_eq!(fs::read(dir.join("kb.md")).unwrap(), kb_before);
+    assert_eq!(fs::read(dir.join(".kb/refs.json")).unwrap(), refs_before);
 }
 
 #[test]
@@ -2582,20 +2605,26 @@ fn mv_alias_missing_from_kb_md_is_not_silently_renamed() {
 
 #[test]
 fn add_copy_conflicting_raw_target_returns_e2006() {
-    let dir = unique_temp_dir("add-copy-conflict");
-    let (ok, _) = run_json(&["init", "demo"], &dir);
-    assert!(ok);
-    mk_file(&dir, "./x.md", "first content\n");
-    mk_file(&dir, "./sub/x.md", "second content\n");
-    let (ok, _) = run_json(&["add", "./x.md", "first", "--mode", "copy"], &dir);
-    assert!(ok);
-
-    let (ok, body) = run_json(&["add", "./sub/x.md", "second", "--mode", "copy"], &dir);
-    assert!(!ok, "copy landing on an already-declared raw path must fail: {body}");
-    assert_eq!(body["error"]["code"], "E2006");
-
-    let raw = fs::read_to_string(dir.join(".kb/raw/x.md")).expect("read raw copy");
-    assert_eq!(raw, "first content\n", "first copy must not be overwritten");
+    for declared in [true, false] {
+        let dir = unique_temp_dir("add-copy-conflict");
+        assert!(run_json(&["init"], &dir).0);
+        mk_file(&dir, "./sub/x.md", "second content\n");
+        if declared {
+            mk_file(&dir, "./x.md", "first content\n");
+            assert!(run_json(&["add", "./x.md", "first", "--mode", "copy"], &dir).0);
+        } else {
+            mk_file(&dir, "./.kb/raw/x.md", "first content\n");
+        }
+        let kb_before = fs::read(dir.join("kb.md")).unwrap();
+        let refs_before = fs::read(dir.join(".kb/refs.json")).unwrap();
+        let output = kb_command_in(&dir).args(["add", "./sub/x.md", "second", "--mode", "copy", "--output", "json"])
+            .assert().code(2).get_output().clone();
+        let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(body["error"]["code"], "E2006");
+        assert_eq!(fs::read(dir.join(".kb/raw/x.md")).unwrap(), b"first content\n");
+        assert_eq!(fs::read(dir.join("kb.md")).unwrap(), kb_before);
+        assert_eq!(fs::read(dir.join(".kb/refs.json")).unwrap(), refs_before);
+    }
 }
 
 #[test]
