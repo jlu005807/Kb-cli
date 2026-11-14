@@ -15,7 +15,8 @@
 | 1 全局配置保护 | 三个回归先失败；写前严格读/容器校验，注册表和 LLM loader 接受 BOM | Windows 349 / Linux Rust 1.89 348 项测试、两平台 Clippy、Node 回归及 20 组 doc-fixture 通过；独立评审无重要问题 | `0488e0d` |
 | 2 copy 防覆盖 | 未登记目标碰撞先失败；源权限/锁定源保护先通过；create_new 复制并保留权限 | Windows 350 / Linux 348 项测试及两平台门禁通过；独立评审无重要问题 | `a4c4470` |
 | 3 JSONL 恢复/排序 | 两个既有测试扩展后先失败；字节分行解析，按时间和 id 排序 | 两平台门禁通过，测试数 350/348；评审建议的同时间 id 逆序用例已增强并通过 | `221fcb4` |
-| 4 非法存储配置 | resolver、SQLite 分叉及 ask 用例先失败；非法配置停止，ask/MCP 传播 E1004 | Windows 352 / Linux 350 项测试及门禁通过；独立评审无重要发现，补测合法配置下 summary/neighbors 正常缺失 | `fix: reject invalid storage configuration` |
+| 4 非法存储配置 | resolver、SQLite 分叉及 ask 用例先失败；非法配置停止，ask/MCP 传播 E1004 | Windows 352 / Linux 350 项测试及门禁通过；独立评审无重要发现，补测合法配置下 summary/neighbors 正常缺失 | `25701bd` |
+| 5 runtime 合并 | global/环境用例先失败；逐字段 Option 合并，显式 false/0 保留 | Windows 354 / Linux 352 项测试及门禁通过；评审指出的单测环境依赖改为纯配置层测试 | `fix: merge runtime configuration per field` |
 
 ## 1. 评审结论与边界
 

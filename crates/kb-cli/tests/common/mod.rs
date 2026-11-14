@@ -11,6 +11,9 @@ const NON_LLM_ENV_VARS: &[&str] = &[
     "KB_SESSION_ID",
     "KB_ASK_OFFLINE_STUB",
     "KB_UPDATE_SIMULATE_LAYER_FAILURES",
+    "KB_QUIET",
+    "KB_VERBOSE",
+    "KB_NO_COLOR",
 ];
 
 pub fn kb_command() -> Command {

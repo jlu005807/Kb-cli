@@ -21,6 +21,8 @@
 | `--help` | flag | - | 显示帮助 |
 | `--version` | flag | - | 显示版本 |
 
+`quiet`、`verbose`、`no_color` 分别按 flags > `KB_QUIET/KB_VERBOSE/KB_NO_COLOR` > 项目配置 > 全局配置 > 默认值合并。缺失字段不覆盖其他层；显式环境值 false/0 生效。quiet 只抑制 text 成功输出和入口调试 trace，JSON 成功信封仍输出。verbose trace 按字段显示来源。
+
 ## 2. 输出契约
 
 成功 JSON 信封：

@@ -2207,6 +2207,23 @@ fn completion_json_contains_script_field() {
 }
 
 #[test]
+fn runtime_environment_applies_to_output_and_trace() {
+    let dir = unique_temp_dir("runtime-environment");
+    for args in [vec!["env"], vec!["-v", "env"]] {
+        kb_command_with_env(&dir, &[("KB_QUIET", "1")]).args(args)
+            .assert().success().stdout("").stderr("");
+    }
+    let output = kb_command_with_env(&dir, &[("KB_VERBOSE", "1")]).arg("env")
+        .assert().success().get_output().clone();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("verbose:"));
+    assert!(stderr.contains("source=env decision=selected"));
+    let (ok, json) = run_json_with_env(&["env"], &dir, &[("KB_QUIET", "1")]);
+    assert!(ok);
+    assert_eq!(json["status"], "success");
+}
+
+#[test]
 fn ask_storage_failures_report_e1004() {
     for corrupt_config in [true, false] {
         let dir = unique_temp_dir("ask-storage-error");

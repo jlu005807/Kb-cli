@@ -41,7 +41,7 @@ fn render_error(output: cli::OutputFormat, err: &crate::errors::CliError) {
 // 2) 调用命令分发
 // 3) 将结果统一渲染为 text/json 协议
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     let output = cli.output;
     let _ = ctrlc::set_handler(move || {
         let error = map_core_error(CoreErrorKind::Interrupted, serde_json::json!({}));
@@ -72,16 +72,14 @@ fn main() -> ExitCode {
     // debug trace 只在 verbose 且非 quiet 时输出，避免污染标准输出契约。
     if resolved.dto.verbose > 0 && !resolved.dto.quiet {
         eprintln!(
-            "verbose={} no_color={} source={}\ntrace:\n{}",
-            resolved.dto.verbose,
-            resolved.dto.no_color,
-            resolved.source,
-            resolved.trace
+            "verbose={} no_color={}\ntrace:\n{}",
+            resolved.dto.verbose, resolved.dto.no_color, resolved.trace
         );
     }
 
     let output = cli.output;
     let quiet = resolved.dto.quiet;
+    cli.verbose = resolved.dto.verbose;
     let result = dispatch(cli);
     // 统一在入口层封装输出协议，命令层只关心业务数据本身。
     match result {

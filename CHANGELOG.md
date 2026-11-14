@@ -6,6 +6,7 @@
 
 ### 修复
 
+- runtime 的 quiet/verbose/no_color 改为逐字段合并，环境与文件配置真实生效，保留显式 false/0；命令处理器使用解析后的 verbose。
 - 显式存储配置非法时报告错误，不再静默写入 FS；ask 的存储打开/索引读取错误改为 E1004，MCP summary/neighbors 也报告非法后端配置。
 - FS episode 读取按字节分行恢复，损坏 UTF-8 行不再阻断有效历史；查询按时间和 id 排序后选取最近 N 条。
 - `kb add --mode copy` 同样保护尚未登记的 raw 文件，不覆盖已存在的目标；保留源权限，源打开失败不残留新文件。
