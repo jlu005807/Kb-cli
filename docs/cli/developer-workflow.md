@@ -107,4 +107,4 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-触发后将自动构建并上传 Windows/Linux 安装包到对应 Release。
+推送 main 后先确认对应提交的 CI 全部通过，再推送与 workspace 版本一致的标签。工作流创建 draft，构建并验收 Windows/Linux 安装包，两平台都成功后才公开 Release。有 `docs/releases/<tag>.md` 时使用该文件作为发布说明；否则生成提交说明。已有同名公开 Release 时拒绝覆盖。

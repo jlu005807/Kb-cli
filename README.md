@@ -7,6 +7,8 @@
 
 **KB-CLI** 是一个 Rust 实现的本地知识库命令行工具，提供分层记忆架构（L0-L5）和可插拔的 Agent 记忆系统。
 
+当前版本 **0.2.0**：[发布与升级说明](docs/releases/v0.2.0.md)，[下载安装包](https://github.com/jlu005807/Kb-cli/releases/tag/v0.2.0)。
+
 ---
 
 ## ✨ 核心特性

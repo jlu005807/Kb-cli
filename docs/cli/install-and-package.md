@@ -17,14 +17,14 @@
 kb-cli-{version}-{os}-{arch}
 ```
 
-- `version`：取自工作区 `Cargo.toml` 的 `[workspace.package].version`（如 `0.1.4`）
+- `version`：取自工作区 `Cargo.toml` 的 `[workspace.package].version`（如 `0.2.0`）
 - `os`：`windows` 或 `linux`
 - `arch`：`x86_64` / `aarch64` / `x86`（由 target triple 或宿主机架构推断）
 
 示例：
 
-- Windows：`kb-cli-0.1.4-windows-x86_64.zip`
-- Linux：`kb-cli-0.1.4-linux-x86_64.tar.gz`
+- Windows：`kb-cli-0.2.0-windows-x86_64.zip`
+- Linux：`kb-cli-0.2.0-linux-x86_64.tar.gz`
 
 ## 2. 从 Release 安装（推荐）
 
@@ -167,12 +167,12 @@ bash ./scripts/package.sh --profile release --dist-dir dist --skip-build
 3. `build-windows`：在 `windows-latest` 上打包并做相同验收，通过后上传 `dist/*.zip` 到 draft。
 4. `publish-release`：仅在两个 build job 都成功后公开 draft。构建或验收失败时 draft 保持私有，可修复后重跑；此流程不撤回或覆盖已公开版本。
 
-发布步骤：
+发布步骤（推送 main 后先确认该提交的 CI 全部通过，再推送 tag）：
 
 ```bash
 git push origin main
-git tag v0.1.4
-git push origin v0.1.4
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 ## 6. 关联文档

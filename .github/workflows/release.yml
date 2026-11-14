@@ -54,7 +54,13 @@ jobs:
               exit 1
             fi
           else
-            gh release create "$RELEASE_TAG" --repo "$GH_REPO" --generate-notes --draft --verify-tag
+            notes_file="docs/releases/$RELEASE_TAG.md"
+            if [[ -f "$notes_file" ]]; then
+              notes_args=(--notes-file "$notes_file")
+            else
+              notes_args=(--generate-notes)
+            fi
+            gh release create "$RELEASE_TAG" --repo "$GH_REPO" "${notes_args[@]}" --draft --verify-tag
           fi
 
   build-linux:

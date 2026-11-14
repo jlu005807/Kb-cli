@@ -54,6 +54,9 @@ if (args[1] === 'view') {
 `);
   fs.chmodSync(stub, 0o755);
   fs.writeFileSync(path.join(temporary, 'Cargo.toml'), '[workspace.package]\r\nversion = "9.8.7"\r\n');
+  fs.mkdirSync(path.join(temporary, 'docs/releases'), { recursive: true });
+  const notesFile = path.join('docs', 'releases', 'v9.8.7.md');
+  fs.writeFileSync(path.join(temporary, notesFile), '# Release notes\nMigration steps.\n');
   const env = { ...process.env, PATH: `${temporary}:${process.env.PATH}`, RELEASE_TAG: 'v9.8.7',
     GH_REPO: 'local/review', GH_TOKEN: '', KB_RELEASE_TEST_STATE: state };
   const prepare = runBlocks(jobBlock('prepare-release')).join('\n');
@@ -69,6 +72,9 @@ if (args[1] === 'view') {
   const created = run(prepare);
   assert.equal(created.status, 0, created.stdout + created.stderr);
   assert.equal(readState().draft, true, 'prepare must not expose an untested release');
+  const create = readState().mutations.find((args) => args[1] === 'create');
+  assert.ok(create.includes('--notes-file'));
+  assert.equal(create[create.indexOf('--notes-file') + 1], notesFile, 'release must use its reviewed notes');
 
   const publish = jobBlock('publish-release');
   assert.match(publish, /needs:\s*\[build-linux, build-windows\]/);
@@ -97,4 +103,8 @@ if (args[1] === 'view') {
   reset(true, true);
   assert.equal(run(prepare).status, 0, 'existing drafts may be retried');
   assert.deepEqual(readState().mutations, []);
+  fs.unlinkSync(path.join(temporary, notesFile));
+  reset(false, false);
+  assert.equal(run(prepare).status, 0);
+  assert.ok(readState().mutations[0].includes('--generate-notes'), 'releases without a notes file retain generated notes');
 });

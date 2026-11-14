@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "kb-cli"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "kb-core"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -829,7 +829,7 @@ dependencies = [
 
 [[package]]
 name = "kb-index-memory"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "kb-core",
  "unicode-segmentation",
@@ -837,7 +837,7 @@ dependencies = [
 
 [[package]]
 name = "kb-llm"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "kb-core",
  "keyring",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "kb-storage-fs"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "kb-core",
  "serde_json",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "kb-storage-sqlite"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "kb-core",
  "rusqlite",

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
+升级说明与安装包见 [0.2.0 发布说明](docs/releases/v0.2.0.md)。本版本包含 `--config`、`update --yes` 移除及配置、prune 行为变化，请先检查调用脚本。
+
 ### 修复
 
 - Release 先核对 tag 与 workspace 版本并创建 draft，仅在两平台构建及安装验收都通过后公开；拒绝覆盖已公开的同名版本。
