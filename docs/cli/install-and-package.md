@@ -102,6 +102,8 @@ kb --help
 
 ## 3. 从源码构建
 
+Linux 上的 keyring 后端需要 D-Bus 开发库。Ubuntu/Debian 先执行 `sudo apt-get install pkg-config libdbus-1-dev`；CI 与 Release runner 会自动安装这两个构建依赖。
+
 ```bash
 git clone <repo-url>
 cd Kb-cli

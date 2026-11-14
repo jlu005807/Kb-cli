@@ -30,6 +30,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
+
       - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
