@@ -2198,6 +2198,44 @@ fn config_flag_is_rejected_by_clap() {
 }
 
 #[test]
+fn init_invalid_global_config_preserves_original_file() {
+    for raw in [
+        r#"{"llm":{"key":"test-only"},broken"#,
+        "[]",
+        "null",
+        r#"{"llm":[]}"#,
+        r#"{"llm":null}"#,
+        r#"{"knowledge_bases":"old-kb"}"#,
+        r#"{"knowledge_bases":["old-kb",42]}"#,
+    ] {
+        let dir = unique_temp_dir("init-invalid-global");
+        let config = dir.join("global-config.json");
+        fs::write(&config, raw).unwrap();
+        let (ok, body) = run_json_with_global_config(&["init"], &dir, &config);
+        assert!(ok, "local initialization should succeed: {body}");
+        assert!(dir.join("kb.md").is_file());
+        assert_eq!(body["data"]["global_config_registered"], false, "{raw}");
+        assert!(body["data"]["global_config_error"].is_string());
+        assert_eq!(fs::read(&config).unwrap(), raw.as_bytes());
+    }
+}
+
+#[test]
+fn init_bom_global_config_preserves_settings_and_registrations() {
+    let dir = unique_temp_dir("init-bom-global");
+    let config = dir.join("global-config.json");
+    fs::write(&config, "\u{feff}{\"knowledge_bases\":[\"old-kb\"],\"llm\":{\"model\":\"kept-model\",\"key\":\"test-only\"},\"custom\":{\"keep\":true}}").unwrap();
+    let (ok, body) = run_json_with_global_config(&["init"], &dir, &config);
+    assert!(ok);
+    assert_eq!(body["data"]["global_config_registered"], true);
+    let updated: Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert_eq!(updated["llm"]["model"], "kept-model");
+    assert_eq!(updated["llm"]["key"], "test-only");
+    assert_eq!(updated["custom"]["keep"], true);
+    assert_eq!(updated["knowledge_bases"], json!(["old-kb", canonical_display_path(&dir)]));
+}
+
+#[test]
 fn env_list_shows_only_existing_registered_kb_roots() {
     let global_root = unique_temp_dir("env-global-root");
     let caller = unique_temp_dir("env-caller");

@@ -619,7 +619,7 @@ fn load_json_config(path: &Path) -> LlmConfigPartial {
         Ok(raw) => raw,
         Err(_) => return LlmConfigPartial::default(),
     };
-    let parsed: Value = match serde_json::from_str(&raw) {
+    let parsed: Value = match serde_json::from_str(raw.strip_prefix('\u{feff}').unwrap_or(&raw)) {
         Ok(value) => value,
         Err(_) => return LlmConfigPartial::default(),
     };
@@ -946,6 +946,21 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn json_config_accepts_utf8_bom() {
+        let dir = unique_temp_dir("llm-config-bom");
+        let path = dir.join("config.json");
+        fs::write(
+            &path,
+            "\u{feff}{\"llm\":{\"model\":\"bom-model\",\"key\":\"test-only\"}}",
+        )
+        .unwrap();
+        let config = super::load_json_config(&path);
+        assert_eq!(config.model.as_deref(), Some("bom-model"));
+        assert_eq!(config.key.as_deref(), Some("test-only"));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

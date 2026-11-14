@@ -84,7 +84,21 @@ pub(crate) fn select_global_config_path(
 
 pub fn register_kb_root(kb_root: &Path) -> Result<(), String> {
     let config_path = global_config_path();
-    let mut config = read_global_config(&config_path);
+    let mut config = read_global_config(&config_path)?;
+    if config
+        .get(LLM_CONFIG_KEY)
+        .is_some_and(|value| !value.is_object())
+    {
+        return Err("global config llm must be an object".to_string());
+    }
+    if let Some(value) = config.get(REGISTRY_KEY) {
+        if !value
+            .as_array()
+            .is_some_and(|items| items.iter().all(Value::is_string))
+        {
+            return Err("global config knowledge_bases must be an array of strings".to_string());
+        }
+    }
     ensure_global_config_shape(&mut config);
 
     let root_abs = fs::canonicalize(kb_root).unwrap_or_else(|_| kb_root.to_path_buf());
@@ -100,14 +114,7 @@ pub fn register_kb_root(kb_root: &Path) -> Result<(), String> {
 
 pub fn list_existing_kb_roots() -> EnvRegistryList {
     let config_path = global_config_path();
-    let config = read_global_config(&config_path);
-    if !config.is_object() {
-        return EnvRegistryList {
-            config_path: config_path.to_string_lossy().to_string(),
-            recorded_total: 0,
-            existing_paths: vec![],
-        };
-    }
+    let config = read_global_config(&config_path).unwrap_or_else(|_| json!({}));
 
     let recorded = read_recorded_paths(&config);
     let existing_paths = recorded
@@ -171,40 +178,31 @@ fn user_home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn read_global_config(path: &Path) -> Value {
-    if !path.exists() {
-        return json!({});
-    }
-
+fn read_global_config(path: &Path) -> Result<Value, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
-        Err(_) => return json!({}),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(err) => return Err(format!("read global config '{}': {err}", path.display())),
     };
-    match serde_json::from_str(&raw) {
-        Ok(value) => value,
-        Err(_) => json!({}),
+    let config: Value = serde_json::from_str(raw.strip_prefix('\u{feff}').unwrap_or(&raw))
+        .map_err(|err| format!("parse global config '{}': {err}", path.display()))?;
+    if !config.is_object() {
+        return Err(format!(
+            "global config must be an object: '{}'",
+            path.display()
+        ));
     }
+    Ok(config)
 }
 
 fn ensure_global_config_shape(config: &mut Value) {
-    if !config.is_object() {
-        *config = json!({});
-    }
-
-    if !config
-        .get(LLM_CONFIG_KEY)
-        .map(Value::is_object)
-        .unwrap_or(false)
-    {
-        config[LLM_CONFIG_KEY] = json!({});
-    }
-
-    let Some(llm) = config
-        .get_mut(LLM_CONFIG_KEY)
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
+    let llm = config
+        .as_object_mut()
+        .expect("validated global config object")
+        .entry(LLM_CONFIG_KEY)
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("validated llm object");
 
     if !llm.contains_key("enable_semantic") {
         llm.insert("enable_semantic".to_string(), Value::Bool(false));
