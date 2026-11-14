@@ -2207,6 +2207,25 @@ fn completion_json_contains_script_field() {
 }
 
 #[test]
+fn ask_storage_failures_report_e1004() {
+    for corrupt_config in [true, false] {
+        let dir = unique_temp_dir("ask-storage-error");
+        assert!(run_json(&["init"], &dir).0);
+        if corrupt_config {
+            fs::write(dir.join(".kb/config.json"), "not-json").unwrap();
+        } else {
+            assert!(run_json(&["update"], &dir).0);
+            fs::remove_file(dir.join(".kb/index.json")).unwrap();
+            fs::create_dir(dir.join(".kb/index.json")).unwrap();
+        }
+        let (ok, body) = run_json(&["ask", "a question"], &dir);
+        assert!(!ok);
+        assert_eq!(body["error"]["code"], "E1004");
+        assert!(body["error"]["details"]["detail"].is_string());
+    }
+}
+
+#[test]
 fn config_flag_is_rejected_by_clap() {
     let dir = unique_temp_dir("invalid-config");
     let output = kb_command_in(&dir)

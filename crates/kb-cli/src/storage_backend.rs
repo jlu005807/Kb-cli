@@ -11,18 +11,20 @@
 //! 2. SQLite 后端共享 **同一份** `SqliteConnection`（内部 `Arc<Mutex>`）；
 //!    所有 store 都 clone 该连接句柄，保证多 store 共用一个数据库文件 + 单写者
 //!    互斥。FS 后端每个 store 拿独立 cwd 副本。
-//! 3. 解析失败默认回退到 fs，并在 trace 字段里留痕，避免单字段拼错就拖垮启动。
+//! 3. 未配置时使用 FS；显式配置错误必须报告，避免静默切后端造成数据分叉。
 
 use std::path::{Path, PathBuf};
 
-use kb_core::ports::{EpisodeStore, GraphStore, IndexStore, KnowledgeStore, SearchStore, WikiStore};
+use kb_core::ports::{
+    EpisodeStore, GraphStore, IndexStore, KnowledgeStore, SearchStore, WikiStore,
+};
 use kb_storage_fs::{
     FsEpisodeStore, FsFileContentReader, FsGraphStore, FsIndexStore, FsKnowledgeStore,
     FsSearchStore, FsWikiStore,
 };
 use kb_storage_sqlite::{
-    open_database, SqliteEpisodeStore, SqliteGraphStore, SqliteIndexStore,
-    SqliteKnowledgeStore, SqliteSearchStore, SqliteWikiStore,
+    open_database, SqliteEpisodeStore, SqliteGraphStore, SqliteIndexStore, SqliteKnowledgeStore,
+    SqliteSearchStore, SqliteWikiStore,
 };
 
 /// 用户在 `.kb/config.json` 里选择的存储后端。
@@ -34,32 +36,45 @@ pub enum StorageBackend {
     Sqlite,
 }
 
-/// 解析 `.kb/config.json::storage.backend`。出现以下任一情况返回 `Fs` 兜底：
-/// - 文件不存在
-/// - JSON 不合法
-/// - 缺少 `storage` 节
-/// - `backend` 非 "fs" / "sqlite"
-///
-/// 这种 best-effort 解析跟 LLM config 路径保持一致：CLI 的解析层永不因为
-/// 一个字段拼错就完全拒绝启动。
-pub fn resolve_storage_backend(cwd: &Path) -> StorageBackend {
+/// 缺少配置或 storage/backend 时默认 FS；显式非法配置不允许切换后端。
+pub fn resolve_storage_backend(cwd: &Path) -> Result<StorageBackend, kb_core::DomainError> {
+    use kb_core::DomainError;
     let config_path = cwd.join(".kb/config.json");
-    let Ok(raw) = std::fs::read_to_string(&config_path) else {
-        return StorageBackend::Fs;
+    let raw = match std::fs::read_to_string(&config_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(StorageBackend::Fs),
+        Err(err) => {
+            return Err(DomainError::io(format!(
+                "read '{}': {err}",
+                config_path.display()
+            )))
+        }
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return StorageBackend::Fs;
+    let value: serde_json::Value =
+        serde_json::from_str(raw.strip_prefix('\u{feff}').unwrap_or(&raw)).map_err(|err| {
+            DomainError::config(format!("parse '{}': {err}", config_path.display()))
+        })?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| DomainError::config("project config must be an object"))?;
+    let Some(storage) = object.get("storage") else {
+        return Ok(StorageBackend::Fs);
     };
-    let Some(backend) = value
-        .get("storage")
-        .and_then(|s| s.get("backend"))
-        .and_then(|b| b.as_str())
-    else {
-        return StorageBackend::Fs;
+    let storage = storage
+        .as_object()
+        .ok_or_else(|| DomainError::config("storage must be an object"))?;
+    let Some(backend) = storage.get("backend") else {
+        return Ok(StorageBackend::Fs);
     };
+    let backend = backend
+        .as_str()
+        .ok_or_else(|| DomainError::config("storage.backend must be a string"))?;
     match backend.trim().to_lowercase().as_str() {
-        "sqlite" => StorageBackend::Sqlite,
-        _ => StorageBackend::Fs,
+        "sqlite" => Ok(StorageBackend::Sqlite),
+        "fs" => Ok(StorageBackend::Fs),
+        other => Err(DomainError::config(format!(
+            "unknown storage backend: {other}"
+        ))),
     }
 }
 
@@ -90,11 +105,9 @@ pub struct StorageHandles {
 
 impl StorageHandles {
     /// 按 cwd 下 `.kb/config.json` 的 `storage.backend` 构造一组 store。
-    /// SQLite 打开失败时会自动回退到 FS，并把错误冒泡——上游需要决定是 panic
-    /// 还是降级警告。这里选择"失败即冒泡"，因为静默回退会让用户配错 storage
-    /// 后端后毫无察觉地继续往 JSON 写入。
+    /// 配置或 SQLite 打开失败直接报告，禁止静默切换到另一后端写入。
     pub fn open(cwd: &Path) -> Result<Self, kb_core::error::DomainError> {
-        let backend = resolve_storage_backend(cwd);
+        let backend = resolve_storage_backend(cwd)?;
         match backend {
             StorageBackend::Fs => Ok(Self::open_fs(cwd)),
             StorageBackend::Sqlite => Self::open_sqlite(cwd),
@@ -165,35 +178,64 @@ mod tests {
     #[test]
     fn missing_config_defaults_to_fs() {
         let tmp = unique_temp_dir("missing-config");
-        assert_eq!(resolve_storage_backend(&tmp), StorageBackend::Fs);
+        assert_eq!(resolve_storage_backend(&tmp).unwrap(), StorageBackend::Fs);
+        for body in ["{}", r#"{"storage":{}}"#] {
+            write_config(&tmp, body);
+            assert_eq!(resolve_storage_backend(&tmp).unwrap(), StorageBackend::Fs);
+        }
     }
 
     #[test]
     fn explicit_sqlite_backend_is_parsed() {
         let tmp = unique_temp_dir("explicit-sqlite");
-        write_config(&tmp, r#"{"storage":{"backend":"sqlite"}}"#);
-        assert_eq!(resolve_storage_backend(&tmp), StorageBackend::Sqlite);
+        for prefix in ["", "\u{feff}"] {
+            write_config(
+                &tmp,
+                &format!("{prefix}{{\"storage\":{{\"backend\":\"sqlite\"}}}}"),
+            );
+            assert_eq!(
+                resolve_storage_backend(&tmp).unwrap(),
+                StorageBackend::Sqlite
+            );
+        }
     }
 
     #[test]
     fn explicit_fs_backend_is_parsed() {
         let tmp = unique_temp_dir("explicit-fs");
         write_config(&tmp, r#"{"storage":{"backend":"fs"}}"#);
-        assert_eq!(resolve_storage_backend(&tmp), StorageBackend::Fs);
+        assert_eq!(resolve_storage_backend(&tmp).unwrap(), StorageBackend::Fs);
     }
 
     #[test]
-    fn unknown_backend_falls_back_to_fs() {
-        let tmp = unique_temp_dir("unknown-backend");
-        write_config(&tmp, r#"{"storage":{"backend":"hbase"}}"#);
-        assert_eq!(resolve_storage_backend(&tmp), StorageBackend::Fs);
+    fn invalid_backend_config_is_rejected() {
+        for body in [
+            r#"{"storage":{"backend":"hbase"}}"#,
+            r#"{"storage":{"backend":null}}"#,
+            r#"{"storage":[]}"#,
+            "[]",
+            "null",
+        ] {
+            let tmp = unique_temp_dir("invalid-backend");
+            write_config(&tmp, body);
+            assert!(
+                matches!(
+                    StorageHandles::open(&tmp),
+                    Err(kb_core::DomainError::Config(_))
+                ),
+                "{body}"
+            );
+        }
     }
 
     #[test]
-    fn malformed_json_falls_back_to_fs() {
+    fn malformed_json_is_rejected() {
         let tmp = unique_temp_dir("malformed-json");
         write_config(&tmp, "not json");
-        assert_eq!(resolve_storage_backend(&tmp), StorageBackend::Fs);
+        assert!(matches!(
+            StorageHandles::open(&tmp),
+            Err(kb_core::DomainError::Config(_))
+        ));
     }
 
     #[test]

@@ -309,6 +309,7 @@ LLM 配置优先级：
 
 错误与退出：
 - 无可用上下文：`E5003`（退出码 5）
+- 存储打开或索引读取失败（含非法存储配置）：`E1004`（退出码 1）
 
 ### 4.11 `kb remember <CONTENT> [--ref <CHUNK_ID>]... [--confidence <VALUE>]`
 
@@ -398,6 +399,8 @@ MCP Tools：
 - memory episode/index 存储打开、读取或写入失败：工具返回 `E1004`（退出码不适用于常驻 server）
 
 ### 4.15 `kb env [--list] [--doctor]`
+
+存储配置说明：`.kb/config.json` 缺失或未配置 `storage.backend` 时使用 FS；显式非法 JSON、storage 类型或 backend 值会报错，禁止静默切换后端。`ask` 的存储打开/索引读取错误为 `E1004`；`check` 和 `update` 的既有错误映射保持不变。
 
 行为：
 - 默认 / `--list`：读取全局注册表并返回当前仍存在的 KB 根目录。未传 `--list` 时，模式为 `list(default)`。

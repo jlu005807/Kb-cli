@@ -115,17 +115,21 @@ fn mcp_tool_list_episodes(args: &Value) -> Result<Value, String> {
 
 /// sqlite 后端下 SemanticAgentToolbox 直接读 .kb/*.json 文件布局，L2/L4/L5
 /// 数据实际落在 store.sqlite3 —— 读不到时给出显式提示而不是让调用方猜。
-fn mcp_sqlite_toolbox_warning(cwd: &std::path::Path) -> Option<String> {
+fn mcp_sqlite_toolbox_warning(cwd: &std::path::Path) -> Result<Option<String>, String> {
+    let backend = crate::storage_backend::resolve_storage_backend(cwd).map_err(|err| {
+        let error = storage_unavailable_error("resolve storage backend failed", err.to_string());
+        format!("{}: {}", error.code, error.message)
+    })?;
     if matches!(
-        crate::storage_backend::resolve_storage_backend(cwd),
+        backend,
         crate::storage_backend::StorageBackend::Sqlite
     ) {
-        Some(
+        Ok(Some(
             "storage.backend=sqlite: this tool reads the fs JSON layout (.kb/knowledge.json etc.) and may report missing data"
                 .to_string(),
-        )
+        ))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -135,7 +139,7 @@ fn mcp_tool_read_summary(args: &Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "read_summary requires record_id_or_path".to_string())?;
     let cwd = mcp_cwd()?;
-    let warning = mcp_sqlite_toolbox_warning(&cwd);
+    let warning = mcp_sqlite_toolbox_warning(&cwd)?;
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd));
     match toolbox.read_file_summary(target) {
         Some(item) => serde_json::to_value(item).map_err(|e| e.to_string()),
@@ -155,7 +159,7 @@ fn mcp_tool_read_neighbors(args: &Value) -> Result<Value, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "read_neighbors requires record_id".to_string())?;
     let cwd = mcp_cwd()?;
-    let warning = mcp_sqlite_toolbox_warning(&cwd);
+    let warning = mcp_sqlite_toolbox_warning(&cwd)?;
     let toolbox = kb_llm::SemanticAgentToolbox::new(Some(cwd));
     let relations = toolbox.read_graph_neighbors(record_id);
     let mut data = json!({

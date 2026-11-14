@@ -1,6 +1,6 @@
 fn build_ask_stack(cwd: &Path) -> (Box<dyn Retriever>, Box<dyn AnswerEngine>) {
     // 走 StorageHandles 的好处：sqlite 后端下也能让 ask 命中同一份数据；
-    // 解析失败兜底到 fs，所以这里仅在打开数据库本身硬错时才进 ok()=None 分支。
+    // 调用入口已成功打开存储并读取索引；此处保留派生层的 best-effort 降级。
     let snapshots = StorageHandles::open(cwd).ok();
     let (search_snap, knowledge_snap, graph_snap) = match snapshots {
         Some(handles) => (

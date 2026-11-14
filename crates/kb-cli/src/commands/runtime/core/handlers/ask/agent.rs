@@ -842,11 +842,11 @@ fn run_live_ask_agent(
 pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Result<Value, CliError> {
     let cwd = ensure_initialized()?;
     let storage = StorageHandles::open(&cwd)
-        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+        .map_err(|err| storage_unavailable_error("open storage failed", err.to_string()))?;
     let snapshot = storage
         .index
         .read_index()
-        .map_err(|_| map_core_error(CoreErrorKind::InvalidKbFormat, json!({})))?;
+        .map_err(|err| storage_unavailable_error("read index failed", err.to_string()))?;
     let Some(snapshot) = snapshot else {
         return Err(map_core_error(
             CoreErrorKind::NoRelevantContext,
@@ -883,7 +883,8 @@ pub(crate) fn run_ask(question: String, top: Option<u32>, answer: bool) -> Resul
         // sqlite 后端下 SemanticAgentToolbox 仍直接读 .kb/*.json 文件布局，
         // L2/L4/L5 落在 store.sqlite3 时读侧工具会拿不到数据——显式提醒而非静默退化。
         if matches!(
-            crate::storage_backend::resolve_storage_backend(&cwd),
+            crate::storage_backend::resolve_storage_backend(&cwd)
+                .map_err(|err| storage_unavailable_error("resolve storage backend failed", err.to_string()))?,
             crate::storage_backend::StorageBackend::Sqlite
         ) {
             let note = "storage.backend=sqlite: semantic toolbox reads the fs JSON layout (.kb/knowledge.json etc.); summary/graph/wiki read tools may report missing data".to_string();

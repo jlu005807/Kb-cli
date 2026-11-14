@@ -850,6 +850,55 @@ fn mcp_consolidate_locks_only_its_tool_call() {
 }
 
 #[test]
+fn storage_config_error_does_not_switch_backend() {
+    let dir = unique_temp_dir("invalid-storage-config");
+    assert!(run_json(&["init"], &dir).0);
+    let config = dir.join(".kb/config.json");
+    let sqlite = r#"{"storage":{"backend":"sqlite"}}"#;
+    fs::write(&config, sqlite).unwrap();
+    assert!(run_json(&["remember", "sqlite-original"], &dir).0);
+    for invalid in [r#"{"storage":{"backend":"sqlite"},"#, r#"{"storage":{"backend":"typo"}}"#] {
+        fs::write(&config, invalid).unwrap();
+        let (ok, body) = run_json(&["remember", "must-not-write"], &dir);
+        assert!(!ok, "{body}");
+        assert_eq!(body["error"]["code"], "E1004");
+        assert!(!dir.join(".kb/episodes.jsonl").exists());
+        let requests = [
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_summary","arguments":{"record_id_or_path":"missing"}}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_neighbors","arguments":{"record_id":"missing"}}}"#,
+            r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#,
+        ].join("\n");
+        let output = kb_command_in(&dir).args(["serve", "--mcp"]).write_stdin(requests)
+            .assert().success().get_output().clone();
+        let responses: Vec<Value> = String::from_utf8(output.stdout).unwrap().lines()
+            .map(|line| serde_json::from_str(line).unwrap()).collect();
+        for response in &responses[..2] {
+            assert_eq!(response["result"]["isError"], true);
+            assert!(response["result"]["content"][0]["text"].as_str().unwrap().contains("E1004"));
+        }
+        assert_eq!(responses[2]["result"], serde_json::json!({}));
+    }
+    fs::write(&config, sqlite).unwrap();
+    let output = kb_command_in(&dir).args(["serve", "--mcp"])
+        .write_stdin(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_episodes","arguments":{}}}"#)
+        .assert().success().get_output().clone();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let payload = tool_payload(&response);
+    assert_eq!(payload["count"], 1);
+    assert_eq!(payload["episodes"][0]["content"], "sqlite-original");
+    for (name, arguments, field, expected) in [
+        ("read_summary", serde_json::json!({"record_id_or_path":"missing"}), "found", serde_json::json!(false)),
+        ("read_neighbors", serde_json::json!({"record_id":"missing"}), "neighbors", serde_json::json!([])),
+    ] {
+        let request = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":arguments}});
+        let output = kb_command_in(&dir).args(["serve", "--mcp"]).write_stdin(request.to_string())
+            .assert().success().get_output().clone();
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(tool_payload(&response)[field], expected);
+    }
+}
+
+#[test]
 fn mcp_list_episodes_maps_storage_error_to_e1004_and_keeps_server_alive() {
     let dir = unique_temp_dir("mcp-episode-storage-error");
     let (ok, _) = run_json(&["init", "demo"], &dir);
