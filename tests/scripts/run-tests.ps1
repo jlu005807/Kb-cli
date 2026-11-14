@@ -16,7 +16,7 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host "Running doc-fixture validator regression test"
-    node --test tests/tools/validate-doc-fixture-diff.test.js
+    node --test tests/tools/validate-doc-fixture-diff.test.js tests/tools/release-workflow.test.js
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host "Running Node-based doc-fixture diff (fallback)"

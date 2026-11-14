@@ -6,6 +6,7 @@
 
 ### 修复
 
+- Release 先核对 tag 与 workspace 版本并创建 draft，仅在两平台构建及安装验收都通过后公开；拒绝覆盖已公开的同名版本。
 - Linux 安装/卸载正确转义自定义目录，保留 rc 符号链接与权限，写失败不截断原文件；发布包验收覆盖默认 PATH 并隔离继承的模型/运行时配置。
 - runtime 的 quiet/verbose/no_color 改为逐字段合并，环境与文件配置真实生效，保留显式 false/0；命令处理器使用解析后的 verbose。
 - 显式存储配置非法时报告错误，不再静默写入 FS；ask 的存储打开/索引读取错误改为 E1004，MCP summary/neighbors 也报告非法后端配置。

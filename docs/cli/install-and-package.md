@@ -162,9 +162,10 @@ bash ./scripts/package.sh --profile release --dist-dir dist --skip-build
 
 工作流：`.github/workflows/release.yml`，在推送 `v*` 格式（`vMAJOR.MINOR.PATCH`）的 tag 时触发：
 
-1. `prepare-release`：校验 tag 格式，创建（或复用）对应 GitHub Release。
-2. `build-linux`：在 `ubuntu-latest` 上执行 `bash ./scripts/package.sh --target x86_64-unknown-linux-gnu`，上传 `dist/*.tar.gz`。
-3. `build-windows`：在 `windows-latest` 上执行 `./scripts/package.ps1 -Target x86_64-pc-windows-msvc`，上传 `dist/*.zip`。
+1. `prepare-release`：checkout tag，校验 tag 格式及其与 workspace 版本一致，然后创建或复用 draft。已有同名公开 Release 时失败，禁止覆盖正式产物。
+2. `build-linux`：在 `ubuntu-latest` 上打包、验收安装后的 CLI/MCP 及环境隔离，通过后上传 `dist/*.tar.gz` 到 draft。
+3. `build-windows`：在 `windows-latest` 上打包并做相同验收，通过后上传 `dist/*.zip` 到 draft。
+4. `publish-release`：仅在两个 build job 都成功后公开 draft。构建或验收失败时 draft 保持私有，可修复后重跑；此流程不撤回或覆盖已公开版本。
 
 发布步骤：
 
