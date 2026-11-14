@@ -160,16 +160,19 @@ try {
                 throw "Release tag $env:RELEASE_TAG does not match package $expectedVersion"
             }
             & (Join-Path $fixtureDir "install.ps1") -InstallDir $installDir
-            $oldGlobalConfig = $env:KB_GLOBAL_CONFIG
-            $oldDisableKeyring = $env:KB_LLM_DISABLE_KEYRING
-            $oldAgentId = $env:KB_AGENT_ID
-            $env:KB_GLOBAL_CONFIG = $configPath
-            $env:KB_LLM_DISABLE_KEYRING = "1"
-            $env:KB_AGENT_ID = "release-acceptance"
+            $savedKbEnvironment = @{}
+            Get-ChildItem Env: | Where-Object { $_.Name -like 'KB_*' } | ForEach-Object {
+                $savedKbEnvironment[$_.Name] = $_.Value
+            }
             $workDir = Join-Path $testRoot "release-smoke\kb"
             New-Item -ItemType Directory -Path $workDir | Out-Null
             Push-Location $workDir
             try {
+                foreach ($key in $savedKbEnvironment.Keys) { Remove-Item -LiteralPath ("Env:" + $key) }
+                $env:KB_GLOBAL_CONFIG = $configPath
+                $env:KB_LLM_DISABLE_KEYRING = "1"
+                $env:KB_AGENT_ID = "release-acceptance"
+                $env:KB_SESSION_ID = "package-smoke"
                 $version = & $kbPath --version
                 Assert-That ($LASTEXITCODE -eq 0 -and $version -eq $expectedVersion) "Unexpected installed version: $version"
                 & $kbPath init --output json | Out-Null
@@ -207,9 +210,12 @@ try {
             }
             finally {
                 Pop-Location
-                $env:KB_GLOBAL_CONFIG = $oldGlobalConfig
-                $env:KB_LLM_DISABLE_KEYRING = $oldDisableKeyring
-                $env:KB_AGENT_ID = $oldAgentId
+                Get-ChildItem Env: | Where-Object { $_.Name -like 'KB_*' } | ForEach-Object {
+                    Remove-Item -LiteralPath ("Env:" + $_.Name)
+                }
+                foreach ($entry in $savedKbEnvironment.GetEnumerator()) {
+                    Set-Item -LiteralPath ("Env:" + $entry.Key) -Value $entry.Value
+                }
             }
         }
     }

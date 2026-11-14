@@ -30,7 +30,10 @@ PATH_LINE=''
 if [[ "$INSTALL_DIR" == "$HOME/.local/bin" ]]; then
   PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
 else
-  ESCAPED_INSTALL_DIR="${INSTALL_DIR//\"/\\\"}"
+  ESCAPED_INSTALL_DIR="${INSTALL_DIR//\\/\\\\}"
+  ESCAPED_INSTALL_DIR="${ESCAPED_INSTALL_DIR//\"/\\\"}"
+  ESCAPED_INSTALL_DIR="${ESCAPED_INSTALL_DIR//\$/\\\$}"
+  ESCAPED_INSTALL_DIR="${ESCAPED_INSTALL_DIR//\`/\\\`}"
   PATH_LINE="export PATH=\"$ESCAPED_INSTALL_DIR:\$PATH\""
 fi
 

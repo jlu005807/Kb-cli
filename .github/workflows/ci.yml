@@ -52,7 +52,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           bash ./scripts/package.sh --target x86_64-unknown-linux-gnu --dist-dir target/ci-dist
-          bash ./tests/scripts/test-linux-installer.sh target/ci-dist/*.tar.gz
+          node ./tests/tools/test-package-environment.js target/ci-dist/*.tar.gz
 
       - name: Test Windows installer in isolated user registry
         if: runner.os == 'Windows'
