@@ -29,7 +29,7 @@ async function main() {
     const windows = process.platform === 'win32';
     const args = windows
       // Windows runners can inherit a UTF-8 encoding that writes a BOM to native stdin.
-      ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', '$OutputEncoding = [Text.UTF8Encoding]::new($true); & ./tests/scripts/test-windows-installer.ps1 -PackageDir $env:KB_PACKAGE_TEST_ARCHIVE -RunCliSmoke']
+      ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', '$OutputEncoding = [Console]::InputEncoding = [Text.UTF8Encoding]::new($true); & ./tests/scripts/test-windows-installer.ps1 -PackageDir $env:KB_PACKAGE_TEST_ARCHIVE -RunCliSmoke']
       : ['tests/scripts/test-linux-installer.sh', archive];
     const status = await new Promise((resolve, reject) => {
       const child = spawn(windows ? 'powershell.exe' : 'bash', args, { cwd: repoRoot, env, stdio: 'inherit' });

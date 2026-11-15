@@ -193,11 +193,12 @@ try {
                     '{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}'
                 )
                 $OutputEncoding = [Text.UTF8Encoding]::new($false)
+                [Console]::InputEncoding = $OutputEncoding
                 $mcpOutput = $requests | & $kbPath serve --mcp
                 Assert-That ($LASTEXITCODE -eq 0) "MCP server failed"
                 $responses = @($mcpOutput | ForEach-Object { $_ | ConvertFrom-Json })
                 Assert-That ($responses.Count -eq 3) "MCP should answer the three requests with ids"
-                Assert-That ($responses[0].result.protocolVersion -eq "2024-11-05") "MCP initialize failed: $($mcpOutput -join ' | ')"
+                Assert-That ($responses[0].result.protocolVersion -eq "2024-11-05") "MCP initialize failed: $($mcpOutput[0])"
                 Assert-That ($responses[1].result.tools.Count -eq 8) "MCP tools/list did not return eight tools"
                 Assert-That ($null -ne $responses[2].result) "MCP ping failed"
 
