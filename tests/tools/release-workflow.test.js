@@ -33,6 +33,9 @@ function runBlocks(block) {
 
 const linuxOnly = { skip: process.platform !== 'linux' };
 test('release remains a draft until both accepted builds succeed', linuxOnly, (t) => {
+  assert.match(workflow, /^  workflow_dispatch:\n/m, 'failed releases must be retryable without changing their tag');
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.release_tag \|\| github\.event\.ref \}\}/);
+  assert.match(jobBlock('prepare-release'), /github\.event_name == 'workflow_dispatch'/);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'kb-release-workflow-'));
   t.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
   const state = path.join(temporary, 'state.json');
@@ -84,6 +87,9 @@ if (args[1] === 'view') {
     assert.match(block, /needs:\s*- prepare-release/);
     const acceptance = block.indexOf('test-package-environment.js');
     assert.ok(acceptance >= 0, `${name} must run package acceptance`);
+    const refresh = block.indexOf('git restore --source="$GITHUB_SHA" -- tests/scripts tests/tools');
+    assert.ok(refresh >= 0 && refresh < acceptance, `${name} must use acceptance checks from the workflow revision`);
+    assert.match(block, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/, `${name} must still build the original tag`);
     assert.ok(acceptance < block.indexOf('gh release upload'));
   }
   // A failed build cannot reach the final job under the asserted success dependencies.

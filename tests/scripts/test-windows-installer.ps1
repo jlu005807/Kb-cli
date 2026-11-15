@@ -192,6 +192,7 @@ try {
                     '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}',
                     '{"jsonrpc":"2.0","id":3,"method":"ping","params":{}}'
                 )
+                $OutputEncoding = [Text.UTF8Encoding]::new($false)
                 $mcpOutput = $requests | & $kbPath serve --mcp
                 Assert-That ($LASTEXITCODE -eq 0) "MCP server failed"
                 $responses = @($mcpOutput | ForEach-Object { $_ | ConvertFrom-Json })

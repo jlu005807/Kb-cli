@@ -108,3 +108,5 @@ git push origin vX.Y.Z
 ```
 
 推送 main 后先确认对应提交的 CI 全部通过，再推送与 workspace 版本一致的标签。工作流创建 draft，构建并验收 Windows/Linux 安装包，两平台都成功后才公开 Release。有 `docs/releases/<tag>.md` 时使用该文件作为发布说明；否则生成提交说明。已有同名公开 Release 时拒绝覆盖。
+
+验收脚本修复后的原标签重试方式见[安装与打包指南](install-and-package.md#5-release-自动发布github-actions)；程序与安装器仍从原标签构建。

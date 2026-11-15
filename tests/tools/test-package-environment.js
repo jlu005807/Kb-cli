@@ -24,10 +24,12 @@ async function main() {
       KB_LLM_TIMEOUT_SECS: '2', KB_LLM_RETRY_MAX_ATTEMPTS: '1',
       KB_QUIET: '1', KB_VERBOSE: '3', KB_NO_COLOR: '1',
       KB_UPDATE_SIMULATE_LAYER_FAILURES: 'semantic', KB_ASK_OFFLINE_STUB: '1',
+      KB_PACKAGE_TEST_ARCHIVE: archive,
     });
     const windows = process.platform === 'win32';
     const args = windows
-      ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'tests/scripts/test-windows-installer.ps1', '-PackageDir', archive, '-RunCliSmoke']
+      // Windows runners can inherit a UTF-8 encoding that writes a BOM to native stdin.
+      ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', '$OutputEncoding = [Text.UTF8Encoding]::new($true); & ./tests/scripts/test-windows-installer.ps1 -PackageDir $env:KB_PACKAGE_TEST_ARCHIVE -RunCliSmoke']
       : ['tests/scripts/test-linux-installer.sh', archive];
     const status = await new Promise((resolve, reject) => {
       const child = spawn(windows ? 'powershell.exe' : 'bash', args, { cwd: repoRoot, env, stdio: 'inherit' });

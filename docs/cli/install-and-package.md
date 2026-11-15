@@ -177,6 +177,8 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
+若因验收脚本或流水线问题失败，修复并通过 main 的 CI 后，可在 Actions 的 `release` 工作流选择 **Run workflow**，选择 `main`，将 `release_tag` 填为原标签（如 `v0.2.0`）。重试仍从原标签构建程序和安装包，只从工作流提交读取 `tests/scripts` 与 `tests/tools` 验收脚本；两平台都通过后才公开 draft。无需移动标签；若修复涉及程序或安装器，应使用新版本和新标签。
+
 ## 6. 关联文档
 
 - 开发者工作流：`docs/cli/developer-workflow.md`

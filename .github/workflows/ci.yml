@@ -58,10 +58,12 @@ jobs:
           bash ./scripts/package.sh --target x86_64-unknown-linux-gnu --dist-dir target/ci-dist
           node ./tests/tools/test-package-environment.js target/ci-dist/*.tar.gz
 
-      - name: Test Windows installer in isolated user registry
+      - name: Test Windows package installation and workflows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./tests/scripts/test-windows-installer.ps1
+        run: |
+          ./scripts/package.ps1 -Profile debug -DistDir target/ci-dist -SkipBuild
+          node ./tests/tools/test-package-environment.js (Get-ChildItem target/ci-dist/*.zip | Select-Object -First 1 -ExpandProperty FullName)
 
   doc-fixtures:
     name: Doc Fixture Consistency
